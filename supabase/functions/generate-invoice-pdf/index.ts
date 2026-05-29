@@ -19,7 +19,7 @@ function parseLayoutSettings(value: string | null): any {
     company: { name: "Holzbau Lutz OG", slogan: "Zimmerei & Holzbau", address_line1: "Am Sportplatz 3", address_line2: "6642 Stanzach", phone: "0699/191 68 685", email: "info@holzbau-lutz.at", website: "" },
     logo: { enabled: true, position: "left", width_mm: 45, height_mm: 18 },
     footer: { line1: "", line2: "", line3: "", show_bank_in_footer: true, show_page_numbers: true },
-    sender_line: "", closing_text_invoice: "", closing_text_angebot: "", danke_text: "Vielen Dank für Ihren Auftrag!", accent_color: "#1C6B4C"
+    sender_line: "", closing_text_invoice: "", closing_text_angebot: "", danke_text: "Vielen Dank für Ihren Auftrag!", accent_color: "#0E5A44"
   };
   if (!value) return DEFAULT;
   try {
@@ -37,11 +37,11 @@ function parseLayoutSettings(value: string | null): any {
   } catch { return DEFAULT; }
 }
 
-const LOGO_IMG = `<span style="font-family:Montserrat,'Segoe UI',sans-serif;font-weight:800;font-size:20pt;letter-spacing:-0.01em;color:#1C6B4C;">Holzbau Lutz</span>`;
+const LOGO_IMG = `<span style="font-family:Montserrat,'Segoe UI',sans-serif;font-weight:800;font-size:20pt;letter-spacing:-0.01em;color:#0E5A44;">Holzbau Lutz</span>`;
 function buildHtml(invoice: any, items: any[], bank: { kontoinhaber: string; iban: string; bic: string } = { kontoinhaber: "", iban: "", bic: "" }, layout: any = parseLayoutSettings(null)): string {
   const isAngebot = invoice.typ === "angebot";
   const typLabel = isAngebot ? "Angebot" : "Rechnung";
-  const accent = layout.accent_color || "#1C6B4C";
+  const accent = layout.accent_color || "#0E5A44";
   const co = layout.company;
   const ft = layout.footer;
 

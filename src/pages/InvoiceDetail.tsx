@@ -183,7 +183,7 @@ const statusColors: Record<string, string> = {
   teilbezahlt: "bg-yellow-100 text-yellow-800",
   storniert: "bg-red-100 text-red-800",
   abgelehnt: "bg-red-100 text-red-800",
-  angenommen: "bg-[#1C6B4C]/10 text-[#1C6B4C] border border-[#1C6B4C]/20",
+  angenommen: "bg-[#0E5A44]/10 text-[#0E5A44] border border-[#0E5A44]/20",
   verrechnet: "bg-purple-100 text-purple-800",
 };
 

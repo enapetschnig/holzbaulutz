@@ -7,7 +7,7 @@
 
 /* Definition of the design system.
    Corporate Design Holzbau Lutz:
-   - Tannengrün (Primär) #1C6B4C
+   - Tannengrün (Primär) #0E5A44
    - Hellgrün (Akzent)   #3F9E72
    - Grau hell           #F2F2F2
    - Grau mittel         #666666
@@ -18,101 +18,101 @@
   :root {
     /* Clean, hellerer Hintergrund */
     --background: 0 0% 100%;
-    --foreground: 156 30% 13%;
+    --foreground: 163 35% 11%;
 
     --card: 0 0% 100%;
-    --card-foreground: 156 30% 13%;
+    --card-foreground: 163 35% 11%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 156 30% 13%;
+    --popover-foreground: 163 35% 11%;
 
-    /* Holzbau Lutz Tannengrün #1C6B4C als Hauptfarbe */
-    --primary: 156 58% 26%;
+    /* Holzbau Lutz Tannengrün #0E5A44 als Hauptfarbe (exakt aus Logo) */
+    --primary: 163 73% 20%;
     --primary-foreground: 0 0% 100%;
 
     /* Grau hell #F2F2F2 als secondary */
     --secondary: 0 0% 95%;
-    --secondary-foreground: 156 58% 26%;
+    --secondary-foreground: 163 73% 20%;
 
     --muted: 0 0% 95%;
     --muted-foreground: 0 0% 40%;  /* Grau mittel #666666 */
 
-    /* Hellgrün #3F9E72 als accent */
-    --accent: 152 42% 43%;
+    /* Helleres Grün als accent */
+    --accent: 162 52% 30%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
 
     /* Grün für Success */
-    --success: 152 50% 40%;
+    --success: 152 55% 36%;
     --success-foreground: 0 0% 100%;
 
     --border: 0 0% 90%;
     --input: 0 0% 95%;
-    --ring: 152 42% 43%;
+    --ring: 162 52% 30%;
 
     --radius: 0.5rem;
 
     /* Corporate design tokens - Holzbau Lutz */
-    --lutz-gruen: 156 58% 26%;
-    --lutz-hellgruen: 152 42% 43%;
+    --lutz-gruen: 163 73% 20%;
+    --lutz-hellgruen: 162 52% 30%;
     --lutz-grau-hell: 0 0% 95%;
     --lutz-grau-mittel: 0 0% 40%;
 
     /* Shadows */
-    --shadow-soft: 0 2px 8px hsl(156 58% 26% / 0.08);
-    --shadow-medium: 0 4px 16px hsl(156 58% 26% / 0.12);
+    --shadow-soft: 0 2px 8px hsl(163 73% 20% / 0.08);
+    --shadow-medium: 0 4px 16px hsl(163 73% 20% / 0.12);
 
     /* Transitions */
     --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 
     --sidebar-background: 0 0% 100%;
-    --sidebar-foreground: 156 58% 26%;
-    --sidebar-primary: 156 58% 26%;
+    --sidebar-foreground: 163 73% 20%;
+    --sidebar-primary: 163 73% 20%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 0 0% 95%;
-    --sidebar-accent-foreground: 156 58% 26%;
+    --sidebar-accent-foreground: 163 73% 20%;
     --sidebar-border: 0 0% 90%;
-    --sidebar-ring: 152 42% 43%;
+    --sidebar-ring: 162 52% 30%;
   }
 
   .dark {
-    --background: 156 18% 9%;
-    --foreground: 152 10% 95%;
+    --background: 163 22% 8%;
+    --foreground: 152 12% 95%;
 
-    --card: 156 15% 13%;
-    --card-foreground: 152 10% 95%;
+    --card: 163 18% 12%;
+    --card-foreground: 152 12% 95%;
 
-    --popover: 156 15% 13%;
-    --popover-foreground: 152 10% 95%;
+    --popover: 163 18% 12%;
+    --popover-foreground: 152 12% 95%;
 
-    --primary: 152 48% 46%;
+    --primary: 160 55% 46%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 156 8% 22%;
-    --secondary-foreground: 152 10% 95%;
+    --secondary: 163 10% 21%;
+    --secondary-foreground: 152 12% 95%;
 
-    --muted: 156 8% 18%;
-    --muted-foreground: 152 8% 62%;
+    --muted: 163 10% 17%;
+    --muted-foreground: 152 9% 63%;
 
-    --accent: 152 48% 46%;
+    --accent: 160 55% 46%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 156 8% 22%;
-    --input: 156 8% 22%;
-    --ring: 152 48% 46%;
-    --sidebar-background: 156 18% 9%;
-    --sidebar-foreground: 152 10% 95%;
-    --sidebar-primary: 152 48% 46%;
+    --border: 163 10% 21%;
+    --input: 163 10% 21%;
+    --ring: 160 55% 46%;
+    --sidebar-background: 163 22% 8%;
+    --sidebar-foreground: 152 12% 95%;
+    --sidebar-primary: 160 55% 46%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 156 8% 16%;
-    --sidebar-accent-foreground: 152 10% 95%;
-    --sidebar-border: 156 8% 16%;
-    --sidebar-ring: 152 48% 46%;
+    --sidebar-accent: 163 10% 15%;
+    --sidebar-accent-foreground: 152 12% 95%;
+    --sidebar-border: 163 10% 15%;
+    --sidebar-ring: 160 55% 46%;
   }
 }
 

@@ -63,11 +63,12 @@ export const DEFAULT_LAYOUT: InvoiceLayoutSettings = {
   logo: {
     enabled: true,
     position: "left",
-    // 110 mm ist ein bewusster Kompromiss: das Logo bleibt für den
-    // DIN-A4-Briefkopf gross und prominent, lässt aber rechts daneben
-    // ca. 55 mm für den Firmen-Info-Block (Adresse, Tel, E-Mail, UID).
-    width_mm: 110,
-    height_mm: 13.5,
+    // Das Holzbau-Lutz-Logo ist nahezu quadratisch (Haus + "Lutz"). Die
+    // Höhe wird in pdfGenerator aus dem Seitenverhältnis abgeleitet —
+    // daher ~32 mm Kantenlänge: prominent oben links, ohne den Briefkopf
+    // zu überladen.
+    width_mm: 32,
+    height_mm: 32,
     offset_x_mm: 0,
   },
   footer: {
@@ -81,7 +82,7 @@ export const DEFAULT_LAYOUT: InvoiceLayoutSettings = {
   closing_text_invoice: "Wir bitten um Überweisung innerhalb von {{tage}} Tagen auf das unten angegebene Konto.",
   closing_text_angebot: "Dieses Angebot ist bis zum {{gueltig_bis}} gültig. Wir freuen uns auf Ihren Auftrag!",
   danke_text: "Vielen Dank für Ihren Auftrag!",
-  accent_color: "#1C6B4C", /* Holzbau Lutz Tannengrün */
+  accent_color: "#0E5A44", /* Holzbau Lutz Tannengrün */
   contact: { name: "", phone: "", email: "" },
 };
 
@@ -90,6 +91,7 @@ const LEGACY_ACCENT_COLORS = new Set([
   "#E08A20", "#e08a20", // MONTI.PRO Orange (original)
   "#1F3A5F", "#1f3a5f", // BKS Dunkelblau (legacy)
   "#0077CC", "#0077cc", // BKS Blau (legacy)
+  "#1C6B4C", "#1c6b4c", // Interim-Grün (vor Logo-Abgleich)
 ]);
 
 /** Safely parse layout settings JSON, merging with defaults for missing fields */
@@ -151,12 +153,12 @@ export function buildFooterLines(c: InvoiceLayoutCompany): { line1: string; line
   return { line1, line2: parts2.join(" · ") };
 }
 
-/** Convert hex color to RGB tuple (default fallback: Holzbau Lutz Grün #1C6B4C) */
+/** Convert hex color to RGB tuple (default fallback: Holzbau Lutz Grün #0E5A44) */
 export function hexToRgb(hex: string): [number, number, number] {
   const clean = hex.replace("#", "");
   return [
-    parseInt(clean.slice(0, 2), 16) || 28,    // 0x1C
-    parseInt(clean.slice(2, 4), 16) || 107,   // 0x6B
-    parseInt(clean.slice(4, 6), 16) || 76,    // 0x4C
+    parseInt(clean.slice(0, 2), 16) || 14,    // 0x0E
+    parseInt(clean.slice(2, 4), 16) || 90,    // 0x5A
+    parseInt(clean.slice(4, 6), 16) || 68,    // 0x44
   ];
 }

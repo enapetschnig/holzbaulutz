@@ -378,9 +378,9 @@ function generateEmailHtml(data: ReportRequest & { technicians: string[] }): str
         .header { font-size: 12px; font-weight: 900; color: #1A1A1A; letter-spacing: 2px; margin-bottom: 2px; }
         .header-large { font-size: 28px; font-weight: 900; color: #1A1A1A; letter-spacing: 1px; margin-bottom: 4px; }
         .header-sub { font-size: 11px; color: #64748b; margin-bottom: 10px; }
-        .red-bar { height: 3px; background: #1C6B4C; margin-bottom: 16px; border-radius: 2px; }
+        .red-bar { height: 3px; background: #0E5A44; margin-bottom: 16px; border-radius: 2px; }
         .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .info-box { background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #1C6B4C; }
+        .info-box { background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #0E5A44; }
       </style>
     </head>
     <body>
