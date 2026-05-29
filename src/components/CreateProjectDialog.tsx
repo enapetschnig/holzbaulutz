@@ -788,21 +788,21 @@ export function CreateProjectDialog({
                 <p className="text-xs text-muted-foreground mt-1">Freier Bereichstext (admin-konfigurierbar).</p>
               </div>
               <div>
-                <Label>Geschäftsbereich (Google Calendar)</Label>
+                <Label>Farbkategorie (Plantafel)</Label>
                 <Select value={kategorie || "none"} onValueChange={(v) => setKategorie(v === "none" ? "" : v)}>
-                  <SelectTrigger><SelectValue placeholder="Default-Kalender" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="ohne Farbe" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">— ohne Bereich (Default-Kalender)</SelectItem>
-                    <SelectItem value="montipro">Monti.pro</SelectItem>
-                    <SelectItem value="bks">BKS-BauKomplettService</SelectItem>
-                    <SelectItem value="gartenmacher">Gartenmacher</SelectItem>
-                    <SelectItem value="fensterwerk">Fensterwerk</SelectItem>
-                    <SelectItem value="ladenbau">Ladenbau</SelectItem>
-                    <SelectItem value="portas">Portas</SelectItem>
-                    <SelectItem value="chef">CHEF (privater Kalender)</SelectItem>
+                    <SelectItem value="none">— ohne Farbe</SelectItem>
+                    <SelectItem value="montipro">Grün</SelectItem>
+                    <SelectItem value="bks">Blau</SelectItem>
+                    <SelectItem value="gartenmacher">Limette</SelectItem>
+                    <SelectItem value="fensterwerk">Cyan</SelectItem>
+                    <SelectItem value="ladenbau">Gelb</SelectItem>
+                    <SelectItem value="portas">Orange</SelectItem>
+                    <SelectItem value="chef">Violett</SelectItem>
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground mt-1">Plantafel-Einsätze landen automatisch im Google-Kalender dieses Bereichs.</p>
+                <p className="text-xs text-muted-foreground mt-1">Optionale Farbmarkierung des Projekts in der Plantafel.</p>
               </div>
               <div>
                 <Label>Beschreibung / Kurzbeschreibung</Label>

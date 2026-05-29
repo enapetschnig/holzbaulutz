@@ -105,9 +105,9 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
   const contentWidth = pageWidth - 2 * margin;
   let yPos = margin;
 
-  // Helper: Section title with BKS-Blau left border
+  // Helper: Section title with Akzentfarbe left border
   const sectionTitle = (title: string) => {
-    doc.setFillColor(0, 119, 204);
+    doc.setFillColor(28, 107, 76);
     doc.rect(margin, yPos - 4, 2, 6, "F");
     doc.setFontSize(11);
     doc.setFont("helvetica", "bold");
@@ -128,7 +128,7 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
     yPos += 5;
   };
 
-  // === EINHEITLICHER BKS-BRIEFKOPF (analog zu BTB/Ersttermin/Rechnung) ===
+  // === EINHEITLICHER BRIEFKOPF (analog zu BTB/Ersttermin/Rechnung) ===
   // Logo 140mm breit, aspect-ratio-preserving
   const logoWidth = 140;
   let logoBottomY = margin;
@@ -143,7 +143,7 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
     doc.setFontSize(14);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(26, 26, 26);
-    doc.text("BKS BauKomplettService", margin, 18);
+    doc.text("Holzbau Lutz OG", margin, 18);
     logoBottomY = margin + 10;
   }
 
@@ -154,7 +154,7 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
   doc.line(margin, yPos, pageWidth - margin, yPos);
   yPos += 5;
 
-  // "Regiebericht" Titel + Datum + BKS-Blau-Akzentlinie (wie drawTitleBlock)
+  // "Regiebericht" Titel + Datum + Akzentlinie (wie drawTitleBlock)
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
   doc.setTextColor(26, 26, 26);
@@ -344,19 +344,19 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
   doc.text("Der Kunde bestätigt die ordnungsgemäße Durchführung der oben genannten Arbeiten.", margin + 5, yPos);
   yPos += 10;
 
-  // === FOOTER (einheitlich mit anderen BKS-PDFs) ===
+  // === FOOTER (einheitlich mit anderen PDFs) ===
   const pageHeight = doc.internal.pageSize.getHeight();
   const footerY = pageHeight - 12;
 
-  // BKS-Blau Akzent-Linie (2px stark, wie drawFooter in pdfLetterhead)
-  doc.setDrawColor(0, 119, 204);
+  // Akzent-Linie (2px stark, wie drawFooter in pdfLetterhead)
+  doc.setDrawColor(28, 107, 76);
   doc.setLineWidth(0.5);
   doc.line(margin, footerY, pageWidth - margin, footerY);
 
   doc.setFontSize(7);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(102, 102, 102);
-  doc.text("BKS BauKomplettService · Wir machen es komplett", pageWidth / 2, footerY + 3.5, { align: "center" });
+  doc.text("Holzbau Lutz OG · Zimmerei & Holzbau", pageWidth / 2, footerY + 3.5, { align: "center" });
   doc.setFontSize(6.5);
   doc.text(`Erstellt: ${new Date().toLocaleDateString("de-AT")}`, pageWidth - margin, footerY + 3.5, { align: "right" });
 
@@ -378,16 +378,16 @@ function generateEmailHtml(data: ReportRequest & { technicians: string[] }): str
         .header { font-size: 12px; font-weight: 900; color: #1A1A1A; letter-spacing: 2px; margin-bottom: 2px; }
         .header-large { font-size: 28px; font-weight: 900; color: #1A1A1A; letter-spacing: 1px; margin-bottom: 4px; }
         .header-sub { font-size: 11px; color: #64748b; margin-bottom: 10px; }
-        .red-bar { height: 3px; background: #1F3A5F; margin-bottom: 16px; border-radius: 2px; }
+        .red-bar { height: 3px; background: #1C6B4C; margin-bottom: 16px; border-radius: 2px; }
         .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .info-box { background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #1F3A5F; }
+        .info-box { background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #1C6B4C; }
       </style>
     </head>
     <body>
       <div class="container">
-        <div class="header">MONTI</div>
-        <div class="header-large">PRO</div>
-        <div class="header-sub">BKS BauKomplettService · Wir machen es komplett</div>
+        <div class="header">Holzbau Lutz OG</div>
+        <div class="header-large">Zimmerei & Holzbau</div>
+        <div class="header-sub">Am Sportplatz 3 · 6642 Stanzach · 0699/191 68 685 · info@holzbau-lutz.at</div>
         <div class="red-bar"></div>
         <h2>Regiebericht</h2>
 
@@ -405,8 +405,8 @@ function generateEmailHtml(data: ReportRequest & { technicians: string[] }): str
         <p>Der vollständige Bericht mit allen Details und der Kundenunterschrift befindet sich im angehängten PDF-Dokument.</p>
 
         <p>Mit freundlichen Grüßen,<br>
-        BKS BauKomplettService<br>
-        <span style="color:#64748b;font-size:12px;">Wir machen es komplett</span></p>
+        Holzbau Lutz OG<br>
+        <span style="color:#64748b;font-size:12px;">Zimmerei & Holzbau</span></p>
       </div>
     </body>
     </html>
@@ -459,7 +459,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .eq("key", "disturbance_report_email")
       .maybeSingle();
 
-    const officeEmail = setting?.value || "info@monti.pro";
+    const officeEmail = setting?.value || "info@holzbau-lutz.at";
     console.log("Using office email:", officeEmail);
 
     // Prepare recipients - office email for all reports
@@ -477,9 +477,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     console.log("Sending email with PDF attachment to:", recipients);
 
-    // Use Resend test domain if monti.pro is not verified yet
-    // Once domain is verified in Resend dashboard, change back to noreply@monti.pro
-    const fromAddress = Deno.env.get("RESEND_FROM_EMAIL") || "BKS BauKomplettService <onboarding@resend.dev>";
+    // Use Resend test domain if holzbau-lutz.at is not verified yet
+    // Once domain is verified in Resend dashboard, change back to noreply@holzbau-lutz.at
+    const fromAddress = Deno.env.get("RESEND_FROM_EMAIL") || "Holzbau Lutz OG <onboarding@resend.dev>";
 
     console.log("Sending from:", fromAddress);
 

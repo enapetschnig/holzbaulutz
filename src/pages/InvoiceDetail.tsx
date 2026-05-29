@@ -11,8 +11,11 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator } from "lucide-react";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { KalkulationFields } from "@/components/KalkulationFields";
+import { calcEinzelpreis, type KalkulationInput } from "@/lib/kalkulation";
 import { ImportMaterialsDialog } from "@/components/ImportMaterialsDialog";
 import { ImportFromProjectDialog } from "@/components/ImportFromProjectDialog";
 import { ImportDisturbanceDialog } from "@/components/ImportDisturbanceDialog";
@@ -76,6 +79,18 @@ interface InvoiceItem {
   // für interne Nachkalkulation im Rechnungs-Editor sichtbar.
   set_template_id?: string | null;
   set_snapshot?: any;
+  // Kalkulation (Excel-Modell): wenn ist_kalkuliert, wird einzelpreis aus
+  // EK + Verschnitt + Aufschlag + Lohn + Zuschlägen berechnet und ist im
+  // Angebot pro Position anpassbar (zusätzlich greift der Dokument-Override).
+  ist_kalkuliert?: boolean;
+  kalkulation_template_id?: string | null;
+  ek_preis?: number;
+  verschnitt_prozent?: number;
+  aufschlag_prozent?: number;
+  befestigung_preis?: number;
+  sonstiges_preis?: number;
+  arbeitszeit_minuten?: number;
+  stundensatz?: number;
 }
 
 interface InvoiceData {
@@ -133,13 +148,16 @@ interface InvoiceData {
   parent_invoice_id?: string | null;
   anzahlung_prozent?: number | null;
   anzahlung_betrag?: number | null;
-  // Ansprechpartner pro Dokument (BKS-Sachbearbeiter).
+  // Ansprechpartner pro Dokument (Sachbearbeiter).
   // employee_id = Referenz auf employees, daraus wird Name/Tel/Email
   // als Snapshot in die Freitext-Felder geschrieben (stabile Historie).
   ansprechpartner_employee_id?: string | null;
   ansprechpartner_name?: string;
   ansprechpartner_telefon?: string;
   ansprechpartner_email?: string;
+  // Dokumentweiter Aufschlag-Override: überschreibt den Material-Aufschlag
+  // ALLER kalkulierten Positionen (NULL = jede Position nutzt ihren eigenen).
+  kalkulation_aufschlag_override?: number | null;
 }
 
 interface TemplateItem {
@@ -165,7 +183,7 @@ const statusColors: Record<string, string> = {
   teilbezahlt: "bg-yellow-100 text-yellow-800",
   storniert: "bg-red-100 text-red-800",
   abgelehnt: "bg-red-100 text-red-800",
-  angenommen: "bg-[#0077CC]/10 text-[#0077CC] border border-[#0077CC]/20",
+  angenommen: "bg-[#1C6B4C]/10 text-[#1C6B4C] border border-[#1C6B4C]/20",
   verrechnet: "bg-purple-100 text-purple-800",
 };
 
@@ -321,6 +339,7 @@ export default function InvoiceDetail() {
     gueltig_bis: defaultTyp === "angebot" ? format(addMonths(new Date(), 1), "yyyy-MM-dd") : "",
     rabatt_prozent: 0,
     rabatt_betrag: 0,
+    kalkulation_aufschlag_override: null,
     mahnstufe: 0,
     skonto_prozent: 0,
     skonto_tage: 0,
@@ -418,6 +437,7 @@ export default function InvoiceDetail() {
         mwst_satz: Number(data.mwst_satz) || 20,
         rabatt_prozent: Number(data.rabatt_prozent) || 0,
         rabatt_betrag: Number(data.rabatt_betrag) || 0,
+        kalkulation_aufschlag_override: (data as any).kalkulation_aufschlag_override ?? null,
         skonto_prozent: Number(data.skonto_prozent) || 0,
         skonto_tage: Number(data.skonto_tage) || 0,
         kunde_anrede: data.kunde_anrede || "",
@@ -635,7 +655,7 @@ export default function InvoiceDetail() {
             kunde_titel: (cust as any).titel || "",
             kundennummer: cust.kundennummer || "",
             // Ansprechpartner wird NICHT mehr aus customers übernommen —
-            // er ist seit der Umstellung der BKS-Sachbearbeiter und
+            // er ist seit der Umstellung der Sachbearbeiter und
             // wird im Dokument-Formular explizit aus der Mitarbeiter-
             // Liste gewählt.
             skonto_prozent: Number(cust.skonto_prozent) || 0,
@@ -803,6 +823,15 @@ export default function InvoiceDetail() {
         mwst_exempt: !!(it as any).mwst_exempt,
         set_template_id: (it as any).set_template_id || null,
         set_snapshot: (it as any).set_snapshot || null,
+        ist_kalkuliert: !!(it as any).ist_kalkuliert,
+        kalkulation_template_id: (it as any).kalkulation_template_id || null,
+        ek_preis: Number((it as any).ek_preis) || 0,
+        verschnitt_prozent: Number((it as any).verschnitt_prozent) || 0,
+        aufschlag_prozent: Number((it as any).aufschlag_prozent) || 0,
+        befestigung_preis: Number((it as any).befestigung_preis) || 0,
+        sonstiges_preis: Number((it as any).sonstiges_preis) || 0,
+        arbeitszeit_minuten: Number((it as any).arbeitszeit_minuten) || 0,
+        stundensatz: Number((it as any).stundensatz) || 52,
       })));
     }
 
@@ -945,6 +974,21 @@ export default function InvoiceDetail() {
     }
 
     const netto = Number((t as any).vk_netto ?? (t as any).netto_preis) || t.einzelpreis;
+    // Kalkuliertes Material → Kalkulation in die Position übernehmen, damit
+    // Aufschlag/Stundensatz im Angebot anpassbar sind (Excel-Modell).
+    const isKalk = !!(t as any).ist_kalkuliert;
+    const kalk: KalkulationInput | null = isKalk ? {
+      ek_preis: Number((t as any).ek_netto) || 0,
+      verschnitt_prozent: Number((t as any).verschnitt_prozent) || 0,
+      aufschlag_prozent: Number((t as any).aufschlag_prozent) || 0,
+      befestigung_preis: Number((t as any).befestigung_preis) || 0,
+      sonstiges_preis: Number((t as any).sonstiges_preis) || 0,
+      arbeitszeit_minuten: Number((t as any).arbeitszeit_minuten) || 0,
+      stundensatz: Number((t as any).stundensatz) || 52,
+    } : null;
+    const einzelpreis = kalk
+      ? calcEinzelpreis({ ...kalk, aufschlag_prozent: docAufschlagOverride ?? kalk.aufschlag_prozent })
+      : netto;
     const newItem: InvoiceItem = {
       position: 1,
       beschreibung: (t as any).kurzbezeichnung || t.name || t.beschreibung,
@@ -952,10 +996,13 @@ export default function InvoiceDetail() {
       langtext: ((t as any).langbezeichnung && (t as any).langbezeichnung !== ((t as any).kurzbezeichnung || t.name)) ? (t as any).langbezeichnung : "",
       menge: 1,
       einheit: t.einheit,
-      einzelpreis: netto,
+      einzelpreis,
       rabatt_prozent: 0,
       produktnummer: (t as any).produktnummer || "",
-      gesamtpreis: netto,
+      gesamtpreis: einzelpreis,
+      ist_kalkuliert: isKalk,
+      kalkulation_template_id: isKalk ? t.id : null,
+      ...(kalk || {}),
     };
     setItems(prev => mergeItems(prev, [newItem]));
     // Dialog bleibt offen
@@ -998,6 +1045,67 @@ export default function InvoiceDetail() {
       }
       return updated;
     });
+  };
+
+  // ── Kalkulation ───────────────────────────────────────────────────────────
+  // Effektiver Material-Aufschlag einer Position: greift der Dokument-Override,
+  // gilt dieser, sonst der positionseigene Aufschlag.
+  const docAufschlagOverride =
+    form.kalkulation_aufschlag_override === null || form.kalkulation_aufschlag_override === undefined
+      ? null : Number(form.kalkulation_aufschlag_override);
+
+  const computeItemTotal = (it: InvoiceItem): number => {
+    const m = Number(it.menge) || 0;
+    const r = Number(it.rabatt_prozent) || 0;
+    const t = m * (Number(it.einzelpreis) || 0) * (1 - r / 100);
+    return isFinite(t) ? Math.round(t * 100) / 100 : 0;
+  };
+
+  // Setzt die Kalkulationsfelder einer Position und berechnet Einzel-/Gesamtpreis neu.
+  const applyItemKalkulation = (index: number, kalk: KalkulationInput) => {
+    setItems(prev => {
+      const updated = [...prev];
+      const eff = docAufschlagOverride ?? kalk.aufschlag_prozent;
+      const ep = calcEinzelpreis({ ...kalk, aufschlag_prozent: eff });
+      updated[index] = {
+        ...updated[index],
+        ist_kalkuliert: true,
+        ek_preis: kalk.ek_preis,
+        verschnitt_prozent: kalk.verschnitt_prozent,
+        aufschlag_prozent: kalk.aufschlag_prozent,
+        befestigung_preis: kalk.befestigung_preis,
+        sonstiges_preis: kalk.sonstiges_preis,
+        arbeitszeit_minuten: kalk.arbeitszeit_minuten,
+        stundensatz: kalk.stundensatz,
+        einzelpreis: ep,
+      };
+      updated[index].gesamtpreis = computeItemTotal(updated[index]);
+      return updated;
+    });
+  };
+
+  // Dokumentweiter Aufschlag-Override: setzt den Wert und rechnet ALLE
+  // kalkulierten Positionen neu (Ergebnis direkt im Angebot sichtbar).
+  const setDocAufschlagOverride = (raw: string) => {
+    const val = raw.trim() === "" ? null : Number(raw.replace(",", "."));
+    const override = val === null || !isFinite(val) ? null : val;
+    setForm(f => ({ ...f, kalkulation_aufschlag_override: override }));
+    setItems(prev => prev.map(it => {
+      if (!it.ist_kalkuliert) return it;
+      const eff = override ?? (Number(it.aufschlag_prozent) || 0);
+      const ep = calcEinzelpreis({
+        ek_preis: Number(it.ek_preis) || 0,
+        verschnitt_prozent: Number(it.verschnitt_prozent) || 0,
+        aufschlag_prozent: eff,
+        befestigung_preis: Number(it.befestigung_preis) || 0,
+        sonstiges_preis: Number(it.sonstiges_preis) || 0,
+        arbeitszeit_minuten: Number(it.arbeitszeit_minuten) || 0,
+        stundensatz: Number(it.stundensatz) || 52,
+      });
+      const next = { ...it, einzelpreis: ep };
+      next.gesamtpreis = computeItemTotal(next);
+      return next;
+    }));
   };
 
   // Auto-Sync zahlungsbedingungen → faellig_am. Immer wenn der User die
@@ -1232,6 +1340,7 @@ export default function InvoiceDetail() {
         gueltig_bis: form.gueltig_bis || null,
         rabatt_prozent: form.rabatt_prozent,
         rabatt_betrag: form.rabatt_betrag,
+        kalkulation_aufschlag_override: form.kalkulation_aufschlag_override ?? null,
         mahnstufe: form.mahnstufe,
         skonto_prozent: form.skonto_prozent || 0,
         skonto_tage: form.skonto_tage || 0,
@@ -1359,6 +1468,15 @@ export default function InvoiceDetail() {
         mwst_exempt: item.mwst_exempt || false,
         set_template_id: item.set_template_id || null,
         set_snapshot: item.set_snapshot || null,
+        ist_kalkuliert: item.ist_kalkuliert || false,
+        kalkulation_template_id: item.kalkulation_template_id || null,
+        ek_preis: item.ek_preis || 0,
+        verschnitt_prozent: item.verschnitt_prozent || 0,
+        aufschlag_prozent: item.aufschlag_prozent || 0,
+        befestigung_preis: item.befestigung_preis || 0,
+        sonstiges_preis: item.sonstiges_preis || 0,
+        arbeitszeit_minuten: item.arbeitszeit_minuten || 0,
+        stundensatz: item.stundensatz || 52,
       }));
 
       const { error: itemsError } = await supabase.from("invoice_items").insert(itemsToInsert);
@@ -1860,6 +1978,15 @@ export default function InvoiceDetail() {
         mwst_exempt: (item as any).mwst_exempt || false,
         set_template_id: (item as any).set_template_id || null,
         set_snapshot: (item as any).set_snapshot || null,
+        ist_kalkuliert: (item as any).ist_kalkuliert || false,
+        kalkulation_template_id: (item as any).kalkulation_template_id || null,
+        ek_preis: (item as any).ek_preis || 0,
+        verschnitt_prozent: (item as any).verschnitt_prozent || 0,
+        aufschlag_prozent: (item as any).aufschlag_prozent || 0,
+        befestigung_preis: (item as any).befestigung_preis || 0,
+        sonstiges_preis: (item as any).sonstiges_preis || 0,
+        arbeitszeit_minuten: (item as any).arbeitszeit_minuten || 0,
+        stundensatz: (item as any).stundensatz || 52,
       }));
 
       await supabase.from("invoice_items").insert(itemsToInsert);
@@ -2867,7 +2994,7 @@ export default function InvoiceDetail() {
                           kunde_titel: cust.titel || "",
                           kundennummer: cust.kundennummer || "",
                           // Ansprechpartner wird beim Kunden-Wechsel NICHT
-                          // übernommen — er ist der BKS-Sachbearbeiter und
+                          // übernommen — er ist der Sachbearbeiter und
                           // wird separat im Formular gewählt.
                           skonto_prozent: Number(cust.skonto_prozent) || 0,
                           skonto_tage: Number(cust.skonto_tage) || 0,
@@ -3006,7 +3133,7 @@ export default function InvoiceDetail() {
                       kunde_titel: customer.titel || "",
                       kundennummer: customer.kundennummer || "",
                       // Ansprechpartner wird NICHT aus den Kundendaten übernommen —
-                      // er ist der BKS-Sachbearbeiter und wird pro Dokument aus
+                      // er ist der Sachbearbeiter und wird pro Dokument aus
                       // der Mitarbeiter-Liste gewählt.
                     };
                     // Übernehme Skonto + Zahlungsfrist vom Kunden (nur bei Rechnungen)
@@ -3133,7 +3260,7 @@ export default function InvoiceDetail() {
               ) : (
                 <p className="text-sm text-muted-foreground">Kein Kunde ausgewählt. Wählen Sie oben einen Kunden aus.</p>
               )}
-              {/* Ansprechpartner (BKS-Sachbearbeiter) pro Dokument */}
+              {/* Ansprechpartner (Sachbearbeiter) pro Dokument */}
               <div className="mt-3 p-3 rounded-lg bg-muted/30 border space-y-2">
                 <p className="text-xs font-medium text-muted-foreground">
                   Ihr Ansprechpartner (erscheint rechts oben im PDF)
@@ -3453,6 +3580,25 @@ export default function InvoiceDetail() {
                     disabled={form.rabatt_prozent > 0}
                   />
                 </div>
+                {items.some(it => it.ist_kalkuliert) && (
+                  <div>
+                    <Label className="flex items-center gap-1">
+                      <Calculator className="w-3.5 h-3.5" /> Aufschlag-Override (%)
+                    </Label>
+                    <Input
+                      type="number"
+                      value={form.kalkulation_aufschlag_override ?? ""}
+                      placeholder="je Position"
+                      onChange={(e) => setDocAufschlagOverride(e.target.value)}
+                      min={0}
+                      step={0.5}
+                      className="w-32"
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1 max-w-[16rem]">
+                      Überschreibt den Material-Aufschlag aller kalkulierten Positionen — leer = jede Position nutzt ihren eigenen.
+                    </p>
+                  </div>
+                )}
               </div>
             </CardContent>
             </fieldset>
@@ -3790,7 +3936,7 @@ export default function InvoiceDetail() {
                           </Select>
                         </TableCell>
                         <TableCell>
-                          <Input type="number" value={item.einzelpreis} onChange={(e) => updateItem(idx, "einzelpreis", Number(e.target.value))} step={0.01} className="text-right h-10 md:h-9" disabled={isExempt} />
+                          <Input type="number" value={item.einzelpreis} onChange={(e) => updateItem(idx, "einzelpreis", Number(e.target.value))} step={0.01} className="text-right h-10 md:h-9" disabled={isExempt || !!item.ist_kalkuliert} title={item.ist_kalkuliert ? "Preis wird kalkuliert — über das Rechner-Symbol anpassen" : undefined} />
                         </TableCell>
                         <TableCell>
                           <Input type="number" value={item.rabatt_prozent || ""} onChange={(e) => updateItem(idx, "rabatt_prozent", Number(e.target.value))} min={0} max={100} step={0.5} className="text-right h-10 md:h-9" placeholder="0" disabled={isExempt} />
@@ -3800,6 +3946,43 @@ export default function InvoiceDetail() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-0.5">
+                            {!isLocked && (
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <Button variant="ghost" size="icon" className={`h-10 w-10 md:h-8 md:w-8 ${item.ist_kalkuliert ? "text-primary" : "text-muted-foreground"}`} title="Kalkulation (EK, Verschnitt, Aufschlag, Lohn)">
+                                    <Calculator className="w-4 h-4" />
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-[420px] max-w-[92vw]" align="end">
+                                  <div className="space-y-3">
+                                    <div className="flex items-center justify-between">
+                                      <p className="text-sm font-semibold">Kalkulation – Position {item.position}</p>
+                                      {item.ist_kalkuliert && (
+                                        <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground"
+                                          onClick={() => updateItem(idx, "ist_kalkuliert", false)}>
+                                          Kalkulation lösen
+                                        </Button>
+                                      )}
+                                    </div>
+                                    <KalkulationFields
+                                      einheit={item.einheit}
+                                      compact
+                                      aufschlagOverride={docAufschlagOverride}
+                                      value={{
+                                        ek_preis: Number(item.ek_preis) || 0,
+                                        verschnitt_prozent: Number(item.verschnitt_prozent) || 0,
+                                        aufschlag_prozent: Number(item.aufschlag_prozent) || 0,
+                                        befestigung_preis: Number(item.befestigung_preis) || 0,
+                                        sonstiges_preis: Number(item.sonstiges_preis) || 0,
+                                        arbeitszeit_minuten: Number(item.arbeitszeit_minuten) || 0,
+                                        stundensatz: Number(item.stundensatz) || 52,
+                                      }}
+                                      onChange={(v) => applyItemKalkulation(idx, v)}
+                                    />
+                                  </div>
+                                </PopoverContent>
+                              </Popover>
+                            )}
                             {!isLocked && (
                               <>
                                 <Button variant="ghost" size="icon" className="h-10 w-10 md:h-8 md:w-8" disabled={idx === 0} onClick={() => moveItem(idx, "up")}>

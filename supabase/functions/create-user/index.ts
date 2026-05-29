@@ -49,7 +49,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
       vorname, nachname, telefon, email,
       adresse, plz, ort,
       geburtsdatum, sv_nummer, eintrittsdatum, stundenlohn,
-      whatsapp_aktiv,
       ist_freelancer,
     } = await req.json();
 
@@ -76,7 +75,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // Wenn ein vorheriger Versuch mittendrin gecrashed ist, existiert evtl. schon
     // ein Auth-User mit genau dieser Email → wir räumen ihn auf und legen neu an.
     const cleanUser = username.toLowerCase().trim();
-    const internalEmail = `${cleanUser}@app.monti.pro`;
+    const internalEmail = `${cleanUser}@app.holzbau-lutz.at`;
 
     let { data: authData, error: authError } = await supabase.auth.admin.createUser({
       email: internalEmail,
@@ -163,16 +162,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
       });
     }
 
-    // Create employees row (for Plantafel, WhatsApp, Zeitbuchung).
-    // WhatsApp-Chat ist nur aktiv, wenn explizit gewünscht UND Telefon vorhanden.
-    const wantsWhatsApp = whatsapp_aktiv === true && !!(telefon && String(telefon).trim());
+    // Create employees row (for Plantafel, Zeitbuchung).
     const employeePayload: Record<string, unknown> = {
       user_id: userId,
       vorname,
       nachname,
       email: email || null,
       telefon: telefon || null,
-      whatsapp_aktiv: wantsWhatsApp,
       aktiv: true,
       ist_freelancer: ist_freelancer === true,
     };

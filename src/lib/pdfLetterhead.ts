@@ -15,7 +15,7 @@ export interface LetterheadResult {
 }
 
 /**
- * Zeichnet den BKS-Briefkopf auf der aktuellen Seite.
+ * Zeichnet den Briefkopf auf der aktuellen Seite.
  * - Logo links (aspect-ratio-preserving)
  * - Firmen-Info rechts
  * - Graue Trennlinie unten
@@ -136,7 +136,7 @@ export function drawFooter(
     pdf.setPage(i);
     const baseY = pageHeight - 12;
 
-    // Akzent-Linie in BKS-Blau
+    // Akzent-Linie in grünem Akzent
     pdf.setDrawColor(acR, acG, acB);
     pdf.setLineWidth(0.5);
     pdf.line(ml, baseY, pageWidth - mr, baseY);

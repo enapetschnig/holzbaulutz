@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Session, User } from "@supabase/supabase-js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Clock, FolderKanban, Users, BarChart3, LogOut, FileText, ArrowRight, Info, User as UserIcon, Receipt, BookUser, Package, Bell, CalendarDays, LayoutGrid, ClipboardList, UserPlus, MessageSquare, FileDown } from "lucide-react";
+import { Clock, FolderKanban, Users, BarChart3, LogOut, FileText, ArrowRight, Info, User as UserIcon, Receipt, BookUser, Package, Bell, LayoutGrid, FileDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useOnboarding } from "@/contexts/OnboardingContext";
 import {
@@ -242,7 +242,7 @@ export default function Index() {
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <Card className="max-w-md w-full">
           <CardHeader className="text-center">
-            <img src="/newmontilogo.png" alt="BKS BauKomplettService" className="h-20 mx-auto mb-4" />
+            <img src="/holzbaulutz-logo.png" alt="Holzbau Lutz" className="h-20 mx-auto mb-4" />
             <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-amber-100 flex items-center justify-center">
               <Clock className="h-8 w-8 text-amber-600" />
             </div>
@@ -405,54 +405,6 @@ export default function Index() {
               </CardHeader>
               <CardContent><Button className="w-full" size="sm">Plantafel öffnen</Button></CardContent>
             </Card>
-          )}
-
-          {/* 4b. Kalender */}
-          {canView('kalender') && (
-          <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/calendar")}>
-            <CardHeader className="space-y-2 pb-3">
-              <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center"><CalendarDays className="h-6 w-6 text-primary" /></div>
-              <CardTitle className="text-lg sm:text-xl">Kalender</CardTitle>
-              <CardDescription className="text-sm">Termine & Google Kalender Sync</CardDescription>
-            </CardHeader>
-            <CardContent><Button className="w-full" size="sm">Kalender öffnen</Button></CardContent>
-          </Card>
-          )}
-
-          {/* 4c. Bautagesberichte */}
-          {canView('bautagesberichte') && (
-          <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/bautagesberichte")}>
-            <CardHeader className="space-y-2 pb-3">
-              <div className="h-12 w-12 rounded-lg bg-emerald-500/10 flex items-center justify-center"><ClipboardList className="h-6 w-6 text-emerald-600" /></div>
-              <CardTitle className="text-lg sm:text-xl">Bautagesberichte</CardTitle>
-              <CardDescription className="text-sm">Tägliche Baustellendokumentation</CardDescription>
-            </CardHeader>
-            <CardContent><Button className="bg-emerald-600 hover:bg-emerald-700 w-full" size="sm">Berichte öffnen</Button></CardContent>
-          </Card>
-          )}
-
-          {/* Ersttermine */}
-          {canView('ersttermine') && (
-            <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/ersttermine")}>
-              <CardHeader className="space-y-2 pb-3">
-                <div className="h-12 w-12 rounded-lg bg-violet-500/10 flex items-center justify-center"><UserPlus className="h-6 w-6 text-violet-600" /></div>
-                <CardTitle className="text-lg sm:text-xl">Ersttermine</CardTitle>
-                <CardDescription className="text-sm">Ersttermine erfassen & verwalten</CardDescription>
-              </CardHeader>
-              <CardContent><Button className="bg-violet-600 hover:bg-violet-700 w-full" size="sm">Ersttermine öffnen</Button></CardContent>
-            </Card>
-          )}
-
-          {/* Besprechungsprotokolle */}
-          {canView('protokolle') && (
-          <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/besprechungsprotokolle")}>
-            <CardHeader className="space-y-2 pb-3">
-              <div className="h-12 w-12 rounded-lg bg-cyan-500/10 flex items-center justify-center"><MessageSquare className="h-6 w-6 text-cyan-600" /></div>
-              <CardTitle className="text-lg sm:text-xl">Protokolle</CardTitle>
-              <CardDescription className="text-sm">Besprechungsprotokolle erfassen</CardDescription>
-            </CardHeader>
-            <CardContent><Button className="bg-cyan-600 hover:bg-cyan-700 w-full" size="sm">Protokolle öffnen</Button></CardContent>
-          </Card>
           )}
 
           {/* 4b. Regieberichte */}

@@ -1,4 +1,4 @@
-project_id = "vcrkhmvhrszwbfpgdhhs"
+project_id = "rjrknonzqwttmcpgjamw"
 
 [functions.send-disturbance-report]
 verify_jwt = false
@@ -12,31 +12,10 @@ verify_jwt = false
 [functions.create-team-time-entries]
 verify_jwt = false
 
-[functions.whatsapp-webhook]
-verify_jwt = false
-
-[functions.whatsapp-daily-reminder]
-verify_jwt = false
-
 [functions.create-user]
 verify_jwt = false
 
-[functions.whatsapp-onboarding]
-verify_jwt = false
-
-[functions.whatsapp-cleanup]
-verify_jwt = false
-
-[functions.daily-error-digest]
-verify_jwt = false
-
 [functions.delete-user]
-verify_jwt = false
-
-[functions.forgot-password-whatsapp]
-verify_jwt = false
-
-[functions.sync-assignment-to-calendar]
 verify_jwt = false
 
 [functions.parse-invoice-document]

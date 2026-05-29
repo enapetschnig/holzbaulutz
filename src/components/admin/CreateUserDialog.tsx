@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { UserPlus, Eye, EyeOff, Copy, Check, MessageCircle } from "lucide-react";
+import { UserPlus, Eye, EyeOff, Copy, Check } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
@@ -40,14 +40,13 @@ function buildOnboardingText(params: {
   username: string;
   password: string;
   appUrl: string;
-  hasWhatsApp: boolean;
   istFreelancer: boolean;
 }) {
-  const { vorname, username, password, appUrl, hasWhatsApp, istFreelancer } = params;
+  const { vorname, username, password, appUrl, istFreelancer } = params;
   const lines: string[] = [];
   lines.push(`Hallo ${vorname}!`);
   lines.push("");
-  lines.push("Willkommen bei BKS BauKomplettService.");
+  lines.push("Willkommen bei Holzbau Lutz.");
   lines.push("Hier deine Zugangsdaten:");
   lines.push("");
 
@@ -67,21 +66,8 @@ function buildOnboardingText(params: {
     lines.push("• Datum, Projekt auswählen, Stunden eintragen, fertig.");
     lines.push("• Keine Pausen-Logik, kein Tagessoll — ganz einfach.");
     lines.push("• Deine letzten 30 Einträge siehst du direkt in der Übersicht.");
-  } else if (hasWhatsApp) {
-    lines.push("📱 WhatsApp-Assistent");
-    lines.push("Du bist automatisch freigeschaltet. So funktioniert's:");
-    lines.push("• Schreibe deine Arbeitszeit, z. B. „heute 7-17 auf Musterstraße 1\"");
-    lines.push("• Sende Fotos von der Baustelle → Auswahl per Nummer/Projektname");
-    lines.push("• Frage „wo bin ich heute eingeteilt\" → Plantafel-Info");
-    lines.push("• Sprachnachrichten gehen auch — einfach reinreden.");
     lines.push("");
-    lines.push("Du bekommst gleich eine Willkommensnachricht vom BKS-Assistenten.");
-  } else {
-    lines.push("📱 WhatsApp-Assistent");
-    lines.push("Sobald wir deine Handynummer haben, bist du automatisch freigeschaltet");
-    lines.push("und kannst Zeiten und Fotos einfach per WhatsApp senden.");
   }
-  lines.push("");
   lines.push("Bei Fragen melde dich im Büro.");
   return lines.join("\n");
 }
@@ -92,8 +78,6 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const [onboardingText, setOnboardingText] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [whatsappAktiv, setWhatsappAktiv] = useState(true);
-  const [sendWelcome, setSendWelcome] = useState(true);
   const [istFreelancer, setIstFreelancer] = useState(false);
   const [allProjects, setAllProjects] = useState<ProjectLite[]>([]);
   const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
@@ -117,8 +101,6 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
 
   const resetAndClose = () => {
     setForm(emptyForm);
-    setWhatsappAktiv(true);
-    setSendWelcome(true);
     setIstFreelancer(false);
     setSelectedProjects([]);
     setOnboardingText(null);
@@ -146,10 +128,8 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
 
     setSaving(true);
     try {
-      const hasPhone = !!form.telefon.trim();
-      const enableWhatsApp = hasPhone && whatsappAktiv;
       const { data, error } = await supabase.functions.invoke("create-user", {
-        body: { ...form, whatsapp_aktiv: enableWhatsApp, ist_freelancer: istFreelancer },
+        body: { ...form, ist_freelancer: istFreelancer },
       });
       if (error) {
         // FunctionsHttpError.context ist eine Response → Body explizit lesen
@@ -175,57 +155,13 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
       }
       if (data?.error) throw new Error(data.error);
 
-      // Willkommensnachricht per WhatsApp automatisch senden, wenn gewünscht —
-      // inkl. Zugangsdaten zur App, damit der Mitarbeiter sofort loslegen kann.
-      let welcomeSent = false;
-      let welcomeError: string | null = null;
-      if (enableWhatsApp && sendWelcome) {
-        if (!data?.employee_id) {
-          welcomeError = "employee_id fehlt (Mitarbeiter-Datensatz konnte nicht angelegt werden)";
-        } else {
-          try {
-            const { data: wData, error: wErr } = await supabase.functions.invoke("whatsapp-onboarding", {
-              body: {
-                employee_id: data.employee_id,
-                username: form.username.trim().toLowerCase(),
-                password: form.password,
-                app_url: window.location.origin,
-              },
-            });
-            if (wErr) {
-              let detail = wErr.message;
-              try {
-                const ctx: any = (wErr as any).context;
-                if (ctx && typeof ctx.clone === "function") {
-                  const body = await ctx.clone().text();
-                  console.error("onboarding raw:", ctx.status, body);
-                  try {
-                    const j = JSON.parse(body);
-                    detail = j?.error || body || detail;
-                  } catch { detail = body || detail; }
-                }
-              } catch { /* ignore */ }
-              welcomeError = detail;
-            } else if (wData?.error) {
-              welcomeError = wData.error;
-            } else {
-              welcomeSent = true;
-            }
-          } catch (e: any) {
-            welcomeError = e.message || String(e);
-            console.error("Welcome send exception:", e);
-          }
-        }
-        if (welcomeError) console.error("Welcome failed:", welcomeError);
-      }
-
       // Projekt-Zugriffe setzen (nur für Nicht-Admins; Admin sieht ohnehin alles)
       if (data?.employee_id && form.rolle !== "administrator" && selectedProjects.length > 0) {
         try {
           await syncEmployeeProjectAccess(data.employee_id, selectedProjects);
           toast({
             title: "Projekt-Zugänge vergeben",
-            description: `${selectedProjects.length} Projekt${selectedProjects.length === 1 ? "" : "e"} — sofort aktiv in Zeiterfassung + WhatsApp-Bot.`,
+            description: `${selectedProjects.length} Projekt${selectedProjects.length === 1 ? "" : "e"} — sofort aktiv in der Zeiterfassung.`,
           });
         } catch (e: any) {
           console.error("Projekt-Zuweisung fehlgeschlagen:", e);
@@ -235,13 +171,7 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
 
       toast({
         title: "Benutzer erstellt",
-        description: enableWhatsApp
-          ? welcomeSent
-            ? `${form.vorname} ${form.nachname} — WhatsApp aktiviert, Willkommensnachricht gesendet`
-            : sendWelcome
-              ? `${form.vorname} ${form.nachname} — WhatsApp aktiviert (Fehler: ${welcomeError})`
-              : `${form.vorname} ${form.nachname} — WhatsApp aktiviert`
-          : `${form.vorname} ${form.nachname}`,
+        description: `${form.vorname} ${form.nachname}`,
       });
 
       setOnboardingText(
@@ -250,7 +180,6 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
           username: form.username.trim().toLowerCase(),
           password: form.password,
           appUrl: window.location.origin,
-          hasWhatsApp: enableWhatsApp,
           istFreelancer: istFreelancer,
         }),
       );
@@ -275,7 +204,7 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
         {onboardingText ? (
           <div className="space-y-4 py-2">
             <p className="text-sm text-muted-foreground">
-              Kopiere den Text und schicke ihn dem Mitarbeiter per WhatsApp, SMS oder E-Mail.
+              Kopiere den Text und schicke ihn dem Mitarbeiter per SMS oder E-Mail.
             </p>
             <Textarea
               value={onboardingText}
@@ -340,19 +269,11 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
               <label className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 bg-muted/30">
                 <div className="text-xs">
                   <span className="font-medium">Freier Mitarbeiter</span>
-                  <p className="text-muted-foreground">Nutzt nur die einfache Zeiterfassungs-Seite (/freelancer). Kein Tagessoll, kein Zeitkonto, kein WhatsApp-Bot.</p>
+                  <p className="text-muted-foreground">Nutzt nur die einfache Zeiterfassungs-Seite (/freelancer). Kein Tagessoll, kein Zeitkonto.</p>
                 </div>
                 <Switch
                   checked={istFreelancer}
-                  onCheckedChange={(v) => {
-                    setIstFreelancer(v);
-                    if (v) {
-                      // Freelancer nutzen primär die Web-Seite — WhatsApp-Bot
-                      // + Willkommensnachricht automatisch aus
-                      setWhatsappAktiv(false);
-                      setSendWelcome(false);
-                    }
-                  }}
+                  onCheckedChange={setIstFreelancer}
                 />
               </label>
 
@@ -364,7 +285,7 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
                     <div>
                       <Label className="text-sm">Zugang zu Projekten</Label>
                       <p className="text-xs text-muted-foreground">
-                        Nur die ausgewählten Projekte sieht der Mitarbeiter in der App, in der Zeiterfassung und im WhatsApp-Bot.
+                        Nur die ausgewählten Projekte sieht der Mitarbeiter in der App und in der Zeiterfassung.
                       </p>
                     </div>
                     {allProjects.length > 0 && (
@@ -434,28 +355,6 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
                 <div>
                   <Label>Telefon</Label>
                   <Input value={form.telefon} onChange={e => update("telefon", e.target.value)} placeholder="+43..." />
-                  <label className="flex items-center justify-between gap-3 mt-2 rounded-md border px-2.5 py-1.5 bg-muted/30">
-                    <span className="flex items-center gap-1.5 text-xs">
-                      <MessageCircle className="h-3.5 w-3.5 text-green-600" />
-                      WhatsApp-Chat aktivieren
-                    </span>
-                    <Switch
-                      checked={whatsappAktiv && !!form.telefon.trim()}
-                      disabled={!form.telefon.trim()}
-                      onCheckedChange={setWhatsappAktiv}
-                    />
-                  </label>
-                  <label className="flex items-center justify-between gap-3 mt-1.5 rounded-md border px-2.5 py-1.5 bg-muted/30">
-                    <span className="flex items-center gap-1.5 text-xs">
-                      <MessageCircle className="h-3.5 w-3.5 text-blue-600" />
-                      Willkommensnachricht senden
-                    </span>
-                    <Switch
-                      checked={sendWelcome && whatsappAktiv && !!form.telefon.trim()}
-                      disabled={!form.telefon.trim() || !whatsappAktiv}
-                      onCheckedChange={setSendWelcome}
-                    />
-                  </label>
                 </div>
                 <div>
                   <Label>E-Mail</Label>

@@ -347,7 +347,7 @@ export default function HoursReport() {
 
     const worksheetData: any[][] = [
       // Firmendaten Header
-      ["BKS BauKomplettService — Wir machen es komplett", "", "", "", "", "", "", "", "", "", "", ""],
+      ["Holzbau Lutz — Zimmerei & Holzbau", "", "", "", "", "", "", "", "", "", "", ""],
       ["", "", "", "", "", "", "", "", "", "", "", ""],
       ["", "", "", "", "", "", "", "", "", "", "", ""],
       ["", "", "", "", "", "", "", "", "", "", "", ""],

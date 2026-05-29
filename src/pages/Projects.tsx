@@ -40,15 +40,15 @@ type Project = {
   kategorie?: string | null;
 };
 
-/** Geschäftsbereich → Google-Kalender. 7 Kategorien + Default. */
+/** Optionale Farbkategorie für Projekte. Keys stabil, Labels markenneutral. */
 const KATEGORIE_META: Record<string, { label: string; color: string; bg: string }> = {
-  montipro:     { label: "Monti.pro",     color: "#166534", bg: "#dcfce7" },
-  bks:          { label: "BKS",           color: "#1e40af", bg: "#dbeafe" },
-  gartenmacher: { label: "Gartenmacher",  color: "#3f6212", bg: "#ecfccb" },
-  fensterwerk:  { label: "Fensterwerk",   color: "#155e75", bg: "#cffafe" },
-  ladenbau:     { label: "Ladenbau",      color: "#92400e", bg: "#fef3c7" },
-  portas:       { label: "Portas",        color: "#9a3412", bg: "#ffedd5" },
-  chef:         { label: "CHEF",          color: "#6b21a8", bg: "#f3e8ff" },
+  montipro:     { label: "Grün",     color: "#166534", bg: "#dcfce7" },
+  bks:          { label: "Blau",     color: "#1e40af", bg: "#dbeafe" },
+  gartenmacher: { label: "Limette",  color: "#3f6212", bg: "#ecfccb" },
+  fensterwerk:  { label: "Cyan",     color: "#155e75", bg: "#cffafe" },
+  ladenbau:     { label: "Gelb",     color: "#92400e", bg: "#fef3c7" },
+  portas:       { label: "Orange",   color: "#9a3412", bg: "#ffedd5" },
+  chef:         { label: "Violett",  color: "#6b21a8", bg: "#f3e8ff" },
 };
 
 const Projects = () => {

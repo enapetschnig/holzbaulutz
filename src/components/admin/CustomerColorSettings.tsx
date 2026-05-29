@@ -16,7 +16,7 @@ interface CustomerColor {
 
 const PRESET_COLORS = [
   { bg: "#3b82f6", text: "#ffffff" }, // Blue
-  { bg: "#1F3A5F", text: "#ffffff" }, // BKS Dunkelblau
+  { bg: "#1F3A5F", text: "#ffffff" }, // Dunkelblau
   { bg: "#10b981", text: "#ffffff" }, // Green
   { bg: "#8b5cf6", text: "#ffffff" }, // Purple
   { bg: "#ef4444", text: "#ffffff" }, // Red

@@ -14,7 +14,7 @@ const CACHE_TTL = 5 * 60 * 1000; // 5min
  *
  * Reihenfolge:
  *   1. Custom-Logo aus Supabase Storage (logos/logo.*)
- *   2. Fallback: Standard MONTI.PRO Logo
+ *   2. Fallback: Holzbau Lutz Logo
  *
  * In-Memory-Cache für 5 Minuten um Netzwerk-Last zu reduzieren.
  */
@@ -55,9 +55,9 @@ export async function loadInvoiceLogo(forceRefresh = false): Promise<string | un
     }
   } catch { /* fall through to default */ }
 
-  // 2. Fallback: Standard MONTI.PRO Logo
+  // 2. Fallback: Holzbau Lutz Logo
   try {
-    const res = await fetch("/newmontilogo.png");
+    const res = await fetch("/holzbaulutz-logo.png");
     const blob = await res.blob();
     const raw = await asDataUri(blob);
     const trimmed = await trimLogoPadding(raw);

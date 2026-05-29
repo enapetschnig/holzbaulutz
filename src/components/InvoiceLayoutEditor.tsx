@@ -461,7 +461,7 @@ export function InvoiceLayoutEditor() {
 
         <Separator />
 
-        {/* ── Section 5b: Ansprechpartner (BKS-Seite) ── */}
+        {/* ── Section 5b: Ansprechpartner (Sachbearbeiter) ── */}
         <div className="space-y-4">
           <h3 className="text-sm font-semibold tracking-wide uppercase text-muted-foreground">
             Ihr Ansprechpartner (erscheint rechts oben im PDF)

@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Shield, User as UserIcon, UserPlus, Mail, Phone, MapPin, Shirt, FileText, Clock, Trash2, Settings, Save, Calendar } from "lucide-react";
+import { ArrowLeft, Shield, User as UserIcon, UserPlus, Mail, Phone, MapPin, Shirt, FileText, Clock, Trash2, Settings, Save } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -21,8 +21,6 @@ import EmployeeDocumentsManager from "@/components/EmployeeDocumentsManager";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import LeaveManagement from "@/components/LeaveManagement";
 import TimeAccountManagement from "@/components/TimeAccountManagement";
-import { WhatsAppAdminSettings } from "@/components/WhatsAppAdminSettings";
-import { GoogleCalendarSettings } from "@/components/admin/GoogleCalendarSettings";
 import { EmployeeColorSettings } from "@/components/schedule/EmployeeColorSettings";
 import { InvoiceLayoutEditor } from "@/components/InvoiceLayoutEditor";
 import { InvoiceNumberSettings } from "@/components/admin/InvoiceNumberSettings";
@@ -607,7 +605,7 @@ export default function Admin() {
         toast({ variant: "destructive", title: "Projekt-Zuordnung fehlgeschlagen", description: syncError });
       } else {
         const syncMsg = syncResult && (syncResult.added > 0 || syncResult.removed > 0)
-          ? ` Projekt-Zugänge aktualisiert (${syncResult.added > 0 ? `+${syncResult.added}` : ""}${syncResult.added > 0 && syncResult.removed > 0 ? " / " : ""}${syncResult.removed > 0 ? `-${syncResult.removed}` : ""}) – sofort aktiv in Zeiterfassung + WhatsApp-Bot.`
+          ? ` Projekt-Zugänge aktualisiert (${syncResult.added > 0 ? `+${syncResult.added}` : ""}${syncResult.added > 0 && syncResult.removed > 0 ? " / " : ""}${syncResult.removed > 0 ? `-${syncResult.removed}` : ""}) – sofort aktiv in der Zeiterfassung.`
           : "";
         toast({ title: "Gespeichert", description: `Änderungen übernommen.${syncMsg}` });
       }
@@ -703,8 +701,6 @@ export default function Admin() {
             <TabsTrigger value="farben" className="flex-shrink-0">Farben & Plantafel</TabsTrigger>
             <TabsTrigger value="konfiguration" className="flex-shrink-0">Konfiguration</TabsTrigger>
             <TabsTrigger value="berechtigungen" className="flex-shrink-0">Berechtigungen</TabsTrigger>
-            <TabsTrigger value="whatsapp" className="flex-shrink-0">WhatsApp</TabsTrigger>
-            <TabsTrigger value="kalender" className="flex-shrink-0">Google Kalender</TabsTrigger>
           </TabsList>
 
           {/* ===== TAB 1: BENUTZER & MITARBEITER ===== */}
@@ -1282,15 +1278,6 @@ export default function Admin() {
             <PermissionMatrix />
           </TabsContent>
 
-          {/* ===== TAB 7: WHATSAPP ===== */}
-          <TabsContent value="whatsapp" className="space-y-6">
-            <WhatsAppAdminSettings />
-          </TabsContent>
-
-          {/* ===== TAB 8: GOOGLE KALENDER ===== */}
-          <TabsContent value="kalender" className="space-y-6">
-            <GoogleCalendarSettings />
-          </TabsContent>
         </Tabs>
       </main>
 

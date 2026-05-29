@@ -25,3 +25,8 @@ dist-ssr
 *.sw?
 vorlagefunktionenapp
 test-results/
+
+# Supabase CLI state
+supabase/.temp
+
+.claude/worktrees

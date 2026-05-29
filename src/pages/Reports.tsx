@@ -225,7 +225,7 @@ const Reports = () => {
           </table>
           
           <div class="footer">
-            <p>BKS BauKomplettService — Stundenauswertung</p>
+            <p>Holzbau Lutz — Stundenauswertung</p>
           </div>
         </body>
         </html>

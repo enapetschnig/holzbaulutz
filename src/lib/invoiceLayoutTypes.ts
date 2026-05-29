@@ -52,12 +52,12 @@ export interface InvoiceLayoutSettings {
 
 export const DEFAULT_LAYOUT: InvoiceLayoutSettings = {
   company: {
-    name: "BKS BauKomplettService",
-    slogan: "Wir machen es komplett",
-    address_line1: "",
-    address_line2: "",
-    phone: "",
-    email: "",
+    name: "Holzbau Lutz OG",
+    slogan: "Zimmerei & Holzbau",
+    address_line1: "Am Sportplatz 3",
+    address_line2: "6642 Stanzach",
+    phone: "0699/191 68 685",
+    email: "info@holzbau-lutz.at",
     website: "",
   },
   logo: {
@@ -81,14 +81,15 @@ export const DEFAULT_LAYOUT: InvoiceLayoutSettings = {
   closing_text_invoice: "Wir bitten um Überweisung innerhalb von {{tage}} Tagen auf das unten angegebene Konto.",
   closing_text_angebot: "Dieses Angebot ist bis zum {{gueltig_bis}} gültig. Wir freuen uns auf Ihren Auftrag!",
   danke_text: "Vielen Dank für Ihren Auftrag!",
-  accent_color: "#0077CC", /* BKS Blau */
+  accent_color: "#1C6B4C", /* Holzbau Lutz Tannengrün */
   contact: { name: "", phone: "", email: "" },
 };
 
-/** Known legacy accent colors that should auto-migrate to BKS Blau */
+/** Known legacy accent colors that should auto-migrate to Holzbau Lutz Grün */
 const LEGACY_ACCENT_COLORS = new Set([
   "#E08A20", "#e08a20", // MONTI.PRO Orange (original)
-  "#1F3A5F", "#1f3a5f", // BKS Dunkelblau (interim)
+  "#1F3A5F", "#1f3a5f", // BKS Dunkelblau (legacy)
+  "#0077CC", "#0077cc", // BKS Blau (legacy)
 ]);
 
 /** Safely parse layout settings JSON, merging with defaults for missing fields */
@@ -150,12 +151,12 @@ export function buildFooterLines(c: InvoiceLayoutCompany): { line1: string; line
   return { line1, line2: parts2.join(" · ") };
 }
 
-/** Convert hex color to RGB tuple (default fallback: BKS Blau #0077CC) */
+/** Convert hex color to RGB tuple (default fallback: Holzbau Lutz Grün #1C6B4C) */
 export function hexToRgb(hex: string): [number, number, number] {
   const clean = hex.replace("#", "");
   return [
-    parseInt(clean.slice(0, 2), 16) || 0,     // 0x00
-    parseInt(clean.slice(2, 4), 16) || 119,   // 0x77
-    parseInt(clean.slice(4, 6), 16) || 204,   // 0xCC
+    parseInt(clean.slice(0, 2), 16) || 28,    // 0x1C
+    parseInt(clean.slice(2, 4), 16) || 107,   // 0x6B
+    parseInt(clean.slice(4, 6), 16) || 76,    // 0x4C
   ];
 }

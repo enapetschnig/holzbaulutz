@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, ClipboardList, MessageSquare, Download, FileDown, UserPlus } from "lucide-react";
+import { ArrowLeft, FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown } from "lucide-react";
 import { getDocConfig } from "@/lib/documentTypes";
 import { Separator } from "@/components/ui/separator";
 import { format, parseISO } from "date-fns";
@@ -54,7 +54,6 @@ const ProjectOverview = () => {
     projekt_kontakt_name: "", projekt_kontakt_telefon: "",
     // Sonstiges Projekt
     bereich: "",
-    kategorie: "",  // Geschäftsbereich für Google Calendar
     projektart: "", prioritaet: "normal", geplanter_start: "", geplantes_ende: "",
     budget: "", auftragsvolumen: "", bauleiter_id: "",
     zugewiesene_mitarbeiter: [] as string[],
@@ -64,10 +63,7 @@ const ProjectOverview = () => {
   const [customerPopoverOpen, setCustomerPopoverOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [invoiceCount, setInvoiceCount] = useState(0);
-  const [btbCount, setBtbCount] = useState(0);
   const [regieCount, setRegieCount] = useState(0);
-  const [protokollCount, setProtokollCount] = useState(0);
-  const [projectProtokolle, setProjectProtokolle] = useState<{ id: string; nummer: string | null; datum: string; typ: string | null; ort: string | null; kind: "protokoll" | "ersttermin"; linked?: boolean }[]>([]);
   const [regiePdfs, setRegiePdfs] = useState<{id: string; datum: string; kunde_name: string; pdf_path: string}[]>([]);
   const [purchaseInvoices, setPurchaseInvoices] = useState<{id: string; lieferant: string; rechnungsdatum: string | null; betrag_brutto: number; status: string; kategorie: string | null}[]>([]);
   const [projectData, setProjectData] = useState<any>(null);
@@ -219,7 +215,6 @@ const ProjectOverview = () => {
       projekt_kontakt_telefon: (proj as any).projekt_kontakt_telefon || "",
       // Sonstiges
       bereich: (proj as any).bereich || "",
-      kategorie: (proj as any).kategorie || "",
       projektart: (proj as any).projektart || "",
       prioritaet: (proj as any).prioritaet || "normal",
       geplanter_start: (proj as any).geplanter_start || "",
@@ -268,7 +263,6 @@ const ProjectOverview = () => {
       projekt_kontakt_name: editForm.projekt_kontakt_name.trim() || null,
       projekt_kontakt_telefon: editForm.projekt_kontakt_telefon.trim() || null,
       bereich: editForm.bereich || null,
-      kategorie: editForm.kategorie || null,
       customer_id: editForm.customer_id,
       projektart: editForm.projektart || null,
       prioritaet: editForm.prioritaet || "normal",
@@ -321,7 +315,7 @@ const ProjectOverview = () => {
     toast({
       title: "Projekt aktualisiert",
       description: count > 0
-        ? `${count} Mitarbeiter haben Zugriff — Änderung sofort aktiv in Zeiterfassung + WhatsApp-Bot.`
+        ? `${count} Mitarbeiter haben Zugriff — Änderung sofort aktiv in der Zeiterfassung.`
         : "Keine Mitarbeiter zugewiesen — nur Bauleiter/Verantwortlicher sehen das Projekt.",
     });
   };
@@ -390,12 +384,6 @@ const ProjectOverview = () => {
       }
     }
 
-    // Fetch BTB count
-    (supabase.from("bautagesberichte" as never) as any)
-      .select("id", { count: "exact", head: true })
-      .eq("project_id", projectId)
-      .then(({ count }: any) => setBtbCount(count || 0));
-
     // Fetch Regie count (filtered by project)
     (supabase.from("disturbances" as never) as any)
       .select("id", { count: "exact", head: true })
@@ -416,35 +404,6 @@ const ProjectOverview = () => {
       .eq("project_id", projectId)
       .order("rechnungsdatum", { ascending: false, nullsFirst: false })
       .then(({ data }) => setPurchaseInvoices(data || []));
-
-    // Fetch Protokoll count + Liste (Besprechungsprotokolle + Ersttermine)
-    // Ersttermine: direkt verknüpfte (project_id=X) + noch unverknüpfte
-    // Ersttermine desselben Kunden (damit sie manuell zugeordnet werden können).
-    const custIdForProto = (data as any)?.customer_id || null;
-    const erstterminFilter = custIdForProto
-      ? `project_id.eq.${projectId},and(project_id.is.null,customer_id.eq.${custIdForProto})`
-      : `project_id.eq.${projectId}`;
-    Promise.all([
-      (supabase.from("besprechungsprotokolle" as never) as any)
-        .select("id, nummer, datum, typ, ort")
-        .eq("project_id", projectId)
-        .order("datum", { ascending: false }),
-      (supabase.from("ersttermin_interessent" as never) as any)
-        .select("id, nummer, datum, projektname, standort, project_id")
-        .or(erstterminFilter)
-        .order("datum", { ascending: false }),
-    ]).then(([protoRes, erstterminRes]) => {
-      const protos = ((protoRes as any).data || []).map((p: any) => ({
-        id: p.id, nummer: p.nummer, datum: p.datum, typ: p.typ, ort: p.ort, kind: "protokoll" as const, linked: true,
-      }));
-      const ersts = ((erstterminRes as any).data || []).map((e: any) => ({
-        id: e.id, nummer: e.nummer, datum: e.datum, typ: "Ersttermin", ort: e.standort || e.projektname, kind: "ersttermin" as const,
-        linked: e.project_id === projectId,
-      }));
-      const all = [...protos, ...ersts].sort((a, b) => (b.datum || "").localeCompare(a.datum || ""));
-      setProjectProtokolle(all);
-      setProtokollCount(all.length);
-    });
   };
 
   const [projectInvoices, setProjectInvoices] = useState<{id: string; nummer: string; typ: string; datum: string; brutto_summe: number; kunde_name: string; status: string}[]>([]);
@@ -595,15 +554,6 @@ const ProjectOverview = () => {
 
         {/* Quick-Actions: neues Dokument mit vorbelegter project_id */}
         <div className="flex flex-wrap gap-2 mb-4">
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/bautagesberichte/neu?project=${projectId}`)}>
-            <ClipboardList className="h-3.5 w-3.5" />Neuer Bautagesbericht
-          </Button>
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/besprechungsprotokolle/neu?project=${projectId}`)}>
-            <MessageSquare className="h-3.5 w-3.5" />Neues Protokoll
-          </Button>
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/ersttermine/neu?project=${projectId}`)}>
-            <UserPlus className="h-3.5 w-3.5" />Neue Erstaufnahme
-          </Button>
           <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/invoices/new?typ=angebot&project=${projectId}`)}>
             <FileText className="h-3.5 w-3.5" />Neues Angebot
           </Button>
@@ -743,17 +693,6 @@ const ProjectOverview = () => {
             </Card>
           )}
 
-          {/* Bautagesberichte */}
-          <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/bautagesberichte?project=${projectId}`)}>
-            <CardContent className="flex items-center gap-3 p-4">
-              <ClipboardList className="h-5 w-5 text-emerald-600" />
-              <div className="flex-1">
-                <p className="font-medium">Bautagesberichte</p>
-                <p className="text-xs text-muted-foreground">{btbCount} Berichte</p>
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Regieberichte */}
           <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/disturbances?project=${projectId}`)}>
             <CardContent className="flex items-center gap-3 p-4">
@@ -842,83 +781,6 @@ const ProjectOverview = () => {
                   )}
                 </CardContent>
               )}
-            </Card>
-          )}
-
-          {/* Protokolle — direkte Links zu Besprechungsprotokollen + Ersttermin */}
-          {projectProtokolle.length > 0 ? (
-            <Card>
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <MessageSquare className="h-5 w-5 text-cyan-600" />
-                    Protokolle & Erstaufnahmen
-                  </CardTitle>
-                  <Button variant="outline" size="sm" onClick={() => navigate(`/besprechungsprotokolle?project=${projectId}`)}>
-                    Alle anzeigen
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-1">
-                {projectProtokolle.map((p) => (
-                  <div
-                    key={`${p.kind}-${p.id}`}
-                    className="flex items-center gap-3 text-sm w-full hover:bg-muted rounded px-2 py-2 transition-colors"
-                  >
-                    <button
-                      className="flex items-center gap-3 text-left flex-1 min-w-0"
-                      onClick={() => navigate(p.kind === "ersttermin" ? `/ersttermine/${p.id}` : `/besprechungsprotokolle/${p.id}`)}
-                    >
-                      <MessageSquare className={`h-4 w-4 shrink-0 ${p.kind === "ersttermin" ? "text-orange-500" : "text-cyan-600"}`} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{p.nummer || "—"}</span>
-                          <span className="text-xs text-muted-foreground">
-                            {p.kind === "ersttermin" ? "Erstaufnahme" : (p.typ ? p.typ.charAt(0).toUpperCase() + p.typ.slice(1) : "Protokoll")}
-                          </span>
-                          {p.kind === "ersttermin" && p.linked === false && (
-                            <span className="text-[10px] uppercase tracking-wide text-orange-600 border border-orange-300 rounded px-1 py-0.5">nicht verknüpft</span>
-                          )}
-                        </div>
-                        <div className="text-xs text-muted-foreground truncate">
-                          {p.datum ? new Date(p.datum).toLocaleDateString("de-AT") : "—"}
-                          {p.ort ? ` · ${p.ort}` : ""}
-                        </div>
-                      </div>
-                    </button>
-                    {p.kind === "ersttermin" && p.linked === false && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const { error } = await (supabase.from("ersttermin_interessent" as never) as any)
-                            .update({ project_id: projectId })
-                            .eq("id", p.id);
-                          if (error) {
-                            toast({ variant: "destructive", title: "Fehler", description: error.message });
-                          } else {
-                            toast({ title: "Ersttermin verknüpft", description: "Dem Projekt zugeordnet." });
-                            fetchProjectName();
-                          }
-                        }}
-                      >
-                        Verknüpfen
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          ) : (
-            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/besprechungsprotokolle?project=${projectId}`)}>
-              <CardContent className="flex items-center gap-3 p-4">
-                <MessageSquare className="h-5 w-5 text-cyan-600" />
-                <div className="flex-1">
-                  <p className="font-medium">Protokolle & Erstaufnahmen</p>
-                  <p className="text-xs text-muted-foreground">Keine zugeordnet</p>
-                </div>
-              </CardContent>
             </Card>
           )}
 
@@ -1027,29 +889,6 @@ const ProjectOverview = () => {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground mt-1">Freier Bereichstext (admin-konfigurierbar).</p>
-              </div>
-              <div>
-                <Label>Geschäftsbereich (Google Calendar)</Label>
-                <Select
-                  value={editForm.kategorie || "none"}
-                  onValueChange={(v) => setEditForm(f => ({ ...f, kategorie: v === "none" ? "" : v }))}
-                >
-                  <SelectTrigger><SelectValue placeholder="Default-Kalender" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">— ohne Bereich (Default-Kalender)</SelectItem>
-                    <SelectItem value="montipro">Monti.pro</SelectItem>
-                    <SelectItem value="bks">BKS-BauKomplettService</SelectItem>
-                    <SelectItem value="gartenmacher">Gartenmacher</SelectItem>
-                    <SelectItem value="fensterwerk">Fensterwerk</SelectItem>
-                    <SelectItem value="ladenbau">Ladenbau</SelectItem>
-                    <SelectItem value="portas">Portas</SelectItem>
-                    <SelectItem value="chef">CHEF (privater Kalender)</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Plantafel-Einsätze landen automatisch im zugehörigen Google Calendar.
-                  Ändern ⇒ alle Einsätze werden automatisch umgehängt.
-                </p>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

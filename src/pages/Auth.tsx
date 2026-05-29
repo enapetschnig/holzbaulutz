@@ -24,7 +24,7 @@ export default function Auth() {
 
     // Support username login: if no @ sign, append internal domain
     if (!email.includes("@")) {
-      email = `${email.toLowerCase()}@app.monti.pro`;
+      email = `${email.toLowerCase()}@app.holzbau-lutz.at`;
     }
 
     const { data, error } = await supabase.auth.signInWithPassword({
@@ -75,31 +75,13 @@ export default function Auth() {
     setLoading(false);
   };
 
-  const handlePasswordReset = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handlePasswordReset = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setLoading(true);
-
-    const formData = new FormData(e.currentTarget);
-    const username = (formData.get("reset-username") as string).trim().toLowerCase();
-
-    try {
-      const { data, error } = await supabase.functions.invoke("forgot-password-whatsapp", {
-        body: { username },
-      });
-      if (error) throw error;
-      toast({
-        title: "Anfrage verschickt",
-        description: data?.message || "Falls der Benutzer existiert, wurde ein neues Passwort per WhatsApp geschickt.",
-      });
-      setShowPasswordReset(false);
-    } catch (err: any) {
-      toast({
-        variant: "destructive",
-        title: "Fehler",
-        description: err.message || "Konnte die Anfrage nicht senden. Bitte Admin kontaktieren.",
-      });
-    }
-    setLoading(false);
+    toast({
+      title: "Passwort zurücksetzen",
+      description: "Bitte wende dich an deinen Administrator — er kann dir ein neues Passwort vergeben.",
+    });
+    setShowPasswordReset(false);
   };
 
 
@@ -107,9 +89,9 @@ export default function Auth() {
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <img src="/newmontilogo.png" alt="BKS BauKomplettService" className="h-24 mx-auto mb-4" />
-          <CardTitle>BKS BauKomplettService</CardTitle>
-          <CardDescription>Wir machen es komplett</CardDescription>
+          <img src="/holzbaulutz-logo.png" alt="Holzbau Lutz" className="h-24 mx-auto mb-4" />
+          <CardTitle>Holzbau Lutz</CardTitle>
+          <CardDescription>Zimmerei & Holzbau</CardDescription>
         </CardHeader>
         <CardContent>
           {showPasswordReset ? (
@@ -117,25 +99,13 @@ export default function Auth() {
               <div>
                 <h3 className="text-lg font-semibold">Passwort zurücksetzen</h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Gib deinen Benutzernamen ein — du bekommst ein neues Passwort per WhatsApp zugeschickt.
+                  Wende dich an deinen Administrator — er kann dir ein neues Passwort vergeben.
                 </p>
               </div>
 
               <form onSubmit={handlePasswordReset} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="reset-username">Benutzername</Label>
-                  <Input
-                    id="reset-username"
-                    name="reset-username"
-                    type="text"
-                    autoComplete="username"
-                    placeholder="z.B. max.m"
-                    required
-                  />
-                </div>
-
                 <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? "Sende..." : "Neues Passwort per WhatsApp"}
+                  Verstanden
                 </Button>
 
                 <Button

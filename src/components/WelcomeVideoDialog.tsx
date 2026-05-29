@@ -27,7 +27,7 @@ export function WelcomeVideoDialog({
           <DialogTitle>
             {isReplay 
               ? "App zum Startbildschirm hinzufügen" 
-              : "Willkommen bei BKS BauKomplettService"}
+              : "Willkommen bei Holzbau Lutz"}
           </DialogTitle>
           <DialogDescription>
             In diesem Video zeigen wir Ihnen, wie Sie die App auf Ihrem 

@@ -274,10 +274,10 @@ export async function generateInvoicePdf(
   // entweder per Mitarbeiter-Dropdown oder manuell eingetippt. Kein
   // stiller Firmen-Default-Fallback mehr: wenn leer, wird kein Block
   // angezeigt.
-  const bksName  = ((invoice as any).ansprechpartner_name  || "").trim();
-  const bksPhone = ((invoice as any).ansprechpartner_telefon || "").trim();
-  const bksEmail = ((invoice as any).ansprechpartner_email  || "").trim();
-  if (bksName || bksPhone || bksEmail) {
+  const aspName  = ((invoice as any).ansprechpartner_name  || "").trim();
+  const aspPhone = ((invoice as any).ansprechpartner_telefon || "").trim();
+  const aspEmail = ((invoice as any).ansprechpartner_email  || "").trim();
+  if (aspName || aspPhone || aspEmail) {
     metaY += 2;
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
@@ -286,9 +286,9 @@ export async function generateInvoicePdf(
     metaY += 4;
     pdf.setTextColor(0, 0, 0);
     pdf.setFontSize(9);
-    if (bksName)  { pdf.text(bksName,  metaX, metaY); metaY += 4; }
-    if (bksPhone) { pdf.text(bksPhone, metaX, metaY); metaY += 4; }
-    if (bksEmail) { pdf.text(bksEmail, metaX, metaY); metaY += 4; }
+    if (aspName)  { pdf.text(aspName,  metaX, metaY); metaY += 4; }
+    if (aspPhone) { pdf.text(aspPhone, metaX, metaY); metaY += 4; }
+    if (aspEmail) { pdf.text(aspEmail, metaX, metaY); metaY += 4; }
   }
 
   // Etwas mehr Luft zwischen Empfänger und Dokumententitel als früher
@@ -738,7 +738,7 @@ export async function generateInvoicePdf(
     y += 4;
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
-    // §19 Abs. 1a UStG: Bauleistungen (häufigster Fall bei BKS).
+    // §19 Abs. 1a UStG: Bauleistungen (häufigster Fall im Holzbau).
     pdf.text("Es wird darauf hingewiesen, dass die Steuerschuld gem. § 19 Abs. 1a UStG auf den Leistungsempfänger übergeht.", ml, y, { maxWidth: contentWidth });
     y += 6;
   }
@@ -981,7 +981,7 @@ export function generateStornoPdf(
   const ml = LETTERHEAD_MARGIN.left;
   const mr = LETTERHEAD_MARGIN.right;
 
-  // Einheitlicher BKS-Briefkopf
+  // Einheitlicher Briefkopf
   const { afterY } = drawLetterhead(pdf, L, logoDataUri);
   let y = afterY;
 
@@ -1051,7 +1051,7 @@ export function generateStornoPdf(
     pdf.text("Der Auftrag gilt damit als aufgehoben; eventuelle Folgedokumente sind separat zu behandeln.", ml, y);
   }
 
-  // Einheitlicher BKS-Footer
+  // Einheitlicher Footer
   drawFooter(pdf, L, { withPageNumbers: false });
 
   return pdf.output("blob");
@@ -1079,7 +1079,7 @@ export function generateMahnungPdf(
   const ml = LETTERHEAD_MARGIN.left;
   const mr = LETTERHEAD_MARGIN.right;
 
-  // Einheitlicher BKS-Briefkopf (Logo + Firmen-Info + Akzent-Linie)
+  // Einheitlicher Briefkopf (Logo + Firmen-Info + Akzent-Linie)
   const { afterY } = drawLetterhead(pdf, L, logoDataUri);
   let y = afterY;
 
@@ -1174,7 +1174,7 @@ export function generateMahnungPdf(
   pdf.setFont("helvetica", "bold");
   pdf.text(L.company.name, ml, y);
 
-  // Einheitlicher BKS-Footer (BKS-Blau-Akzent-Linie + Firmen-Kurzinfo)
+  // Einheitlicher Footer (grüne Akzent-Linie + Firmen-Kurzinfo)
   drawFooter(pdf, L, { withPageNumbers: false });
 
   return pdf.output("blob");

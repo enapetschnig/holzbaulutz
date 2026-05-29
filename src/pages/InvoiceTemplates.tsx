@@ -14,8 +14,11 @@ import { MaterialFileImport } from "@/components/MaterialFileImport";
 import { Textarea } from "@/components/ui/textarea";
 import { useEinheiten } from "@/hooks/useEinheiten";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { MaterialSetEditor, type SetComponent } from "@/components/MaterialSetEditor";
 import { BulkPriceDialog } from "@/components/BulkPriceDialog";
+import { KalkulationFields } from "@/components/KalkulationFields";
+import { calcEinzelpreis } from "@/lib/kalkulation";
 import {
   Dialog,
   DialogContent,
@@ -50,6 +53,12 @@ interface Template {
   bezugseinheit: string | null;
   aufschlag_prozent: number;
   vk_preis_manuell: boolean;
+  ist_kalkuliert: boolean;
+  verschnitt_prozent: number;
+  befestigung_preis: number;
+  sonstiges_preis: number;
+  arbeitszeit_minuten: number;
+  stundensatz: number;
 }
 
 export default function InvoiceTemplates() {
@@ -70,6 +79,12 @@ export default function InvoiceTemplates() {
     bezugseinheit: "" as string,
     aufschlag_prozent: 0,
     vk_preis_manuell: false,
+    ist_kalkuliert: false,
+    verschnitt_prozent: 0,
+    befestigung_preis: 0,
+    sonstiges_preis: 0,
+    arbeitszeit_minuten: 0,
+    stundensatz: 52,
   });
   const [importOpen, setImportOpen] = useState(false);
   const [bulkPriceOpen, setBulkPriceOpen] = useState(false);
@@ -122,6 +137,12 @@ export default function InvoiceTemplates() {
           bezugseinheit: (t as any).bezugseinheit || null,
           aufschlag_prozent: Number((t as any).aufschlag_prozent) || 0,
           vk_preis_manuell: !!(t as any).vk_preis_manuell,
+          ist_kalkuliert: !!(t as any).ist_kalkuliert,
+          verschnitt_prozent: Number((t as any).verschnitt_prozent) || 0,
+          befestigung_preis: Number((t as any).befestigung_preis) || 0,
+          sonstiges_preis: Number((t as any).sonstiges_preis) || 0,
+          arbeitszeit_minuten: Number((t as any).arbeitszeit_minuten) || 0,
+          stundensatz: Number((t as any).stundensatz) || 52,
         };
       }) as Template[];
       setTemplates(rows);
@@ -177,6 +198,7 @@ export default function InvoiceTemplates() {
       ist_lagerartikel: false, lieferant: "", produktgruppe: "",
       foto_path: null, ist_set: false,
       ek_netto: 0, vk_netto: 0, bezugseinheit: "", aufschlag_prozent: 0, vk_preis_manuell: false,
+      ist_kalkuliert: false, verschnitt_prozent: 0, befestigung_preis: 0, sonstiges_preis: 0, arbeitszeit_minuten: 0, stundensatz: 52,
     });
     setSetComponents([]);
     setOriginalComponentIds([]);
@@ -200,6 +222,12 @@ export default function InvoiceTemplates() {
       bezugseinheit: t.bezugseinheit || "",
       aufschlag_prozent: t.aufschlag_prozent,
       vk_preis_manuell: t.vk_preis_manuell,
+      ist_kalkuliert: t.ist_kalkuliert,
+      verschnitt_prozent: t.verschnitt_prozent,
+      befestigung_preis: t.befestigung_preis,
+      sonstiges_preis: t.sonstiges_preis,
+      arbeitszeit_minuten: t.arbeitszeit_minuten,
+      stundensatz: t.stundensatz || 52,
     });
     setPriceAdjustValue("");
     setEditFotoUrl(t.foto_path ? (fotoUrls[t.id] || null) : null);
@@ -287,7 +315,17 @@ export default function InvoiceTemplates() {
 
     // VK ist der Primärwert für Rechnungen; netto_preis und einzelpreis werden
     // daraus gespiegelt für Abwärtskompatibilität mit Altcode.
-    const vkEffective = Number(form.vk_netto) || Number(form.netto_preis) || 0;
+    // Im Kalkulations-Modus wird der VK aus EK + Verschnitt + Aufschlag + Lohn berechnet.
+    const kalkVk = calcEinzelpreis({
+      ek_preis: Number(form.ek_netto) || 0,
+      verschnitt_prozent: Number(form.verschnitt_prozent) || 0,
+      aufschlag_prozent: Number(form.aufschlag_prozent) || 0,
+      befestigung_preis: Number(form.befestigung_preis) || 0,
+      sonstiges_preis: Number(form.sonstiges_preis) || 0,
+      arbeitszeit_minuten: Number(form.arbeitszeit_minuten) || 0,
+      stundensatz: Number(form.stundensatz) || 52,
+    });
+    const vkEffective = form.ist_kalkuliert ? kalkVk : (Number(form.vk_netto) || Number(form.netto_preis) || 0);
     const ekEffective = Number(form.ek_netto) || vkEffective;
     const bruttoEffective = Math.round(vkEffective * (1 + Number(form.ust_satz) / 100) * 100) / 100;
 
@@ -312,8 +350,14 @@ export default function InvoiceTemplates() {
       ek_netto: ekEffective,
       vk_netto: vkEffective,
       bezugseinheit: form.ist_set ? (form.bezugseinheit || null) : null,
-      aufschlag_prozent: form.ist_set ? Number(form.aufschlag_prozent) || 0 : 0,
+      aufschlag_prozent: (form.ist_set || form.ist_kalkuliert) ? Number(form.aufschlag_prozent) || 0 : 0,
       vk_preis_manuell: form.ist_set ? form.vk_preis_manuell : false,
+      ist_kalkuliert: form.ist_kalkuliert,
+      verschnitt_prozent: form.ist_kalkuliert ? Number(form.verschnitt_prozent) || 0 : 0,
+      befestigung_preis: form.ist_kalkuliert ? Number(form.befestigung_preis) || 0 : 0,
+      sonstiges_preis: form.ist_kalkuliert ? Number(form.sonstiges_preis) || 0 : 0,
+      arbeitszeit_minuten: form.ist_kalkuliert ? Number(form.arbeitszeit_minuten) || 0 : 0,
+      stundensatz: Number(form.stundensatz) || 52,
     };
 
     let templateId = editId;
@@ -667,7 +711,7 @@ export default function InvoiceTemplates() {
                     }}
                     min={0}
                     step={0.01}
-                    disabled={form.ist_set && !form.vk_preis_manuell}
+                    disabled={(form.ist_set && !form.vk_preis_manuell) || form.ist_kalkuliert}
                   />
                 </div>
                 <div>
@@ -703,7 +747,7 @@ export default function InvoiceTemplates() {
                     }}
                     min={0}
                     step={0.01}
-                    disabled={form.ist_set && !form.vk_preis_manuell}
+                    disabled={(form.ist_set && !form.vk_preis_manuell) || form.ist_kalkuliert}
                   />
                 </div>
               </div>
@@ -716,6 +760,57 @@ export default function InvoiceTemplates() {
                     </span> (€ {(form.vk_netto - form.ek_netto).toFixed(2)} Aufschlag)</>
                   ) : (
                     <>Kein EK hinterlegt — Marge nicht berechenbar.</>
+                  )}
+                </div>
+              )}
+              {/* Kalkulation — EK → Verschnitt/Aufschlag/Lohn → VK (nach Excel-Vorlage) */}
+              {!form.ist_set && (
+                <div className="border rounded-lg p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="font-medium">Kalkulation</Label>
+                      <p className="text-xs text-muted-foreground">VK aus EK + Verschnitt + Aufschlag + Lohn berechnen</p>
+                    </div>
+                    <Switch
+                      checked={form.ist_kalkuliert}
+                      onCheckedChange={(c) => setForm(f => {
+                        const next = { ...f, ist_kalkuliert: !!c };
+                        if (c) {
+                          const vk = calcEinzelpreis({
+                            ek_preis: f.ek_netto, verschnitt_prozent: f.verschnitt_prozent,
+                            aufschlag_prozent: f.aufschlag_prozent, befestigung_preis: f.befestigung_preis,
+                            sonstiges_preis: f.sonstiges_preis, arbeitszeit_minuten: f.arbeitszeit_minuten,
+                            stundensatz: f.stundensatz || 52,
+                          });
+                          next.vk_netto = vk; next.netto_preis = vk;
+                          next.brutto_preis = Math.round(vk * (1 + f.ust_satz / 100) * 100) / 100;
+                        }
+                        return next;
+                      })}
+                    />
+                  </div>
+                  {form.ist_kalkuliert && (
+                    <KalkulationFields
+                      einheit={form.einheit}
+                      value={{
+                        ek_preis: form.ek_netto, verschnitt_prozent: form.verschnitt_prozent,
+                        aufschlag_prozent: form.aufschlag_prozent, befestigung_preis: form.befestigung_preis,
+                        sonstiges_preis: form.sonstiges_preis, arbeitszeit_minuten: form.arbeitszeit_minuten,
+                        stundensatz: form.stundensatz || 52,
+                      }}
+                      onChange={(v) => setForm(f => {
+                        const vk = calcEinzelpreis(v);
+                        return {
+                          ...f,
+                          ek_netto: v.ek_preis, verschnitt_prozent: v.verschnitt_prozent,
+                          aufschlag_prozent: v.aufschlag_prozent, befestigung_preis: v.befestigung_preis,
+                          sonstiges_preis: v.sonstiges_preis, arbeitszeit_minuten: v.arbeitszeit_minuten,
+                          stundensatz: v.stundensatz,
+                          vk_netto: vk, netto_preis: vk,
+                          brutto_preis: Math.round(vk * (1 + f.ust_satz / 100) * 100) / 100,
+                        };
+                      })}
+                    />
                   )}
                 </div>
               )}

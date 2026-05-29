@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 
 export const FEATURES = [
   'zeiterfassung','projekte','meine_stunden','regieberichte','rechnungen',
-  'kalender','plantafel','bautagesberichte','ersttermine','protokolle',
+  'plantafel',
   'kunden','materialien','admin','stundenauswertung','eingangsrechnungen'
 ] as const;
 export type FeatureKey = typeof FEATURES[number];
@@ -14,11 +14,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   meine_stunden: "Meine Stunden",
   regieberichte: "Regieberichte",
   rechnungen: "Rechnungen & Angebote",
-  kalender: "Kalender",
   plantafel: "Plantafel",
-  bautagesberichte: "Bautagesberichte",
-  ersttermine: "Ersttermine",
-  protokolle: "Besprechungsprotokolle",
   kunden: "Kunden",
   materialien: "Materialien",
   admin: "Admin-Bereich",
@@ -33,12 +29,7 @@ export const ROUTE_FEATURE_MAP: Record<string, FeatureKey> = {
   '/my-hours': 'meine_stunden',
   '/disturbances': 'regieberichte',
   '/invoices': 'rechnungen',
-  '/calendar': 'kalender',
   '/schedule': 'plantafel',
-  '/bautagesberichte': 'bautagesberichte',
-  '/ersttermine-interessent': 'ersttermine',
-  '/ersttermine-projekt': 'ersttermine',
-  '/besprechungsprotokolle': 'protokolle',
   '/customers': 'kunden',
   '/materials': 'materialien',
   '/admin': 'admin',

@@ -14,8 +14,8 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 import {
-  Home, Clock, FolderKanban, LayoutGrid, CalendarDays,
-  Receipt, ClipboardList, FileText, UserPlus, MessageSquare,
+  Home, Clock, FolderKanban, LayoutGrid,
+  Receipt, FileText,
   BookUser, Package, BarChart3, Shield, LogOut, FileDown,
 } from "lucide-react";
 import { usePermissions, type FeatureKey } from "@/hooks/usePermissions";
@@ -42,7 +42,6 @@ const MENU_GROUPS: MenuGroup[] = [
       { title: "Zeiterfassung", path: "/time-tracking", icon: Clock, feature: null },
       { title: "Projekte", path: "/projects", icon: FolderKanban, feature: null },
       { title: "Plantafel", path: "/schedule", icon: LayoutGrid, feature: "plantafel" },
-      { title: "Kalender", path: "/calendar", icon: CalendarDays, feature: "kalender" },
     ],
   },
   {
@@ -50,10 +49,7 @@ const MENU_GROUPS: MenuGroup[] = [
     items: [
       { title: "Rechnungen & Angebote", path: "/invoices", icon: Receipt, feature: "rechnungen" },
       { title: "Eingangsrechnungen", path: "/eingangsrechnungen", icon: FileDown, feature: "eingangsrechnungen" },
-      { title: "Bautagesberichte", path: "/bautagesberichte", icon: ClipboardList, feature: "bautagesberichte" },
       { title: "Regieberichte", path: "/disturbances", icon: FileText, feature: "regieberichte" },
-      { title: "Ersttermine", path: "/ersttermine", icon: UserPlus, feature: "ersttermine" },
-      { title: "Protokolle", path: "/besprechungsprotokolle", icon: MessageSquare, feature: "protokolle" },
     ],
   },
   {
@@ -105,9 +101,9 @@ export function AppSidebar() {
       <SidebarHeader className="p-3 border-b">
         <Link to="/" className="flex items-center justify-center px-1">
           <img
-            src="/newmontilogo.png"
-            alt="BKS BauKomplettService"
-            className="h-10 w-auto object-contain"
+            src="/holzbaulutz-logo.png"
+            alt="Holzbau Lutz"
+            className="h-12 w-auto object-contain"
           />
         </Link>
       </SidebarHeader>

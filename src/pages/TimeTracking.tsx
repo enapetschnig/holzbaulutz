@@ -306,7 +306,7 @@ const TimeTracking = () => {
   const fetchProjects = async () => {
     // Nur die für diesen User sichtbaren Projekte laden.
     // Zentrale Quelle der Wahrheit: RPC list_accessible_project_ids_for_user.
-    // Unabhängig von RLS → eindeutig konsistent mit WhatsApp-Bot etc.
+    // Unabhängig von RLS → eindeutig konsistente Projektliste.
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setLoading(false); return; }
 

@@ -16,9 +16,6 @@ import { supabase } from "@/integrations/supabase/client";
 const FK_TABLES: { table: string; col: string }[] = [
   { table: "einsaetze", col: "project_id" },
   { table: "board_projects", col: "project_id" },
-  { table: "bautagesberichte", col: "project_id" },
-  { table: "besprechungsprotokolle", col: "project_id" },
-  { table: "ersttermin_interessent", col: "project_id" },
   { table: "time_entries", col: "project_id" },
   { table: "disturbances", col: "project_id" },
   { table: "invoices", col: "project_id" },
