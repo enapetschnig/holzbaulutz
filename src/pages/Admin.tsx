@@ -863,9 +863,19 @@ export default function Admin() {
                             <p className="font-medium">
                               {profile.vorname} {profile.nachname}
                             </p>
-                            <p className="text-sm text-muted-foreground">
-                              {userRoles[profile.id] === "administrator" ? "Administrator" : userRoles[profile.id] === "vorarbeiter" ? "Vorarbeiter" : "Mitarbeiter"}
-                            </p>
+                            {(() => {
+                              const role = userRoles[profile.id];
+                              const cfg = role === "administrator"
+                                ? { label: "Administrator", cls: "bg-primary/10 text-primary border-primary/20" }
+                                : role === "vorarbeiter"
+                                ? { label: "Vorarbeiter", cls: "bg-blue-100 text-blue-800 border-blue-200" }
+                                : { label: "Mitarbeiter", cls: "bg-muted text-muted-foreground border-border" };
+                              return (
+                                <span className={`inline-flex items-center px-2 py-0.5 mt-0.5 text-xs font-medium rounded border ${cfg.cls}`}>
+                                  {cfg.label}
+                                </span>
+                              );
+                            })()}
                           </div>
                         </div>
                         <div className="flex flex-col sm:flex-row sm:items-center gap-2">

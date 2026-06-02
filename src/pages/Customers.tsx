@@ -197,7 +197,10 @@ export default function Customers() {
     if (!search.trim()) return true;
     return matchesSearch(c.name, search)
       || matchesSearch(c.ort, search)
-      || matchesSearch(c.email, search);
+      || matchesSearch(c.email, search)
+      || matchesSearch((c as any).kundennummer, search)
+      || matchesSearch((c as any).firmenname, search)
+      || matchesSearch((c as any).uid_nummer, search);
   });
 
   const openNew = () => {
@@ -351,9 +354,17 @@ export default function Customers() {
         }
         toast({ title: "Gespeichert", description: "Kunde wurde aktualisiert" });
       } else {
-        const { error } = await supabase.from("customers").insert({ user_id: user.id, ...payload });
+        const { data: created, error } = await supabase.from("customers")
+          .insert({ user_id: user.id, ...payload })
+          .select("kundennummer")
+          .single();
         if (error) throw error;
-        toast({ title: "Erstellt", description: "Neuer Kunde wurde angelegt" });
+        toast({
+          title: "Erstellt",
+          description: created?.kundennummer
+            ? `Neuer Kunde angelegt — Kundennummer ${created.kundennummer}`
+            : "Neuer Kunde wurde angelegt",
+        });
       }
       setDialogOpen(false);
       fetchCustomers();

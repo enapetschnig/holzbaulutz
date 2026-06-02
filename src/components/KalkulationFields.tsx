@@ -103,7 +103,9 @@ export function KalkulationFields({
         {field("sonstiges_preis", "Sonstiges", "€")}
         {field("arbeitszeit_minuten", "Arbeitszeit", "min")}
         <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Stundensatz</Label>
+          <Label className="text-xs text-muted-foreground" title="Standard: 52 €/h (Mittellohn) · Regie: 50 €/h">
+            Stundensatz
+          </Label>
           <div className="relative">
             <Input
               type="number"
@@ -112,6 +114,7 @@ export function KalkulationFields({
               value={value.stundensatz === 0 ? "" : value.stundensatz}
               placeholder={String(DEFAULT_STUNDENSATZ)}
               disabled={disabled}
+              title="Standard: 52 €/h (Mittellohn) · Regie: 50 €/h"
               onChange={(e) => set("stundensatz", e.target.value)}
               className="pr-9"
             />
