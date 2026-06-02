@@ -95,6 +95,15 @@ export async function generateInvoicePdf(
         if (props.width > 0 && props.height > 0) {
           const aspect = props.width / props.height;
           logoH = logoW / aspect;
+          // WICHTIG: Höhe deckeln, damit das Logo NIE in den Absender-/
+          // Empfängerblock (DIN: ab 45 mm) ragt. Bei quadratischen Logos
+          // wäre die aus der Breite abgeleitete Höhe sonst zu groß und würde
+          // den Text überlappen. Seitenverhältnis bleibt erhalten.
+          const MAX_LOGO_H = 24; // Start y=15 → endet bei max. 39 mm
+          if (logoH > MAX_LOGO_H) {
+            logoH = MAX_LOGO_H;
+            logoW = logoH * aspect;
+          }
         }
       } catch {}
       // position="left": Logo bündig zum Content-Margin + optionaler
