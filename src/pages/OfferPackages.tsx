@@ -74,11 +74,17 @@ export default function OfferPackages() {
     if (pkgs) {
       // Load items for each package
       const packageIds = pkgs.map((p: any) => p.id);
-      const { data: allItems } = await supabase
-        .from("offer_package_items")
-        .select("*")
-        .in("package_id", packageIds.length > 0 ? packageIds : ["__none__"])
-        .order("sort_order");
+      // Bei leerer Paketliste KEINE Abfrage — "__none__" wäre keine gültige
+      // UUID und würde einen 400er auslösen.
+      let allItems: any[] = [];
+      if (packageIds.length > 0) {
+        const { data } = await supabase
+          .from("offer_package_items")
+          .select("*")
+          .in("package_id", packageIds)
+          .order("sort_order");
+        allItems = data || [];
+      }
 
       const packagesWithItems = pkgs.map((p: any) => ({
         ...p,
