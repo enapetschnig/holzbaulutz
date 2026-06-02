@@ -1256,7 +1256,10 @@ export default function InvoiceDetail() {
     ? positionenNetto * (form.rabatt_prozent / 100)
     : form.rabatt_betrag);
   const nettoSumme = r2(positionenNetto - rabattWert);
-  const mwstBetrag = r2(nettoSumme * (form.mwst_satz / 100));
+  // Bei Reverse Charge (§ 19 Abs. 1a) schuldet der Empfänger die USt — wir
+  // weisen keine USt aus, der Rechnungsbetrag = Netto (konsistent mit dem PDF
+  // und dem Zahlungsabgleich).
+  const mwstBetrag = (form as any).reverse_charge ? 0 : r2(nettoSumme * (form.mwst_satz / 100));
   const bruttoSumme = r2(nettoSumme + mwstBetrag + exemptBrutto);
   const restBetrag = r2(bruttoSumme - form.bezahlt_betrag);
 
@@ -1326,12 +1329,23 @@ export default function InvoiceDetail() {
       toast({ variant: "destructive", title: "Fehler", description: "Bei Reverse Charge ist die UID-Nummer des Kunden Pflicht" });
       return false;
     }
-    // Reverse Charge: eigene Firmen-UID ist Pflicht (§ 19 UStG)
-    if ((form as any).reverse_charge) {
-      const { data: firmenUidSetting } = await supabase.from("app_settings").select("value").eq("key", "firmen_uid").maybeSingle();
-      if (!firmenUidSetting?.value?.trim()) {
-        toast({ variant: "destructive", title: "Eigene UID fehlt", description: "Bei Reverse Charge ist die UID-Nummer des Ausstellers Pflicht. Bitte im Admin-Bereich konfigurieren." });
-        return false;
+    // Firmen-UID (§ 11 UStG): bei Reverse Charge zwingend, bei jeder Rechnung
+    // > 400 € (keine Kleinbetragsrechnung) als Pflichtangabe stark empfohlen.
+    {
+      const docCfg = getDocConfig(form.typ);
+      const isReverse = !!(form as any).reverse_charge;
+      const needsUid = isReverse || (docCfg.isInvoiceLike && bruttoSumme > 400);
+      if (needsUid) {
+        const { data: firmenUidSetting } = await supabase.from("app_settings").select("value").eq("key", "firmen_uid").maybeSingle();
+        if (!firmenUidSetting?.value?.trim()) {
+          if (isReverse) {
+            toast({ variant: "destructive", title: "Eigene UID fehlt", description: "Bei Reverse Charge ist die UID-Nummer des Ausstellers Pflicht. Bitte im Admin-Bereich → Rechnungslayout konfigurieren." });
+            return false;
+          }
+          // Normale Rechnung: nicht blockieren, aber deutlich auf die
+          // finanzamtsrechtliche Pflichtangabe hinweisen.
+          toast({ variant: "destructive", title: "Firmen-UID fehlt", description: "Für eine finanzamtskonforme Rechnung muss die UID-Nummer der Firma hinterlegt sein (Admin → Rechnungslayout). Die Rechnung wird trotzdem gespeichert." });
+        }
       }
     }
 
