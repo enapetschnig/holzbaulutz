@@ -94,8 +94,8 @@ function AppContent() {
           <Route path="/hours-report" element={<ProtectedRoute feature="stundenauswertung"><HoursReport /></ProtectedRoute>} />
           <Route path="/employees" element={<ProtectedRoute><Employees /></ProtectedRoute>} />
           <Route path="/notepad" element={<ProtectedRoute><Notepad /></ProtectedRoute>} />
-          <Route path="/disturbances" element={<ProtectedRoute><Disturbances /></ProtectedRoute>} />
-          <Route path="/disturbances/:id" element={<ProtectedRoute><DisturbanceDetail /></ProtectedRoute>} />
+          <Route path="/disturbances" element={<ProtectedRoute feature="regieberichte"><Disturbances /></ProtectedRoute>} />
+          <Route path="/disturbances/:id" element={<ProtectedRoute feature="regieberichte"><DisturbanceDetail /></ProtectedRoute>} />
           <Route path="/invoices" element={<ProtectedRoute feature="rechnungen"><Invoices /></ProtectedRoute>} />
           <Route path="/invoices/templates" element={<ProtectedRoute feature="rechnungen"><InvoiceTemplates /></ProtectedRoute>} />
           <Route path="/invoices/packages" element={<ProtectedRoute feature="rechnungen"><OfferPackages /></ProtectedRoute>} />

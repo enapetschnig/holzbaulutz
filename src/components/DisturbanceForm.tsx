@@ -35,6 +35,8 @@ type DisturbanceFormProps = {
     kunde_name: string;
     kunde_email: string | null;
     kunde_adresse: string | null;
+    kunde_plz: string | null;
+    kunde_ort: string | null;
     kunde_telefon: string | null;
     beschreibung: string;
     notizen: string | null;
@@ -122,6 +124,8 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
         kundeName: editData.kunde_name,
         kundeEmail: editData.kunde_email || "",
         kundeAdresse: editData.kunde_adresse || "",
+        kundePlz: editData.kunde_plz || "",
+        kundeOrt: editData.kunde_ort || "",
         kundeTelefon: editData.kunde_telefon || "",
         beschreibung: editData.beschreibung,
         notizen: editData.notizen || "",
@@ -139,6 +143,8 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
         kundeName: "",
         kundeEmail: "",
         kundeAdresse: "",
+        kundePlz: "",
+        kundeOrt: "",
         kundeTelefon: "",
         beschreibung: "",
         notizen: "",
@@ -164,14 +170,15 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
   const loadExistingMaterials = async (disturbanceId: string) => {
     const { data } = await supabase
       .from("disturbance_materials")
-      .select("id, material, menge")
+      .select("id, material, menge, einheit")
       .eq("disturbance_id", disturbanceId);
-    
+
     if (data) {
       setMaterials(data.map(m => ({
         id: m.id,
         material: m.material,
         menge: m.menge || "",
+        einheit: (m as any).einheit || "Stk.",
       })));
     }
   };

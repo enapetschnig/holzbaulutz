@@ -344,6 +344,11 @@ export default function Customers() {
       if (editId) {
         const { error } = await supabase.from("customers").update(payload).eq("id", editId);
         if (error) throw error;
+        // Detailansicht sofort aktualisieren, damit sie nach dem Bearbeiten
+        // nicht veraltete Daten zeigt.
+        if (selectedCustomer?.id === editId) {
+          setSelectedCustomer(prev => (prev ? ({ ...prev, ...payload } as Customer) : prev));
+        }
         toast({ title: "Gespeichert", description: "Kunde wurde aktualisiert" });
       } else {
         const { error } = await supabase.from("customers").insert({ user_id: user.id, ...payload });

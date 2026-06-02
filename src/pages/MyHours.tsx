@@ -364,6 +364,9 @@ const MyHours = () => {
                         });
                         // Day summary row (only if multiple entries)
                         if (dayEntries.length > 1) {
+                          const dayTotal = dayBal?.ist ?? dayEntries.reduce((s, e) => s + (e.stunden || 0), 0);
+                          const sollH = dayBal?.soll ?? 0;
+                          const dayDiff = dayBal?.saldo ?? (dayTotal - sollH);
                           rows.push(
                             <TableRow key={`sum-${datum}`} className="bg-muted/30">
                               <TableCell colSpan={6} className="text-right text-xs text-muted-foreground py-1">

@@ -8,8 +8,15 @@ import { Key } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
-export default function ChangePasswordDialog() {
-  const [open, setOpen] = useState(false);
+interface ChangePasswordDialogProps {
+  /** Erzwungener Modus: nicht abbrechbar, kein Dropdown-Trigger, setzt
+   *  profiles.must_change_password nach Erfolg auf false. */
+  forced?: boolean;
+  onSuccess?: () => void;
+}
+
+export default function ChangePasswordDialog({ forced = false, onSuccess }: ChangePasswordDialogProps = {}) {
+  const [open, setOpen] = useState(forced);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
@@ -42,6 +49,11 @@ export default function ChangePasswordDialog() {
     if (error) {
       setError(error.message);
     } else {
+      // Pflicht-Flag zurücksetzen, damit beim nächsten Login nicht erneut gezwungen wird.
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from("profiles").update({ must_change_password: false }).eq("id", user.id);
+      }
       toast({
         title: "Passwort geändert",
         description: "Ihr Passwort wurde erfolgreich aktualisiert.",
@@ -49,26 +61,31 @@ export default function ChangePasswordDialog() {
       setOpen(false);
       setError(null);
       (e.target as HTMLFormElement).reset();
+      onSuccess?.();
     }
     setLoading(false);
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setError(null); }}>
-      <DialogTrigger asChild>
-        <DropdownMenuItem onSelect={(e) => {
-          e.preventDefault();
-          setOpen(true);
-        }}>
-          <Key className="mr-2 h-4 w-4" />
-          <span>Passwort ändern</span>
-        </DropdownMenuItem>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-[425px]">
+    <Dialog open={open} onOpenChange={(o) => { if (forced) return; setOpen(o); if (!o) setError(null); }}>
+      {!forced && (
+        <DialogTrigger asChild>
+          <DropdownMenuItem onSelect={(e) => {
+            e.preventDefault();
+            setOpen(true);
+          }}>
+            <Key className="mr-2 h-4 w-4" />
+            <span>Passwort ändern</span>
+          </DropdownMenuItem>
+        </DialogTrigger>
+      )}
+      <DialogContent className="sm:max-w-[425px]" onPointerDownOutside={(e) => forced && e.preventDefault()} onEscapeKeyDown={(e) => forced && e.preventDefault()} hideClose={forced}>
         <DialogHeader>
-          <DialogTitle>Passwort ändern</DialogTitle>
+          <DialogTitle>{forced ? "Passwort festlegen" : "Passwort ändern"}</DialogTitle>
           <DialogDescription>
-            Geben Sie Ihr neues Passwort ein. Es muss mindestens 6 Zeichen lang sein.
+            {forced
+              ? "Bitte vergib zunächst ein eigenes Passwort, um fortzufahren. Mindestens 6 Zeichen."
+              : "Geben Sie Ihr neues Passwort ein. Es muss mindestens 6 Zeichen lang sein."}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleChangePassword} className="space-y-4">
@@ -101,17 +118,19 @@ export default function ChangePasswordDialog() {
           </div>
           <div className="flex gap-2 pt-2">
             <Button type="submit" className="flex-1" disabled={loading}>
-              {loading ? "Lädt..." : "Passwort ändern"}
+              {loading ? "Lädt..." : forced ? "Passwort festlegen" : "Passwort ändern"}
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="flex-1"
-              onClick={() => setOpen(false)}
-              disabled={loading}
-            >
-              Abbrechen
-            </Button>
+            {!forced && (
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1"
+                onClick={() => setOpen(false)}
+                disabled={loading}
+              >
+                Abbrechen
+              </Button>
+            )}
           </div>
         </form>
       </DialogContent>

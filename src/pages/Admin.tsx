@@ -864,7 +864,7 @@ export default function Admin() {
                               {profile.vorname} {profile.nachname}
                             </p>
                             <p className="text-sm text-muted-foreground">
-                              {userRoles[profile.id] === "administrator" ? "Administrator" : "Mitarbeiter"}
+                              {userRoles[profile.id] === "administrator" ? "Administrator" : userRoles[profile.id] === "vorarbeiter" ? "Vorarbeiter" : "Mitarbeiter"}
                             </p>
                           </div>
                         </div>

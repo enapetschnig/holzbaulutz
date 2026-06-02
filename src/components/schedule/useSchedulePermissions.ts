@@ -28,14 +28,17 @@ export function useSchedulePermissions() {
           .maybeSingle(),
         supabase
           .from("employees")
-          .select("kategorie")
+          .select("ist_freelancer")
           .eq("user_id", user.id)
           .maybeSingle(),
       ]);
 
+      // Vorarbeiter = eigene Rolle (app_role). Extern = Freelancer-Flag.
+      // (Früher wurde fälschlich employees.kategorie abgefragt — Spalte
+      // existiert nicht und warf einen 400er.)
       setIsAdmin(roleData?.role === "administrator");
-      setIsVorarbeiter(empData?.kategorie === "vorarbeiter");
-      setIsExtern(empData?.kategorie === "extern");
+      setIsVorarbeiter(roleData?.role === "vorarbeiter");
+      setIsExtern((empData as any)?.ist_freelancer === true);
       setLoading(false);
     };
     check();

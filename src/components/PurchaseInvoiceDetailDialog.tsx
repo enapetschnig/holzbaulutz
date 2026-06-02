@@ -79,10 +79,15 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
   const loadData = async () => {
     if (!invoiceId) return;
     setLoading(true);
-    const [{ data: inv }, { data: projs }] = await Promise.all([
+    const [{ data: inv, error: invError }, { data: projs }] = await Promise.all([
       supabase.from("purchase_invoices").select("*").eq("id", invoiceId).single(),
       supabase.from("projects").select("id, name").order("name"),
     ]);
+    if (invError) {
+      toast({ variant: "destructive", title: "Fehler", description: "Eingangsrechnung konnte nicht geladen werden." });
+      setLoading(false);
+      return;
+    }
     if (inv) {
       setForm(inv);
       // Wenn bereits verrechnet, referenzierte Ausgangsrechnung laden
@@ -157,16 +162,27 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
 
   const handleSave = async () => {
     if (!form) return;
+    // Validierung: Lieferant + gültiger Bruttobetrag (verhindert NaN in der DB)
+    if (!form.lieferant?.trim()) {
+      toast({ variant: "destructive", title: "Lieferant fehlt", description: "Bitte einen Lieferanten eingeben." });
+      return;
+    }
+    const brutto = parseFloat(form.betrag_brutto);
+    if (!Number.isFinite(brutto) || brutto <= 0) {
+      toast({ variant: "destructive", title: "Betrag ungültig", description: "Bitte einen gültigen Bruttobetrag (> 0) eingeben." });
+      return;
+    }
+    const toNumOrNull = (v: any) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
     setSaving(true);
     const { error } = await supabase.from("purchase_invoices").update({
-      lieferant: form.lieferant,
+      lieferant: form.lieferant.trim(),
       rechnungsnummer: form.rechnungsnummer || null,
       rechnungsdatum: form.rechnungsdatum || null,
       faellig_am: form.faellig_am || null,
       bezahlt_am: form.bezahlt_am || null,
-      betrag_brutto: parseFloat(form.betrag_brutto),
-      betrag_netto: form.betrag_netto !== null ? parseFloat(form.betrag_netto) : null,
-      ust_satz: form.ust_satz !== null ? parseFloat(form.ust_satz) : null,
+      betrag_brutto: brutto,
+      betrag_netto: toNumOrNull(form.betrag_netto),
+      ust_satz: toNumOrNull(form.ust_satz),
       kategorie: form.kategorie,
       project_id: form.project_id || null,
       status: form.status,

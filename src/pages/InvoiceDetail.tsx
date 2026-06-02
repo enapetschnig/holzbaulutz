@@ -4443,8 +4443,22 @@ export default function InvoiceDetail() {
                 <Button disabled={selectedTemplateIds.length === 0} onClick={() => {
                   const selected = templates.filter(t => selectedTemplateIds.includes(t.id));
                   const newItems = selected.map(t => {
-                    const netto = Number((t as any).netto_preis) || t.einzelpreis;
                     const menge = templateMengen[t.id] || 1;
+                    // Kalkulierte Materialien: Snapshot + Katalog-Verknüpfung übernehmen,
+                    // damit Aufschläge im Angebot anpassbar bleiben und "Preise aktualisieren" greift.
+                    const isKalk = !!(t as any).ist_kalkuliert;
+                    const kalk = isKalk ? {
+                      ek_preis: Number((t as any).ek_netto) || 0,
+                      verschnitt_prozent: Number((t as any).verschnitt_prozent) || 0,
+                      aufschlag_prozent: Number((t as any).aufschlag_prozent) || 0,
+                      befestigung_preis: Number((t as any).befestigung_preis) || 0,
+                      sonstiges_preis: Number((t as any).sonstiges_preis) || 0,
+                      arbeitszeit_minuten: Number((t as any).arbeitszeit_minuten) || 0,
+                      stundensatz: Number((t as any).stundensatz) || 52,
+                    } : null;
+                    const netto = kalk
+                      ? calcEinzelpreis({ ...kalk, aufschlag_prozent: docAufschlagOverride ?? kalk.aufschlag_prozent })
+                      : (Number((t as any).vk_netto ?? (t as any).netto_preis) || t.einzelpreis);
                     return {
                       position: 1,
                       beschreibung: (t as any).kurzbezeichnung || t.name || t.beschreibung,
@@ -4454,6 +4468,10 @@ export default function InvoiceDetail() {
                       einheit: t.einheit,
                       einzelpreis: netto,
                       gesamtpreis: Math.round(netto * menge * 100) / 100,
+                      produktnummer: (t as any).produktnummer || "",
+                      ist_kalkuliert: isKalk,
+                      kalkulation_template_id: isKalk ? t.id : null,
+                      ...(kalk || {}),
                     } as InvoiceItem;
                   });
                   setItems(prev => mergeItems(prev, newItems));

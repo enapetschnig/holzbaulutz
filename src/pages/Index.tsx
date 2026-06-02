@@ -47,6 +47,7 @@ export default function Index() {
   const [user, setUser] = useState<User | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [userName, setUserName] = useState<string>("");
+  const [mustChangePw, setMustChangePw] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [recentEntries, setRecentEntries] = useState<RecentTimeEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,7 +91,7 @@ export default function Index() {
     // 1) Activation + name
     const profileReq = supabase
       .from("profiles")
-      .select("vorname, nachname, is_active")
+      .select("vorname, nachname, is_active, must_change_password")
       .eq("id", userId)
       .maybeSingle();
 
@@ -105,7 +106,8 @@ export default function Index() {
 
     // Check activation status
     setIsActivated(profileData?.is_active === true);
-    
+    setMustChangePw((profileData as any)?.must_change_password === true);
+
     if (profileData) {
       setUserName(`${profileData.vorname} ${profileData.nachname}`.trim());
     } else {
@@ -265,6 +267,8 @@ export default function Index() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Erzwungener Passwortwechsel beim ersten Login (vom Admin angelegte Konten) */}
+      {mustChangePw && <ChangePasswordDialog forced onSuccess={() => setMustChangePw(false)} />}
       {/* Header */}
       <header className="border-b bg-card sticky top-0 z-50 shadow-sm">
         <div className="container mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-4">
