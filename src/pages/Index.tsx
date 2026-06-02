@@ -428,10 +428,10 @@ export default function Index() {
             <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/materials")}>
               <CardHeader className="space-y-2 pb-3">
                 <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center"><Package className="h-6 w-6 text-primary" /></div>
-                <CardTitle className="text-lg sm:text-xl">Materialien</CardTitle>
-                <CardDescription className="text-sm">Materialstamm & Preislisten verwalten</CardDescription>
+                <CardTitle className="text-lg sm:text-xl">Materialien & Kalkulation</CardTitle>
+                <CardDescription className="text-sm">Materialstamm, Preise & Kalkulation (EK → Aufschlag → VK)</CardDescription>
               </CardHeader>
-              <CardContent><Button className="w-full" size="sm" variant="outline">Materialien öffnen</Button></CardContent>
+              <CardContent><Button className="w-full" size="sm" variant="outline">Öffnen</Button></CardContent>
             </Card>
           )}
 

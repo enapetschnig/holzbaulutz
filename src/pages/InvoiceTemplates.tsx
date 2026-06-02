@@ -426,7 +426,7 @@ export default function InvoiceTemplates() {
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8 max-w-[1400px]">
-        <PageHeader title="Materialien" backPath="/" />
+        <PageHeader title="Materialien & Kalkulation" backPath="/" />
 
         {/* Search & Filter Bar */}
         <div className="flex flex-wrap gap-3 mb-4 items-center">
@@ -675,6 +675,60 @@ export default function InvoiceTemplates() {
                   </div>
                 </div>
               </div>
+              {/* Kalkulation — prominent über den Preisfeldern (nach Excel-Vorlage) */}
+              {!form.ist_set && (
+                <div className="border-2 border-primary/30 bg-primary/5 rounded-lg p-3 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <Label className="font-semibold text-primary text-base">🧮 Kalkulation</Label>
+                      <p className="text-xs text-muted-foreground">Verkaufspreis automatisch aus EK + Verschnitt + Aufschlag + Lohn berechnen (nach deiner Excel)</p>
+                    </div>
+                    <Switch
+                      checked={form.ist_kalkuliert}
+                      onCheckedChange={(c) => setForm(f => {
+                        const next = { ...f, ist_kalkuliert: !!c };
+                        if (c) {
+                          const vk = calcEinzelpreis({
+                            ek_preis: f.ek_netto, verschnitt_prozent: f.verschnitt_prozent,
+                            aufschlag_prozent: f.aufschlag_prozent, befestigung_preis: f.befestigung_preis,
+                            sonstiges_preis: f.sonstiges_preis, arbeitszeit_minuten: f.arbeitszeit_minuten,
+                            stundensatz: f.stundensatz || 52,
+                          });
+                          next.vk_netto = vk; next.netto_preis = vk;
+                          next.brutto_preis = Math.round(vk * (1 + f.ust_satz / 100) * 100) / 100;
+                        }
+                        return next;
+                      })}
+                    />
+                  </div>
+                  {form.ist_kalkuliert && (
+                    <KalkulationFields
+                      einheit={form.einheit}
+                      value={{
+                        ek_preis: form.ek_netto, verschnitt_prozent: form.verschnitt_prozent,
+                        aufschlag_prozent: form.aufschlag_prozent, befestigung_preis: form.befestigung_preis,
+                        sonstiges_preis: form.sonstiges_preis, arbeitszeit_minuten: form.arbeitszeit_minuten,
+                        stundensatz: form.stundensatz || 52,
+                      }}
+                      onChange={(v) => setForm(f => {
+                        const vk = calcEinzelpreis(v);
+                        return {
+                          ...f,
+                          ek_netto: v.ek_preis, verschnitt_prozent: v.verschnitt_prozent,
+                          aufschlag_prozent: v.aufschlag_prozent, befestigung_preis: v.befestigung_preis,
+                          sonstiges_preis: v.sonstiges_preis, arbeitszeit_minuten: v.arbeitszeit_minuten,
+                          stundensatz: v.stundensatz,
+                          vk_netto: vk, netto_preis: vk,
+                          brutto_preis: Math.round(vk * (1 + f.ust_satz / 100) * 100) / 100,
+                        };
+                      })}
+                    />
+                  )}
+                  {form.ist_kalkuliert && (
+                    <p className="text-xs text-muted-foreground">Der berechnete Verkaufspreis steht unten als „VK netto".</p>
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                 <div>
                   <Label>Einheit</Label>
@@ -760,57 +814,6 @@ export default function InvoiceTemplates() {
                     </span> (€ {(form.vk_netto - form.ek_netto).toFixed(2)} Aufschlag)</>
                   ) : (
                     <>Kein EK hinterlegt — Marge nicht berechenbar.</>
-                  )}
-                </div>
-              )}
-              {/* Kalkulation — EK → Verschnitt/Aufschlag/Lohn → VK (nach Excel-Vorlage) */}
-              {!form.ist_set && (
-                <div className="border rounded-lg p-3 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label className="font-medium">Kalkulation</Label>
-                      <p className="text-xs text-muted-foreground">VK aus EK + Verschnitt + Aufschlag + Lohn berechnen</p>
-                    </div>
-                    <Switch
-                      checked={form.ist_kalkuliert}
-                      onCheckedChange={(c) => setForm(f => {
-                        const next = { ...f, ist_kalkuliert: !!c };
-                        if (c) {
-                          const vk = calcEinzelpreis({
-                            ek_preis: f.ek_netto, verschnitt_prozent: f.verschnitt_prozent,
-                            aufschlag_prozent: f.aufschlag_prozent, befestigung_preis: f.befestigung_preis,
-                            sonstiges_preis: f.sonstiges_preis, arbeitszeit_minuten: f.arbeitszeit_minuten,
-                            stundensatz: f.stundensatz || 52,
-                          });
-                          next.vk_netto = vk; next.netto_preis = vk;
-                          next.brutto_preis = Math.round(vk * (1 + f.ust_satz / 100) * 100) / 100;
-                        }
-                        return next;
-                      })}
-                    />
-                  </div>
-                  {form.ist_kalkuliert && (
-                    <KalkulationFields
-                      einheit={form.einheit}
-                      value={{
-                        ek_preis: form.ek_netto, verschnitt_prozent: form.verschnitt_prozent,
-                        aufschlag_prozent: form.aufschlag_prozent, befestigung_preis: form.befestigung_preis,
-                        sonstiges_preis: form.sonstiges_preis, arbeitszeit_minuten: form.arbeitszeit_minuten,
-                        stundensatz: form.stundensatz || 52,
-                      }}
-                      onChange={(v) => setForm(f => {
-                        const vk = calcEinzelpreis(v);
-                        return {
-                          ...f,
-                          ek_netto: v.ek_preis, verschnitt_prozent: v.verschnitt_prozent,
-                          aufschlag_prozent: v.aufschlag_prozent, befestigung_preis: v.befestigung_preis,
-                          sonstiges_preis: v.sonstiges_preis, arbeitszeit_minuten: v.arbeitszeit_minuten,
-                          stundensatz: v.stundensatz,
-                          vk_netto: vk, netto_preis: vk,
-                          brutto_preis: Math.round(vk * (1 + f.ust_satz / 100) * 100) / 100,
-                        };
-                      })}
-                    />
                   )}
                 </div>
               )}

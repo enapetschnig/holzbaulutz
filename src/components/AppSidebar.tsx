@@ -56,7 +56,7 @@ const MENU_GROUPS: MenuGroup[] = [
     label: "Verwaltung",
     items: [
       { title: "Kunden", path: "/customers", icon: BookUser, feature: "kunden" },
-      { title: "Materialien", path: "/materials", icon: Package, feature: "materialien" },
+      { title: "Materialien & Kalkulation", path: "/materials", icon: Package, feature: "materialien" },
       { title: "Meine Stunden", path: "/my-hours", icon: BarChart3, feature: null },
       { title: "Stundenauswertung", path: "/hours-report", icon: BarChart3, feature: "stundenauswertung" },
     ],
