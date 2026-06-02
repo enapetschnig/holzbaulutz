@@ -3792,6 +3792,27 @@ export default function InvoiceDetail() {
                     <div>
                       <div className="flex items-center justify-between mb-1.5">
                         <Label>Ausführungsort</Label>
+                        <div className="flex items-center gap-1 flex-wrap justify-end">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                          disabled={!(form.kunde_adresse || form.kunde_plz || form.kunde_ort)}
+                          title="Adresse des Kunden als Ausführungsort einfügen (überschreibt aktuellen Wert)"
+                          onClick={() => {
+                            const adr = [
+                              form.kunde_adresse,
+                              [form.kunde_plz, form.kunde_ort].filter(Boolean).join(" "),
+                            ].filter(Boolean).join("\n");
+                            if (!adr.trim()) { toast({ title: "Kunde hat keine Adresse hinterlegt" }); return; }
+                            updateField("ausfuehrungsort", adr);
+                            toast({ title: "Kundenadresse übernommen" });
+                          }}
+                        >
+                          <MapPin className="h-3 w-3 mr-1" />
+                          Kundenadresse übernehmen
+                        </Button>
                         <Button
                           type="button"
                           variant="outline"
@@ -3826,6 +3847,7 @@ export default function InvoiceDetail() {
                           <MapPin className="h-3 w-3 mr-1" />
                           Aus Projekt übernehmen
                         </Button>
+                        </div>
                       </div>
                       <Textarea
                         rows={2}

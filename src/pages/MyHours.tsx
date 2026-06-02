@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Clock, Building2, Hammer, Pencil, Trash2, TrendingUp, Wallet } from "lucide-react";
-import { getTotalWorkingHours } from "@/lib/workingHours";
 import { aggregateByDay, totalAutoSaldo, formatSaldo } from "@/lib/hoursAccounting";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -250,35 +249,25 @@ const MyHours = () => {
               </div>
               <div className="text-sm sm:text-base space-y-0.5">
                 {(() => {
-                  // Calculate Soll hours for the month (only working days up to today or end of month)
-                  const [y, m] = selectedMonth.split('-').map(Number);
-                  const today = new Date();
-                  const lastDay = new Date(y, m, 0).getDate();
-                  const endDay = (y === today.getFullYear() && m === today.getMonth() + 1) ? today.getDate() : lastDay;
-                  let sollTotal = 0;
-                  // Get unique dates with entries (for absence days)
-                  const absenceDates = new Set(entries.filter(e => e.location_type === "urlaub" || e.location_type === "krankenstand" || e.location_type === "za").map(e => e.datum));
-                  for (let d = 1; d <= endDay; d++) {
-                    const date = new Date(y, m - 1, d);
-                    const day = date.getDay();
-                    if (day === 0 || day === 6) continue; // Weekend
-                    const dateStr = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-                    if (absenceDates.has(dateStr)) { sollTotal += getTotalWorkingHours(date); continue; }
-                    sollTotal += getTotalWorkingHours(date);
-                  }
-                  const diff = totalHours - sollTotal;
+                  // Soll/Saldo des Monats aus der zentralen Tages-Aggregation —
+                  // exakt dieselbe Logik wie das Stundenkonto oben: es zählen nur
+                  // Tage MIT Buchung (kein Phantom-Minus für nicht gebuchte Tage),
+                  // Sonderzeiten (Urlaub/Krankenstand/Feiertag/Zeitausgleich/
+                  // Weiterbildung) werden neutral gerechnet (Soll 0, Saldo 0).
+                  const sollTotal = dayBalances.reduce((s, d) => s + d.soll, 0);
+                  const diff = dayBalances.reduce((s, d) => s + d.saldo, 0);
                   return (
                     <>
                       <div>
-                        <span className="text-muted-foreground">Ist: </span>
+                        <span className="text-muted-foreground">Ist (gebucht): </span>
                         <span className="font-bold text-lg text-primary">{totalHours.toFixed(2)} Std.</span>
                         <span className="text-muted-foreground ml-2">Soll: </span>
                         <span className="font-medium">{sollTotal.toFixed(2)} Std.</span>
                       </div>
                       <div>
-                        <span className="text-muted-foreground">Überstunden: </span>
-                        <span className={`font-bold ${diff >= 0 ? "text-green-600" : "text-red-600"}`}>
-                          {diff >= 0 ? "+" : ""}{diff.toFixed(2)} Std.
+                        <span className="text-muted-foreground">Saldo (Monat): </span>
+                        <span className={`font-bold ${diff >= -0.005 ? "text-green-600" : "text-red-600"}`}>
+                          {formatSaldo(diff)} Std.
                         </span>
                       </div>
                     </>
