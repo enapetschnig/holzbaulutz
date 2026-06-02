@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw } from "lucide-react";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { KalkulationFields } from "@/components/KalkulationFields";
@@ -464,8 +464,21 @@ export default function InvoiceDetail() {
         einzelpreis: Number(it.einzelpreis) || 0,
         rabatt_prozent: Number(it.rabatt_prozent) || 0,
         gesamtpreis: Number(it.gesamtpreis) || 0,
+        produktnummer: (it as any).produktnummer || "",
+        mwst_exempt: !!(it as any).mwst_exempt,
         set_template_id: it.set_template_id || null,
         set_snapshot: it.set_snapshot || null,
+        // Kalkulations-Snapshot + Katalog-Verknüpfung mitnehmen, damit die
+        // "Preise aktualisieren"-Funktion auch nach Angebot→Rechnung greift.
+        ist_kalkuliert: !!(it as any).ist_kalkuliert,
+        kalkulation_template_id: (it as any).kalkulation_template_id || null,
+        ek_preis: Number((it as any).ek_preis) || 0,
+        verschnitt_prozent: Number((it as any).verschnitt_prozent) || 0,
+        aufschlag_prozent: Number((it as any).aufschlag_prozent) || 0,
+        befestigung_preis: Number((it as any).befestigung_preis) || 0,
+        sonstiges_preis: Number((it as any).sonstiges_preis) || 0,
+        arbeitszeit_minuten: Number((it as any).arbeitszeit_minuten) || 0,
+        stundensatz: Number((it as any).stundensatz) || 52,
       }));
 
       // Anzahlungsrechnung: nur eine Zeile mit dem Anzahlungsbetrag.
@@ -1108,6 +1121,104 @@ export default function InvoiceDetail() {
     }));
   };
 
+  // ── Kalkulation: Preise aus dem Materialkatalog aktualisieren ──────────────
+  // Löst das "6-Monate-später"-Problem: ein Angebot speichert pro Position einen
+  // Kalkulations-Snapshot (stabil). Steigt später der Material-EK im Katalog,
+  // zieht dieser Knopf die AKTUELLE Material-Kalkulation je verknüpfter Position
+  // (kalkulation_template_id) neu — explizit und nachvollziehbar (alt→neu).
+  const [kalkRefreshing, setKalkRefreshing] = useState(false);
+  const [staleKalkCount, setStaleKalkCount] = useState(0);
+
+  const fetchCatalogKalk = useCallback(async (): Promise<Record<string, any>> => {
+    const ids = Array.from(new Set(
+      items.filter(it => it.ist_kalkuliert && it.kalkulation_template_id)
+        .map(it => it.kalkulation_template_id as string)
+    ));
+    if (ids.length === 0) return {};
+    const { data } = await supabase
+      .from("invoice_templates")
+      .select("id, ek_netto, verschnitt_prozent, aufschlag_prozent, befestigung_preis, sonstiges_preis, arbeitszeit_minuten, stundensatz, ist_kalkuliert")
+      .in("id", ids);
+    const map: Record<string, any> = {};
+    for (const t of (data || [])) map[(t as any).id] = t;
+    return map;
+  }, [items]);
+
+  const kalkFromTemplate = (t: any) => ({
+    ek_preis: Number(t.ek_netto) || 0,
+    verschnitt_prozent: Number(t.verschnitt_prozent) || 0,
+    aufschlag_prozent: Number(t.aufschlag_prozent) || 0,
+    befestigung_preis: Number(t.befestigung_preis) || 0,
+    sonstiges_preis: Number(t.sonstiges_preis) || 0,
+    arbeitszeit_minuten: Number(t.arbeitszeit_minuten) || 0,
+    stundensatz: Number(t.stundensatz) || 52,
+  });
+
+  const refreshKalkulationFromCatalog = async () => {
+    setKalkRefreshing(true);
+    try {
+      const map = await fetchCatalogKalk();
+      if (Object.keys(map).length === 0) {
+        toast({ title: "Keine verknüpften Materialien", description: "Es gibt keine kalkulierten Positionen mit Katalog-Verknüpfung." });
+        return;
+      }
+      let changed = 0;
+      let oldTotal = 0, newTotal = 0;
+      const next = items.map(it => {
+        if (!it.ist_kalkuliert || !it.kalkulation_template_id || !map[it.kalkulation_template_id]) return it;
+        const k = kalkFromTemplate(map[it.kalkulation_template_id]);
+        const eff = docAufschlagOverride ?? k.aufschlag_prozent;
+        const ep = calcEinzelpreis({ ...k, aufschlag_prozent: eff });
+        oldTotal += Number(it.einzelpreis) || 0;
+        newTotal += ep;
+        if (Math.abs(ep - (Number(it.einzelpreis) || 0)) > 0.005) changed++;
+        const updated = { ...it, ...k, einzelpreis: ep };
+        updated.gesamtpreis = computeItemTotal(updated);
+        return updated;
+      });
+      setItems(next);
+      setStaleKalkCount(0);
+      if (changed === 0) {
+        toast({ title: "Preise sind aktuell", description: "Alle kalkulierten Positionen entsprechen bereits dem Materialkatalog." });
+      } else {
+        toast({
+          title: `${changed} Position(en) aktualisiert`,
+          description: `Einzelpreise gesamt: € ${oldTotal.toFixed(2)} → € ${newTotal.toFixed(2)}. Zum Übernehmen speichern.`,
+        });
+      }
+    } finally {
+      setKalkRefreshing(false);
+    }
+  };
+
+  // Stale-Check: beim Laden/Ändern der verknüpften Positionen prüfen, ob der
+  // Materialkatalog inzwischen abweicht (Banner-Hinweis). Schlüssel ist die
+  // Menge der verknüpften Template-IDs — läuft nicht bei jeder Preis-Eingabe.
+  const linkedTemplateKey = useMemo(() => items
+    .filter(it => it.ist_kalkuliert && it.kalkulation_template_id)
+    .map(it => it.kalkulation_template_id).join(","), [items]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (isLocked || !linkedTemplateKey) { setStaleKalkCount(0); return; }
+    (async () => {
+      const map = await fetchCatalogKalk();
+      if (cancelled) return;
+      let stale = 0;
+      for (const it of items) {
+        if (it.ist_kalkuliert && it.kalkulation_template_id && map[it.kalkulation_template_id]) {
+          const k = kalkFromTemplate(map[it.kalkulation_template_id]);
+          const eff = docAufschlagOverride ?? k.aufschlag_prozent;
+          const ep = calcEinzelpreis({ ...k, aufschlag_prozent: eff });
+          if (Math.abs(ep - (Number(it.einzelpreis) || 0)) > 0.005) stale++;
+        }
+      }
+      setStaleKalkCount(stale);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedTemplateKey, docAufschlagOverride, isLocked]);
+
   // Auto-Sync zahlungsbedingungen → faellig_am. Immer wenn der User die
   // Zahlungsfrist (Dropdown) oder das Rechnungsdatum ändert, rechnen wir
   // das Fälligkeitsdatum neu aus. Einzige Ausnahme: "individuell" — dort
@@ -1173,11 +1284,11 @@ export default function InvoiceDetail() {
       return false;
     }
 
-    // Rechnungsbetrag muss > 0 sein (außer bei Entwürfen)
-    const saveBrutto = validItems.reduce((sum, item) => {
-      const netto = item.menge * item.einzelpreis * (1 - (item.rabatt_prozent || 0) / 100);
-      return sum + netto * (1 + (form.mwst_satz / 100));
-    }, 0);
+    // Rechnungsbetrag muss > 0 sein (außer bei Entwürfen).
+    // bruttoSumme ist die korrekt berechnete Anzeige-Summe: mwst_exempt-Zeilen
+    // (z.B. Anzahlungs-Abzüge) bekommen KEINE MwSt und der Global-Rabatt ist
+    // berücksichtigt — daher dieselbe Größe für die Validierung verwenden.
+    const saveBrutto = bruttoSumme;
     if (saveBrutto <= 0 && form.status !== "entwurf") {
       toast({ variant: "destructive", title: "Fehler", description: "Rechnungsbetrag muss größer als €0,00 sein" });
       return false;
@@ -1195,8 +1306,9 @@ export default function InvoiceDetail() {
       return false;
     }
 
-    // Rabatt-Betrag darf den Netto-Summe nicht überschreiten
-    const positionenNetto = validItems.reduce((sum, item) => sum + item.menge * item.einzelpreis * (1 - (item.rabatt_prozent || 0) / 100), 0);
+    // Rabatt-Betrag (Global-Rabatt €) darf die nicht-steuerbefreite Positions-
+    // Netto-Summe nicht überschreiten. positionenNetto (oben) schließt
+    // mwst_exempt-Zeilen bereits aus.
     if (form.rabatt_betrag > positionenNetto) {
       toast({ variant: "destructive", title: "Ungültiger Rabatt", description: `Rabatt-Betrag (€${form.rabatt_betrag.toFixed(2)}) darf die Netto-Summe (€${positionenNetto.toFixed(2)}) nicht überschreiten` });
       return false;
@@ -3807,6 +3919,14 @@ export default function InvoiceDetail() {
                     <Package className="w-4 h-4" />
                     Materialien
                   </Button>
+                  {items.some(it => it.ist_kalkuliert && it.kalkulation_template_id) && (
+                    <Button onClick={refreshKalkulationFromCatalog} disabled={kalkRefreshing} variant="outline" size="sm"
+                      className={`gap-1 ${staleKalkCount > 0 ? "border-amber-400 text-amber-700" : ""}`}
+                      title="Kalkulierte Positionen mit den aktuellen Material-/EK-Preisen aus dem Katalog neu berechnen">
+                      <RefreshCw className={`w-4 h-4 ${kalkRefreshing ? "animate-spin" : ""}`} />
+                      Preise aktualisieren
+                    </Button>
+                  )}
                   <Button onClick={addItem} variant="outline" size="sm" className="gap-1">
                     <Plus className="w-4 h-4" />
                     Position
@@ -3816,6 +3936,19 @@ export default function InvoiceDetail() {
               </div>
             </CardHeader>
             <CardContent>
+              {!isLocked && staleKalkCount > 0 && (
+                <div className="mb-4 flex flex-col sm:flex-row sm:items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                  <p className="text-sm text-amber-900 flex-1">
+                    Bei <strong>{staleKalkCount}</strong> kalkulierten Position(en) haben sich die Material-/EK-Preise im Katalog seit dem Erstellen geändert.
+                  </p>
+                  <Button onClick={refreshKalkulationFromCatalog} disabled={kalkRefreshing} size="sm"
+                    className="bg-amber-600 hover:bg-amber-700 gap-1 shrink-0">
+                    <RefreshCw className={`w-4 h-4 ${kalkRefreshing ? "animate-spin" : ""}`} />
+                    Jetzt aktualisieren
+                  </Button>
+                </div>
+              )}
               <fieldset disabled={isLocked}>
               <div className="overflow-x-auto">
                 <Table>
