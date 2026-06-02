@@ -17,7 +17,6 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { QuickUploadDialog } from "@/components/QuickUploadDialog";
 import { MobilePhotoCapture } from "@/components/MobilePhotoCapture";
 import { useProjectStatuses, type ProjectStatus } from "@/hooks/useProjectStatuses";
-import { useConfigOptions } from "@/hooks/useConfigOptions";
 import { mergeDuplicateProjects } from "@/lib/mergeDuplicateProjects";
 
 type Project = {
@@ -29,26 +28,8 @@ type Project = {
   status: string;
   created_at: string;
   updated_at: string;
-  projektart: string | null;
-  prioritaet: string | null;
   geplanter_start: string | null;
-  geplantes_ende: string | null;
-  budget: number | null;
-  auftragsvolumen: number | null;
-  bauleiter_id: string | null;
   ort: string | null;
-  kategorie?: string | null;
-};
-
-/** Optionale Farbkategorie für Projekte. Keys stabil, Labels markenneutral. */
-const KATEGORIE_META: Record<string, { label: string; color: string; bg: string }> = {
-  montipro:     { label: "Grün",     color: "#166534", bg: "#dcfce7" },
-  bks:          { label: "Blau",     color: "#1e40af", bg: "#dbeafe" },
-  gartenmacher: { label: "Limette",  color: "#3f6212", bg: "#ecfccb" },
-  fensterwerk:  { label: "Cyan",     color: "#155e75", bg: "#cffafe" },
-  ladenbau:     { label: "Gelb",     color: "#92400e", bg: "#fef3c7" },
-  portas:       { label: "Orange",   color: "#9a3412", bg: "#ffedd5" },
-  chef:         { label: "Violett",  color: "#6b21a8", bg: "#f3e8ff" },
 };
 
 const Projects = () => {
@@ -76,13 +57,11 @@ const Projects = () => {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [showStatusDialog, setShowStatusDialog] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [bereichFilter, setBereichFilter] = useState<string>("all");
   // Sortierung der Projektliste — clientseitig (Daten sind eh schon geladen).
   // Default „created_desc" entspricht dem heutigen Server-Order.
   type SortKey = "created_desc" | "start_asc" | "start_desc" | "name_asc";
   const [sortKey, setSortKey] = useState<SortKey>("created_desc");
   const { statuses: projectStatuses, findByName } = useProjectStatuses();
-  const { options: bereichOptions } = useConfigOptions("projekt_bereich");
 
   useEffect(() => {
     checkAdminStatus();
@@ -436,35 +415,6 @@ const Projects = () => {
             );
           })}
         </div>
-        {/* Bereich-Filter (nur anzeigen wenn Projekte mit bereich existieren) */}
-        {projects.some((p) => (p as any).bereich) && (
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground mr-1">Bereich:</span>
-            <Badge
-              variant={bereichFilter === "all" ? "default" : "outline"}
-              className="cursor-pointer select-none"
-              onClick={() => setBereichFilter("all")}
-            >
-              Alle
-            </Badge>
-            {bereichOptions.map((o) => {
-              const count = projects.filter((p) => (p as any).bereich === o.wert).length;
-              if (count === 0 && bereichFilter !== o.wert) return null;
-              return (
-                <Badge
-                  key={o.id}
-                  variant={bereichFilter === o.wert ? "default" : "outline"}
-                  className="cursor-pointer select-none"
-                  onClick={() => setBereichFilter(o.wert)}
-                >
-                  {o.label}
-                  <span className="ml-1.5 opacity-70">({count})</span>
-                </Badge>
-              );
-            })}
-          </div>
-        )}
-
         <div className="mb-4 flex flex-col sm:flex-row gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -499,9 +449,7 @@ const Projects = () => {
                 (project.beschreibung || "").toLowerCase().includes(q);
               const matchesStatus =
                 statusFilter === "all" || (project.status || "").toLowerCase() === statusFilter.toLowerCase();
-              const matchesBereich =
-                bereichFilter === "all" || (project as any).bereich === bereichFilter;
-              return matchesSearch && matchesStatus && matchesBereich;
+              return matchesSearch && matchesStatus;
             }).slice().sort((a, b) => {
               switch (sortKey) {
                 case "start_asc":
@@ -576,39 +524,6 @@ const Projects = () => {
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-1.5 self-start sm:self-center">
-                        {(project as any).kategorie && KATEGORIE_META[(project as any).kategorie] && (
-                          <Badge
-                            className="whitespace-nowrap text-xs border-0"
-                            style={{
-                              backgroundColor: KATEGORIE_META[(project as any).kategorie].bg,
-                              color: KATEGORIE_META[(project as any).kategorie].color,
-                            }}
-                          >
-                            {KATEGORIE_META[(project as any).kategorie].label}
-                          </Badge>
-                        )}
-                        {(project as any).bereich && (
-                          <Badge variant="secondary" className="whitespace-nowrap text-xs">
-                            {bereichOptions.find((o) => o.wert === (project as any).bereich)?.label || (project as any).bereich}
-                          </Badge>
-                        )}
-                        {(project as any).projektart && (
-                          <Badge variant="outline" className="whitespace-nowrap text-xs">
-                            {(project as any).projektart}
-                          </Badge>
-                        )}
-                        {(project as any).prioritaet && (project as any).prioritaet !== "normal" && (
-                          <Badge
-                            variant={
-                              (project as any).prioritaet === "hoch" || (project as any).prioritaet === "dringend"
-                                ? "destructive"
-                                : "secondary"
-                            }
-                            className="whitespace-nowrap text-xs"
-                          >
-                            {(project as any).prioritaet}
-                          </Badge>
-                        )}
                         <Badge
                           className="whitespace-nowrap border-0"
                           style={

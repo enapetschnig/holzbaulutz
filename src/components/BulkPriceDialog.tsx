@@ -388,9 +388,28 @@ export function BulkPriceDialog({
                 </div>
               )}
 
-              <p className="text-xs">
-                <Badge variant="secondary">{filtered.length}</Badge> Einträge im Filter.
-              </p>
+              <div className="space-y-1.5">
+                <p className="text-xs">
+                  <Badge variant="secondary">{filtered.length}</Badge> Material(ien) in der Auswahl.
+                </p>
+                {/* Materialien zur gewählten Kategorie/Filter direkt anzeigen —
+                    sofort sichtbar, noch bevor ein Wert eingegeben wird. */}
+                {(filterKategorien.size > 0 || filterLieferanten.size > 0 || filterTyp !== "alle") && filtered.length > 0 && (
+                  <div className="max-h-44 overflow-y-auto rounded-md border bg-background divide-y">
+                    {filtered.map((r) => (
+                      <div key={r.id} className="flex items-center justify-between gap-2 px-2 py-1 text-xs">
+                        <span className="truncate flex items-center gap-1">
+                          {r.kurzbezeichnung || r.name}
+                          {r.ist_set && <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5">Set</Badge>}
+                        </span>
+                        <span className="font-mono text-muted-foreground shrink-0">
+                          EK €{r.ek_netto.toFixed(2)} · VK €{r.vk_netto.toFixed(2)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Operator */}

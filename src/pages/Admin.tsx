@@ -32,10 +32,9 @@ import { CustomerColorSettings } from "@/components/admin/CustomerColorSettings"
 import { NumberRangeSettings } from "@/components/admin/NumberRangeSettings";
 import { ConfigOptionsManager } from "@/components/admin/ConfigOptionsManager";
 import { VehicleManager } from "@/components/admin/VehicleManager";
-import { listAllActiveProjects, getEmployeeAccessibleProjectIds, syncEmployeeProjectAccess, loadEmployeeProjectRelations, type ProjectLite, type EmployeeProjectRelation } from "@/lib/projectAccess";
 import { PermissionMatrix } from "@/components/admin/PermissionMatrix";
 import { useConfigOptions } from "@/hooks/useConfigOptions";
-import { Cloud, Building, AlertTriangle, Truck, Briefcase, HardHat, Layers } from "lucide-react";
+import { Cloud, AlertTriangle, Truck, Briefcase, HardHat } from "lucide-react";
 
 type Profile = {
   id: string;
@@ -125,11 +124,6 @@ export default function Admin() {
   // Employee management states
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
-  const [employeeRole, setEmployeeRole] = useState<string | null>(null);
-  const [allActiveProjects, setAllActiveProjects] = useState<ProjectLite[]>([]);
-  const [employeeProjectIds, setEmployeeProjectIds] = useState<string[]>([]);
-  const [projectRelations, setProjectRelations] = useState<EmployeeProjectRelation[]>([]);
-  const [accessDiagnose, setAccessDiagnose] = useState<{ role: string | null; accessible: number; total: number } | null>(null);
   const [showSizesDialog, setShowSizesDialog] = useState(false);
   const [formData, setFormData] = useState<Partial<Employee>>({});
   const [activeEmployeeTab, setActiveEmployeeTab] = useState<'stammdaten' | 'dokumente' | 'stunden'>('stammdaten');
@@ -587,28 +581,7 @@ export default function Admin() {
         if (profErr) console.error("Profile name sync failed:", profErr);
       }
 
-      // Projekt-Zugänge synchronisieren (nur für Nicht-Admins;
-      // Administratoren sehen per RLS immer alle Projekte).
-      let syncResult: { added: number; removed: number; failed: number } | null = null;
-      let syncError: string | null = null;
-      if (selectedEmployee && employeeRole !== "administrator") {
-        try {
-          syncResult = await syncEmployeeProjectAccess(selectedEmployee.id, employeeProjectIds);
-        } catch (err: any) {
-          console.error("Projekt-Zuordnung fehlgeschlagen:", err);
-          syncError = err.message || String(err);
-        }
-      }
-
-      if (syncError) {
-        // Wenn die Sync fehlgeschlagen ist — nicht schließen, Admin muss Bescheid wissen
-        toast({ variant: "destructive", title: "Projekt-Zuordnung fehlgeschlagen", description: syncError });
-      } else {
-        const syncMsg = syncResult && (syncResult.added > 0 || syncResult.removed > 0)
-          ? ` Projekt-Zugänge aktualisiert (${syncResult.added > 0 ? `+${syncResult.added}` : ""}${syncResult.added > 0 && syncResult.removed > 0 ? " / " : ""}${syncResult.removed > 0 ? `-${syncResult.removed}` : ""}) – sofort aktiv in der Zeiterfassung.`
-          : "";
-        toast({ title: "Gespeichert", description: `Änderungen übernommen.${syncMsg}` });
-      }
+      toast({ title: "Gespeichert", description: "Änderungen übernommen." });
       fetchEmployees();
       if (nameChanged) fetchUsers({ silent: true });
       setSelectedEmployee(null);
@@ -620,50 +593,6 @@ export default function Admin() {
   useEffect(() => {
     if (selectedEmployee) {
       setFormData(selectedEmployee);
-      // Rolle des Users ermitteln (damit Admins "alle Projekte"-Hinweis bekommen)
-      (async () => {
-        if (selectedEmployee.user_id) {
-          const { data: rd } = await supabase.from("user_roles").select("role").eq("user_id", selectedEmployee.user_id).maybeSingle();
-          setEmployeeRole(rd?.role || "mitarbeiter");
-        } else {
-          setEmployeeRole("mitarbeiter");
-        }
-      })();
-      // Volle Relations laden (pro Projekt: sources = assigned|bauleiter|verantwortl.).
-      // Die Haken-IDs werden direkt daraus abgeleitet → eine Quelle der Wahrheit,
-      // keine Race-Condition zwischen zwei separaten Queries.
-      Promise.all([
-        listAllActiveProjects(),
-        loadEmployeeProjectRelations(selectedEmployee.id),
-      ]).then(([projects, relations]) => {
-        setAllActiveProjects(projects);
-        setProjectRelations(relations);
-        // Haken = alle Projekte, in denen der Mitarbeiter via zugewiesene_mitarbeiter drin ist.
-        setEmployeeProjectIds(
-          relations.filter(r => r.sources.includes("assigned")).map(r => r.projectId)
-        );
-      });
-      // Diagnose: was sieht dieser User wirklich (via RPC)?
-      if (selectedEmployee.user_id) {
-        (supabase.rpc as any)("debug_user_project_access", { p_user_id: selectedEmployee.user_id })
-          .then(({ data, error }: any) => {
-            if (error || !data?.[0]) return;
-            const row = data[0];
-            setAccessDiagnose({
-              role: row.role || null,
-              accessible: row.accessible_count || 0,
-              total: row.total_active_count || 0,
-            });
-          });
-      } else {
-        setAccessDiagnose(null);
-      }
-    } else {
-      setAllActiveProjects([]);
-      setEmployeeProjectIds([]);
-      setProjectRelations([]);
-      setEmployeeRole(null);
-      setAccessDiagnose(null);
     }
   }, [selectedEmployee]);
 
@@ -1273,13 +1202,11 @@ export default function Admin() {
           {/* ===== TAB 5: KONFIGURATION ===== */}
           <TabsContent value="konfiguration" className="space-y-6">
             <ConfigOptionsManager kategorie="wetter" title="Wetter-Optionen" description="Wetteroptionen für Bautagesberichte" icon={<Cloud className="h-5 w-5" />} showFarbe />
-            <ConfigOptionsManager kategorie="projektart" title="Projektarten" description="Typen von Bauprojekten" icon={<Building className="h-5 w-5" />} />
             <ConfigOptionsManager kategorie="prioritaet" title="Prioritäten" description="Prioritätsstufen für Projekte" icon={<AlertTriangle className="h-5 w-5" />} showFarbe />
             <ConfigOptionsManager kategorie="taetigkeit" title="Tätigkeiten (Zeiterfassung)" description="Auswahlliste für das Tätigkeits-Feld bei Stundenbuchungen" icon={<Clock className="h-5 w-5" />} />
             <ConfigOptionsManager kategorie="firma_intern" title="Firma intern (Ersttermin)" description="Auswahl interner Firmen/Bereiche bei Ersttermin-Protokollen" icon={<Briefcase className="h-5 w-5" />} />
             <ConfigOptionsManager kategorie="firma_extern" title="Firma extern (Ersttermin)" description="Auswahl externer Firmen/Subunternehmer bei Ersttermin-Protokollen" icon={<HardHat className="h-5 w-5" />} />
             <ConfigOptionsManager kategorie="kunde_herkunft" title="Kunde — Herkunft" description="Über welche Quelle ist der Kunde zu uns gekommen (Empfehlung, Google, Messe …)" icon={<UserPlus className="h-5 w-5" />} />
-            <ConfigOptionsManager kategorie="projekt_bereich" title="Projekt — Bereich" description="Geschäftsbereich-Auswahl bei Projekten (Innenausbau, Garten, Fenster …)" icon={<Layers className="h-5 w-5" />} />
             <VehicleManager />
           </TabsContent>
 
@@ -1737,110 +1664,6 @@ export default function Admin() {
                       placeholder="Interne Notizen zum Mitarbeiter..."
                     />
                   </div>
-
-                  {/* Diagnose: welche Sicht hat dieser User aktuell */}
-                  {accessDiagnose && (
-                    <div className="rounded-md border bg-muted/30 p-3 text-xs flex flex-wrap gap-3">
-                      <div><span className="text-muted-foreground">Rolle:</span> <strong>{accessDiagnose.role || "—"}</strong></div>
-                      <div><span className="text-muted-foreground">Sichtbare Projekte:</span> <strong>{accessDiagnose.accessible}</strong> von {accessDiagnose.total}</div>
-                      {accessDiagnose.role === "administrator" && <span className="text-primary">→ Admin sieht alles</span>}
-                      {accessDiagnose.role === "vorarbeiter" && <span className="text-primary">→ Vorarbeiter sieht alles</span>}
-                      {accessDiagnose.role === "mitarbeiter" && accessDiagnose.accessible === 0 && (
-                        <span className="text-destructive">→ Keine Zuweisungen. Wähle unten Projekte aus.</span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Projekt-Zugänge — nur für Mitarbeiter/Vorarbeiter */}
-                  {employeeRole === "administrator" ? (
-                    <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-primary">
-                      Administratoren haben automatisch Zugriff auf alle Projekte.
-                    </div>
-                  ) : (() => {
-                    // Helper: Status pro Projekt (source-badges + editierbare Checkbox).
-                    // Wir zeigen ALLE aktiven Projekte + Projekte in denen der
-                    // Mitarbeiter via Bauleiter/Verantwortlicher automatisch
-                    // drin ist (die in loadEmployeeProjectRelations enthalten sind).
-                    const relationMap = new Map<string, EmployeeProjectRelation>();
-                    projectRelations.forEach(r => relationMap.set(r.projectId, r));
-                    // Fallback: wenn loadEmployeeProjectRelations schon alle aktiven
-                    // Projekte enthält (ja, tut es) nehmen wir die als Basis.
-                    const baseList = projectRelations.length > 0
-                      ? projectRelations.map(r => ({ id: r.projectId, name: r.name, status: null } as ProjectLite))
-                      : allActiveProjects;
-                    const totalCount = baseList.length;
-                    const assignedCount = employeeProjectIds.length;
-                    return (
-                      <div className="rounded-md border p-3 bg-muted/20">
-                        <div className="flex items-center justify-between mb-2 gap-2">
-                          <div className="flex-1">
-                            <Label className="text-sm">Zugang zu Projekten</Label>
-                            <p className="text-xs text-muted-foreground">
-                              Haken = zugewiesen. Projekte, bei denen der Mitarbeiter Bauleiter oder
-                              Verantwortlicher ist, erscheinen automatisch mit Badge — das wird
-                              im Projekt selbst gepflegt.
-                            </p>
-                          </div>
-                          {baseList.length > 0 && (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setEmployeeProjectIds(assignedCount === totalCount ? [] : baseList.map(p => p.id))}
-                            >
-                              {assignedCount === totalCount ? "Alle abwählen" : "Alle auswählen"}
-                            </Button>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-72 overflow-y-auto">
-                          {baseList.length === 0 ? (
-                            <p className="text-sm text-muted-foreground col-span-2">Keine aktiven Projekte vorhanden.</p>
-                          ) : (
-                            baseList.map((p) => {
-                              const rel = relationMap.get(p.id);
-                              const isAssigned = employeeProjectIds.includes(p.id);
-                              const isBauleiter = rel?.sources.includes("bauleiter");
-                              const isVerantwortlich = rel?.sources.includes("verantwortlicher");
-                              const badges: string[] = [];
-                              if (isVerantwortlich) badges.push("Verantwortl.");
-                              if (isBauleiter) badges.push("Bauleiter");
-                              return (
-                                <label
-                                  key={p.id}
-                                  className={`flex items-center gap-2 text-sm cursor-pointer rounded px-2 py-1 hover:bg-muted ${(isAssigned || badges.length > 0) ? "bg-muted/50" : ""}`}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={isAssigned}
-                                    onChange={(e) => {
-                                      setEmployeeProjectIds(prev => e.target.checked
-                                        ? [...prev, p.id]
-                                        : prev.filter(x => x !== p.id)
-                                      );
-                                    }}
-                                    className="rounded"
-                                  />
-                                  <span className="truncate flex-1">{p.name}</span>
-                                  {badges.map(b => (
-                                    <span key={b} className="text-[10px] px-1.5 py-0.5 rounded bg-primary/15 text-primary whitespace-nowrap">
-                                      {b}
-                                    </span>
-                                  ))}
-                                </label>
-                              );
-                            })
-                          )}
-                        </div>
-                        {baseList.length > 0 && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {assignedCount} Projekt{assignedCount === 1 ? "" : "e"} zugewiesen ·
-                            {" "}{(accessDiagnose?.accessible ?? 0)} von {totalCount} insgesamt sichtbar
-                            {" "}(inkl. Bauleiter/Verantwortlicher)
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })()}
 
                   <div className="flex justify-end gap-2 pt-4">
                     <Button type="button" variant="outline" onClick={() => setSelectedEmployee(null)}>

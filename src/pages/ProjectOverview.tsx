@@ -3,7 +3,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown } from "lucide-react";
 import { getDocConfig } from "@/lib/documentTypes";
 import { Separator } from "@/components/ui/separator";
-import { format, parseISO } from "date-fns";
 import { ContactHistoryTimeline } from "@/components/ContactHistoryTimeline";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,7 +15,6 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
-import { useConfigOptions } from "@/hooks/useConfigOptions";
 import { useProjectStatuses } from "@/hooks/useProjectStatuses";
 import { Badge } from "@/components/ui/badge";
 
@@ -38,12 +36,8 @@ const ProjectOverview = () => {
   const [editNameValue, setEditNameValue] = useState("");
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
-  const { options: projektartOptions } = useConfigOptions("projektart");
-  const { options: prioritaetOptions } = useConfigOptions("prioritaet");
-  const { options: bereichOptions } = useConfigOptions("projekt_bereich");
   const { statuses: projectStatuses, findByName: findStatusByName } = useProjectStatuses();
   const [updatingStatus, setUpdatingStatus] = useState(false);
-  const [employees, setEmployees] = useState<{id: string, vorname: string, nachname: string}[]>([]);
   const [editForm, setEditForm] = useState({
     name: "", beschreibung: "",
     // Kunden-/Rechnungsadresse (gespeichert in customers)
@@ -52,11 +46,6 @@ const ProjectOverview = () => {
     // Projekt-/Leistungsort (gespeichert in projects)
     projekt_adresse: "", projekt_plz: "", projekt_ort: "",
     projekt_kontakt_name: "", projekt_kontakt_telefon: "",
-    // Sonstiges Projekt
-    bereich: "",
-    projektart: "", prioritaet: "normal", geplanter_start: "", geplantes_ende: "",
-    budget: "", auftragsvolumen: "", bauleiter_id: "",
-    zugewiesene_mitarbeiter: [] as string[],
   });
   const [customers, setCustomers] = useState<{ id: string; name: string; plz: string | null; ort: string | null }[]>([]);
   const [customerData, setCustomerData] = useState<any>(null);
@@ -184,15 +173,9 @@ const ProjectOverview = () => {
       const { data: c } = await supabase.from("customers").select("*").eq("id", proj.customer_id).single();
       if (c) kunde = c;
     }
-    // Load customer list + employees
-    const [{ data: custs }, { data: emps }, { data: hiddenProfs }] = await Promise.all([
-      supabase.from("customers").select("id, name, plz, ort").order("name"),
-      (supabase.from("employees" as never) as any).select("id, vorname, nachname, user_id").eq("aktiv", true).order("nachname"),
-      (supabase.from("profiles" as never) as any).select("id").eq("hidden", true),
-    ]);
-    const hiddenIds = new Set(((hiddenProfs as any[]) || []).map((p: any) => p.id));
+    // Load customer list
+    const { data: custs } = await supabase.from("customers").select("id, name, plz, ort").order("name");
     setCustomers(custs || []);
-    setEmployees(((emps as any[]) || []).filter((e: any) => !e.user_id || !hiddenIds.has(e.user_id)));
     setEditForm({
       name: proj.name || "",
       beschreibung: proj.beschreibung || "",
@@ -213,18 +196,6 @@ const ProjectOverview = () => {
       projekt_ort: (proj as any).ort || parts[2] || "",
       projekt_kontakt_name: (proj as any).projekt_kontakt_name || "",
       projekt_kontakt_telefon: (proj as any).projekt_kontakt_telefon || "",
-      // Sonstiges
-      bereich: (proj as any).bereich || "",
-      projektart: (proj as any).projektart || "",
-      prioritaet: (proj as any).prioritaet || "normal",
-      geplanter_start: (proj as any).geplanter_start || "",
-      geplantes_ende: (proj as any).geplantes_ende || "",
-      budget: (proj as any).budget != null ? String((proj as any).budget) : "",
-      auftragsvolumen: (proj as any).auftragsvolumen != null ? String((proj as any).auftragsvolumen) : "",
-      bauleiter_id: (proj as any).bauleiter_id || "",
-      zugewiesene_mitarbeiter: Array.isArray((proj as any).zugewiesene_mitarbeiter)
-        ? ((proj as any).zugewiesene_mitarbeiter as string[])
-        : [],
     });
     setEditDialogOpen(true);
   };
@@ -232,20 +203,6 @@ const ProjectOverview = () => {
   const handleEditSave = async () => {
     if (!projectId || !editForm.name.trim()) return;
 
-    // H-1: Start/Ende-Konsistenz
-    if (editForm.geplanter_start && editForm.geplantes_ende && editForm.geplantes_ende < editForm.geplanter_start) {
-      toast({ variant: "destructive", title: "Zeitraum ungültig", description: "Geplantes Ende darf nicht vor dem geplanten Start liegen." });
-      return;
-    }
-    // H-2: Budget/Auftragsvolumen nicht negativ
-    if (editForm.budget && Number(editForm.budget) < 0) {
-      toast({ variant: "destructive", title: "Budget ungültig", description: "Budget darf nicht negativ sein." });
-      return;
-    }
-    if (editForm.auftragsvolumen && Number(editForm.auftragsvolumen) < 0) {
-      toast({ variant: "destructive", title: "Auftragsvolumen ungültig", description: "Auftragsvolumen darf nicht negativ sein." });
-      return;
-    }
     // E-Mail-Validierung wenn Kunde editiert wird
     if (editForm.kunde_email && editForm.kunde_email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editForm.kunde_email.trim())) {
       toast({ variant: "destructive", title: "Ungültige E-Mail" });
@@ -262,18 +219,7 @@ const ProjectOverview = () => {
       ort: editForm.projekt_ort.trim() || null,
       projekt_kontakt_name: editForm.projekt_kontakt_name.trim() || null,
       projekt_kontakt_telefon: editForm.projekt_kontakt_telefon.trim() || null,
-      bereich: editForm.bereich || null,
       customer_id: editForm.customer_id,
-      projektart: editForm.projektart || null,
-      prioritaet: editForm.prioritaet || "normal",
-      geplanter_start: editForm.geplanter_start || null,
-      geplantes_ende: editForm.geplantes_ende || null,
-      budget: editForm.budget ? parseFloat(editForm.budget) : null,
-      auftragsvolumen: editForm.auftragsvolumen ? parseFloat(editForm.auftragsvolumen) : null,
-      bauleiter_id: editForm.bauleiter_id || null,
-      zugewiesene_mitarbeiter: editForm.zugewiesene_mitarbeiter.length > 0
-        ? editForm.zugewiesene_mitarbeiter
-        : [],
     } as any).eq("id", projectId);
     // Update or create customer
     if (editForm.customer_id && editForm.kunde_name.trim()) {
@@ -311,13 +257,7 @@ const ProjectOverview = () => {
     setProjectName(editForm.name.trim());
     setEditSaving(false);
     setEditDialogOpen(false);
-    const count = editForm.zugewiesene_mitarbeiter?.length || 0;
-    toast({
-      title: "Projekt aktualisiert",
-      description: count > 0
-        ? `${count} Mitarbeiter haben Zugriff — Änderung sofort aktiv in der Zeiterfassung.`
-        : "Keine Mitarbeiter zugewiesen — nur Bauleiter/Verantwortlicher sehen das Projekt.",
-    });
+    toast({ title: "Projekt aktualisiert" });
   };
 
   const selectCustomerForEdit = (c: { id: string; name: string; plz: string | null; ort: string | null }) => {
@@ -590,9 +530,6 @@ const ProjectOverview = () => {
                   )}
                 </div>
               )}
-              {(projectData as any).bereich && (
-                <div className="text-sm"><span className="text-muted-foreground">Bereich:</span> {bereichOptions.find(o => o.wert === (projectData as any).bereich)?.label || (projectData as any).bereich}</div>
-              )}
               {/* Rechnungsadresse (Kunde) */}
               {customerData && (customerData.adresse || customerData.plz || customerData.ort) && (
                 <div className="text-sm">
@@ -601,18 +538,6 @@ const ProjectOverview = () => {
                   {customerData.adresse ? `, ${customerData.adresse}` : ""}
                   {customerData.plz || customerData.ort ? `, ${[customerData.plz, customerData.ort].filter(Boolean).join(" ")}` : ""}
                 </div>
-              )}
-              {(projectData as any).geplanter_start && (
-                <div className="text-sm"><span className="text-muted-foreground">Start:</span> {format(parseISO((projectData as any).geplanter_start), "dd.MM.yyyy")}</div>
-              )}
-              {(projectData as any).geplantes_ende && (
-                <div className="text-sm"><span className="text-muted-foreground">Ende:</span> {format(parseISO((projectData as any).geplantes_ende), "dd.MM.yyyy")}</div>
-              )}
-              {(projectData as any).projektart && (
-                <div className="text-sm"><span className="text-muted-foreground">Projektart:</span> {(projectData as any).projektart}</div>
-              )}
-              {(projectData as any).prioritaet && (projectData as any).prioritaet !== "normal" && (
-                <div className="text-sm"><span className="text-muted-foreground">Priorität:</span> {(projectData as any).prioritaet}</div>
               )}
             </CardContent>
           </Card>
@@ -874,119 +799,6 @@ const ProjectOverview = () => {
               <Textarea value={editForm.beschreibung} onChange={(e) => setEditForm(f => ({ ...f, beschreibung: e.target.value }))} rows={2} />
             </div>
 
-            {/* Erweiterte Projektfelder */}
-            <div className="border-t pt-4 space-y-3">
-              <Label className="text-base font-semibold">Projektdetails</Label>
-              <div>
-                <Label>Bereich / Firma</Label>
-                <Select value={editForm.bereich || "none"} onValueChange={(v) => setEditForm(f => ({ ...f, bereich: v === "none" ? "" : v }))}>
-                  <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">--</SelectItem>
-                    {bereichOptions.map(o => (
-                      <SelectItem key={o.id} value={o.wert}>{o.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground mt-1">Freier Bereichstext (admin-konfigurierbar).</p>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Projektart</Label>
-                  <Select value={editForm.projektart || "none"} onValueChange={(v) => setEditForm(f => ({ ...f, projektart: v === "none" ? "" : v }))}>
-                    <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">--</SelectItem>
-                      {projektartOptions.map(o => (
-                        <SelectItem key={o.id} value={o.wert}>{o.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Priorität</Label>
-                  <Select value={editForm.prioritaet || "normal"} onValueChange={(v) => setEditForm(f => ({ ...f, prioritaet: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Normal" /></SelectTrigger>
-                    <SelectContent>
-                      {prioritaetOptions.length > 0 ? prioritaetOptions.map(o => (
-                        <SelectItem key={o.id} value={o.wert}>{o.label}</SelectItem>
-                      )) : (
-                        <>
-                          <SelectItem value="niedrig">Niedrig</SelectItem>
-                          <SelectItem value="normal">Normal</SelectItem>
-                          <SelectItem value="hoch">Hoch</SelectItem>
-                          <SelectItem value="dringend">Dringend</SelectItem>
-                        </>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Geplanter Start</Label>
-                  <Input type="date" value={editForm.geplanter_start} onChange={(e) => setEditForm(f => ({ ...f, geplanter_start: e.target.value }))} />
-                </div>
-                <div>
-                  <Label>Geplantes Ende</Label>
-                  <Input type="date" value={editForm.geplantes_ende} onChange={(e) => setEditForm(f => ({ ...f, geplantes_ende: e.target.value }))} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Budget</Label>
-                  <Input type="number" step="0.01" min="0" value={editForm.budget} onChange={(e) => setEditForm(f => ({ ...f, budget: e.target.value }))} placeholder="0.00" />
-                </div>
-                <div>
-                  <Label>Auftragsvolumen</Label>
-                  <Input type="number" step="0.01" min="0" value={editForm.auftragsvolumen} onChange={(e) => setEditForm(f => ({ ...f, auftragsvolumen: e.target.value }))} placeholder="0.00" />
-                </div>
-              </div>
-              <div>
-                <Label>Bauleiter</Label>
-                <Select value={editForm.bauleiter_id || "none"} onValueChange={(v) => setEditForm(f => ({ ...f, bauleiter_id: v === "none" ? "" : v }))}>
-                  <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">--</SelectItem>
-                    {employees.map(e => (
-                      <SelectItem key={e.id} value={e.id}>{e.vorname} {e.nachname}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {/* Zugewiesene Mitarbeiter – steuert den Zugriff auf das Projekt */}
-              <div>
-                <Label className="mb-2 block">Zugewiesene Mitarbeiter</Label>
-                <p className="text-xs text-muted-foreground mb-2">
-                  Nur diese Mitarbeiter sehen das Projekt in der App und können Fotos/Stunden dafür buchen. Administrator und Vorarbeiter sehen alle Projekte.
-                </p>
-                <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border rounded-md p-3">
-                  {employees.length > 0 ? employees.map((e) => {
-                    const checked = editForm.zugewiesene_mitarbeiter.includes(e.id);
-                    return (
-                      <label key={e.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(ev) => {
-                            setEditForm(f => ({
-                              ...f,
-                              zugewiesene_mitarbeiter: ev.target.checked
-                                ? [...f.zugewiesene_mitarbeiter, e.id]
-                                : f.zugewiesene_mitarbeiter.filter(x => x !== e.id),
-                            }));
-                          }}
-                          className="rounded"
-                        />
-                        {e.vorname} {e.nachname}
-                      </label>
-                    );
-                  }) : (
-                    <p className="text-sm text-muted-foreground col-span-2">Keine aktiven Mitarbeiter gefunden.</p>
-                  )}
-                </div>
-              </div>
-            </div>
 
             {/* Leistungsort / Durchführungsort */}
             <div className="border-t pt-4">

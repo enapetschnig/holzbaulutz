@@ -9,11 +9,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Search, UserPlus, Building, Upload, Trash2, CheckCircle, FileText, Image, Map } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useConfigOptions } from "@/hooks/useConfigOptions";
 import {
   CustomerForm,
   EMPTY_CUSTOMER_FORM,
@@ -85,15 +83,7 @@ export function CreateProjectDialog({
   const [customerPopoverOpen, setCustomerPopoverOpen] = useState(false);
   const [customerTab, setCustomerTab] = useState<"existing" | "new">("existing");
 
-  // Config options
-  const { options: projektartOptions } = useConfigOptions("projektart");
-  const { options: prioritaetOptions } = useConfigOptions("prioritaet");
-  const { options: projektTypOptions } = useConfigOptions("projekt_typ");
-  const { options: leistungsartOptions } = useConfigOptions("leistungsart");
-  const { options: bereichOptions } = useConfigOptions("projekt_bereich");
-
-  // Employees & statuses
-  const [employees, setEmployees] = useState<{ id: string; vorname: string; nachname: string }[]>([]);
+  // Statuses
   const [projectStatuses, setProjectStatuses] = useState<{ id: string; name: string; is_default: boolean }[]>([]);
 
   // --- Section 1: Projektdaten ---
@@ -131,26 +121,7 @@ export function CreateProjectDialog({
   const [zusatzinfos, setZusatzinfos] = useState("");
   const [wegbeschreibung, setWegbeschreibung] = useState("");
 
-  // --- Section 1b: Bereich/Mandant ---
-  const [bereich, setBereich] = useState("");
-  const [kategorie, setKategorie] = useState<string>("");  // Geschäftsbereich → Google Calendar
-
-  // --- Section 4: Projektinhalt ---
-  const [projektTyp, setProjektTyp] = useState("");
-  const [projektart, setProjektart] = useState("");
-  const [prioritaet, setPrioritaet] = useState("normal");
-  const [leistungsarten, setLeistungsarten] = useState<string[]>([]);
-  const [geplanterStart, setGeplanterStart] = useState("");
-  const [geplantesEnde, setGeplantesEnde] = useState("");
-  const [budget, setBudget] = useState("");
-  const [auftragsvolumen, setAuftragsvolumen] = useState("");
-
-  // --- Section 5: Team ---
-  const [projektverantwortlicherId, setProjektverantwortlicherId] = useState("");
-  const [bauleiterId, setBauleiterId] = useState("");
-  const [zugewieseneMitarbeiter, setZugewieseneMitarbeiter] = useState<string[]>([]);
-
-  // --- Section 6: Fotos & Dokumente (post-save) ---
+  // --- Section 4: Fotos & Dokumente (post-save) ---
   const [createdProjectId, setCreatedProjectId] = useState<string | null>(null);
   const [createdProjectName, setCreatedProjectName] = useState("");
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -190,18 +161,6 @@ export function CreateProjectDialog({
       setProjektKontaktTelefon("");
       setZusatzinfos("");
       setWegbeschreibung("");
-      setBereich("");
-      setProjektTyp("");
-      setProjektart("");
-      setPrioritaet("normal");
-      setLeistungsarten([]);
-      setGeplanterStart("");
-      setGeplantesEnde("");
-      setBudget("");
-      setAuftragsvolumen("");
-      setProjektverantwortlicherId("");
-      setBauleiterId("");
-      setZugewieseneMitarbeiter([]);
       setCreatedProjectId(null);
       setCreatedProjectName("");
       setUploadedFiles([]);
@@ -216,17 +175,6 @@ export function CreateProjectDialog({
         .then(({ data }) => {
           if (data) setCustomers(data as CustomerOption[]);
         });
-
-      // Load employees (hidden Profile ausblenden)
-      (async () => {
-        const [{ data: emps }, { data: hiddenProfs }] = await Promise.all([
-          (supabase.from("employees" as never) as any)
-            .select("id, vorname, nachname, user_id").eq("aktiv", true).order("nachname"),
-          (supabase.from("profiles" as never) as any).select("id").eq("hidden", true),
-        ]);
-        const hiddenIds = new Set(((hiddenProfs as any[]) || []).map((p: any) => p.id));
-        if (emps) setEmployees((emps as any[]).filter((e: any) => !e.user_id || !hiddenIds.has(e.user_id)));
-      })();
 
       // Load project statuses
       (supabase.from("project_statuses" as never) as any)
@@ -271,37 +219,9 @@ export function CreateProjectDialog({
     if (!projectName) setProjectName(c.name);
   };
 
-  const toggleLeistungsart = (wert: string) => {
-    setLeistungsarten((prev) =>
-      prev.includes(wert) ? prev.filter((l) => l !== wert) : [...prev, wert]
-    );
-  };
-
-  const toggleMitarbeiter = (id: string) => {
-    setZugewieseneMitarbeiter((prev) =>
-      prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]
-    );
-  };
-
   const handleSave = async () => {
     if (!projectName.trim()) {
       toast({ variant: "destructive", title: "Projektname erforderlich" });
-      return;
-    }
-
-    // H-1: Geplantes Ende darf nicht vor geplantem Start liegen
-    if (geplanterStart && geplantesEnde && geplantesEnde < geplanterStart) {
-      toast({ variant: "destructive", title: "Zeitraum ungültig", description: "Geplantes Ende darf nicht vor dem geplanten Start liegen." });
-      return;
-    }
-
-    // H-2: Budget + Auftragsvolumen nicht negativ
-    if (budget && Number(budget) < 0) {
-      toast({ variant: "destructive", title: "Budget ungültig", description: "Budget darf nicht negativ sein." });
-      return;
-    }
-    if (auftragsvolumen && Number(auftragsvolumen) < 0) {
-      toast({ variant: "destructive", title: "Auftragsvolumen ungültig", description: "Auftragsvolumen darf nicht negativ sein." });
       return;
     }
 
@@ -422,24 +342,8 @@ export function CreateProjectDialog({
           land: projektLand.trim() || null,
           projekt_kontakt_name: projektKontaktName.trim() || null,
           projekt_kontakt_telefon: projektKontaktTelefon.trim() || null,
-          bereich: bereich || null,
-          kategorie: kategorie || null,
           zusatzinfos: zusatzinfos.trim() || null,
           wegbeschreibung: wegbeschreibung.trim() || null,
-          // Projektinhalt
-          projekt_typ: projektTyp || null,
-          projektart: projektart || null,
-          prioritaet: prioritaet || "normal",
-          leistungsarten: leistungsarten.length > 0 ? leistungsarten : null,
-          geplanter_start: geplanterStart || null,
-          geplantes_ende: geplantesEnde || null,
-          budget: budget ? parseFloat(budget) : null,
-          auftragsvolumen: auftragsvolumen ? parseFloat(auftragsvolumen) : null,
-          // Team
-          projektverantwortlicher_id: projektverantwortlicherId || null,
-          bauleiter_id: bauleiterId || null,
-          zugewiesene_mitarbeiter:
-            zugewieseneMitarbeiter.length > 0 ? zugewieseneMitarbeiter : null,
         } as any)
         .select("id, name")
         .single();
@@ -513,35 +417,6 @@ export function CreateProjectDialog({
     setCreatedProjectId(null);
     onClose();
   };
-
-  // Default leistungsarten if config is empty
-  const defaultLeistungsarten = [
-    { wert: "beratung", label: "Beratung" },
-    { wert: "planung", label: "Planung" },
-    { wert: "lieferung", label: "Lieferung" },
-    { wert: "montage", label: "Montage" },
-    { wert: "reparatur", label: "Reparatur" },
-    { wert: "wartung", label: "Wartung" },
-    { wert: "sanierung", label: "Sanierung" },
-    { wert: "sonstiges", label: "Sonstiges" },
-  ];
-
-  const effectiveLeistungsarten =
-    leistungsartOptions.length > 0
-      ? leistungsartOptions.map((o) => ({ wert: o.wert, label: o.label }))
-      : defaultLeistungsarten;
-
-  // Default projekt_typ if config is empty
-  const defaultProjektTypen = [
-    { wert: "hauptprojekt", label: "Hauptprojekt" },
-    { wert: "unterprojekt", label: "Unterprojekt" },
-    { wert: "einzelprojekt", label: "Einzelprojekt" },
-  ];
-
-  const effectiveProjektTypen =
-    projektTypOptions.length > 0
-      ? projektTypOptions.map((o) => ({ wert: o.wert, label: o.label }))
-      : defaultProjektTypen;
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
@@ -775,36 +650,6 @@ export function CreateProjectDialog({
                 />
               </div>
               <div>
-                <Label>Bereich / Firma</Label>
-                <Select value={bereich || "none"} onValueChange={(v) => setBereich(v === "none" ? "" : v)}>
-                  <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">--</SelectItem>
-                    {bereichOptions.map((o) => (
-                      <SelectItem key={o.id} value={o.wert}>{o.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground mt-1">Freier Bereichstext (admin-konfigurierbar).</p>
-              </div>
-              <div>
-                <Label>Farbkategorie (Plantafel)</Label>
-                <Select value={kategorie || "none"} onValueChange={(v) => setKategorie(v === "none" ? "" : v)}>
-                  <SelectTrigger><SelectValue placeholder="ohne Farbe" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">— ohne Farbe</SelectItem>
-                    <SelectItem value="montipro">Grün</SelectItem>
-                    <SelectItem value="bks">Blau</SelectItem>
-                    <SelectItem value="gartenmacher">Limette</SelectItem>
-                    <SelectItem value="fensterwerk">Cyan</SelectItem>
-                    <SelectItem value="ladenbau">Gelb</SelectItem>
-                    <SelectItem value="portas">Orange</SelectItem>
-                    <SelectItem value="chef">Violett</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground mt-1">Optionale Farbmarkierung des Projekts in der Plantafel.</p>
-              </div>
-              <div>
                 <Label>Beschreibung / Kurzbeschreibung</Label>
                 <Textarea
                   value={beschreibung}
@@ -977,212 +822,6 @@ export function CreateProjectDialog({
                   placeholder="Anfahrt, Google Maps Link..."
                   rows={2}
                 />
-              </div>
-            </div>
-
-            {/* ======== Section 4: Projektinhalt ======== */}
-            <div className="space-y-3">
-              <Label className="text-base font-semibold border-b pb-1 block">
-                Projektinhalt
-              </Label>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Art des Projekts / Projekt-Typ</Label>
-                  <Select
-                    value={projektTyp || "none"}
-                    onValueChange={(v) => setProjektTyp(v === "none" ? "" : v)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Wählen..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">--</SelectItem>
-                      {effectiveProjektTypen.map((o) => (
-                        <SelectItem key={o.wert} value={o.wert}>
-                          {o.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Projektart</Label>
-                  <Select
-                    value={projektart || "none"}
-                    onValueChange={(v) => setProjektart(v === "none" ? "" : v)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Wählen..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">--</SelectItem>
-                      {projektartOptions.map((o) => (
-                        <SelectItem key={o.id} value={o.wert}>
-                          {o.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div>
-                <Label>Priorität</Label>
-                <Select
-                  value={prioritaet || "normal"}
-                  onValueChange={(v) => setPrioritaet(v)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Normal" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {prioritaetOptions.length > 0 ? (
-                      prioritaetOptions.map((o) => (
-                        <SelectItem key={o.id} value={o.wert}>
-                          {o.label}
-                        </SelectItem>
-                      ))
-                    ) : (
-                      <>
-                        <SelectItem value="niedrig">Niedrig</SelectItem>
-                        <SelectItem value="normal">Normal</SelectItem>
-                        <SelectItem value="hoch">Hoch</SelectItem>
-                        <SelectItem value="dringend">Dringend</SelectItem>
-                      </>
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Leistungsarten - checkboxes */}
-              <div>
-                <Label className="mb-2 block">Art der Leistung</Label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {effectiveLeistungsarten.map((l) => (
-                    <label
-                      key={l.wert}
-                      className="flex items-center gap-2 text-sm cursor-pointer"
-                    >
-                      <Checkbox
-                        checked={leistungsarten.includes(l.wert)}
-                        onCheckedChange={() => toggleLeistungsart(l.wert)}
-                      />
-                      {l.label}
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Geplanter Start</Label>
-                  <Input
-                    type="date"
-                    value={geplanterStart}
-                    onChange={(e) => setGeplanterStart(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <Label>Geplantes Ende</Label>
-                  <Input
-                    type="date"
-                    value={geplantesEnde}
-                    onChange={(e) => setGeplantesEnde(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Budget</Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={budget}
-                    onChange={(e) => setBudget(e.target.value)}
-                    placeholder="0.00"
-                  />
-                </div>
-                <div>
-                  <Label>Auftragsvolumen</Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={auftragsvolumen}
-                    onChange={(e) => setAuftragsvolumen(e.target.value)}
-                    placeholder="0.00"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* ======== Section 5: Team ======== */}
-            <div className="space-y-3">
-              <Label className="text-base font-semibold border-b pb-1 block">Team</Label>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Projektverantwortlicher</Label>
-                  <Select
-                    value={projektverantwortlicherId || "none"}
-                    onValueChange={(v) =>
-                      setProjektverantwortlicherId(v === "none" ? "" : v)
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Wählen..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">--</SelectItem>
-                      {employees.map((e) => (
-                        <SelectItem key={e.id} value={e.id}>
-                          {e.vorname} {e.nachname}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Bauleiter</Label>
-                  <Select
-                    value={bauleiterId || "none"}
-                    onValueChange={(v) => setBauleiterId(v === "none" ? "" : v)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Wählen..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">--</SelectItem>
-                      {employees.map((e) => (
-                        <SelectItem key={e.id} value={e.id}>
-                          {e.vorname} {e.nachname}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div>
-                <Label className="mb-2 block">Zugewiesene Mitarbeiter</Label>
-                <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto border rounded-md p-3">
-                  {employees.length > 0 ? (
-                    employees.map((e) => (
-                      <label
-                        key={e.id}
-                        className="flex items-center gap-2 text-sm cursor-pointer"
-                      >
-                        <Checkbox
-                          checked={zugewieseneMitarbeiter.includes(e.id)}
-                          onCheckedChange={() => toggleMitarbeiter(e.id)}
-                        />
-                        {e.vorname} {e.nachname}
-                      </label>
-                    ))
-                  ) : (
-                    <p className="text-sm text-muted-foreground col-span-2">
-                      Keine aktiven Mitarbeiter gefunden
-                    </p>
-                  )}
-                </div>
               </div>
             </div>
 
