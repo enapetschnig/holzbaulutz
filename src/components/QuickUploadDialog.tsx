@@ -61,6 +61,7 @@ export function QuickUploadDialog({
     setUploadProgress(0);
 
     const bucket = bucketMap[documentType];
+    const { data: { user } } = await supabase.auth.getUser();
     let successCount = 0;
 
     for (let i = 0; i < selectedFiles.length; i++) {
@@ -88,6 +89,20 @@ export function QuickUploadDialog({
 
       if (uploadData) {
         successCount++;
+        // Index-Zeile in 'documents' anlegen — sonst erscheint die Datei nur
+        // im Datei-Zähler (liest Storage), aber NICHT in der Galerie (liest
+        // documents). Genau das hat dazu geführt, dass Fotos "verschwinden".
+        const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(filePath);
+        if (user) {
+          const { error: docErr } = await supabase.from("documents").insert({
+            project_id: projectId,
+            user_id: user.id,
+            typ: documentType,
+            name: file.name,
+            file_url: urlData.publicUrl,
+          } as any);
+          if (docErr) console.error("documents-Index konnte nicht angelegt werden:", docErr);
+        }
       }
 
       setUploadProgress(((i + 1) / selectedFiles.length) * 100);
