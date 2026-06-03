@@ -60,15 +60,25 @@ function buildHtml(invoice: any, items: any[], bank: { kontoinhaber: string; iba
   const showPaymentInfo = !isAngebot && bezahltBetrag > 0;
   const mahnstufe = Number(invoice.mahnstufe) || 0;
 
-  const itemRows = (items || []).map((item: any, idx: number) => `
+  const itemRows = (items || []).map((item: any, idx: number) => {
+    // Kurztext als Hauptzeile + optionaler Langtext darunter (kleiner, grau) —
+    // wie im Client-PDF. Vorher wurde nur beschreibung gerendert, dadurch fehlte
+    // der Langtext auf der Server-/Export-PDF.
+    const kurz = item.kurztext || item.beschreibung || '';
+    const lang = (item.langtext && item.langtext !== kurz) ? item.langtext : '';
+    const descCell = lang
+      ? `${kurz}<div style="margin-top:3px;color:#555;font-size:8.5pt;white-space:pre-wrap;">${lang}</div>`
+      : kurz;
+    return `
     <tr style="background:${idx % 2 === 0 ? '#fff' : '#fafafa'};">
       <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;color:#888;text-align:center;font-size:9pt;">${item.position}</td>
-      <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;color:#1a1a1a;font-size:9.5pt;white-space:pre-wrap;">${item.beschreibung}</td>
+      <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;color:#1a1a1a;font-size:9.5pt;white-space:pre-wrap;">${descCell}</td>
       <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;text-align:right;color:#444;font-size:9pt;">${fmt(Number(item.menge))}</td>
       <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;text-align:center;color:#444;font-size:9pt;">${item.einheit || 'Stk.'}</td>
       <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;text-align:right;color:#444;font-size:9pt;">${fmtCurrency(Number(item.einzelpreis))}</td>
       <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;text-align:right;font-weight:600;color:#1a1a1a;font-size:9.5pt;">${fmtCurrency(Number(item.gesamtpreis))}</td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
 
   let totalsHtml = '';
   if (hasRabatt) {
