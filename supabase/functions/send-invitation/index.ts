@@ -68,9 +68,11 @@ Deno.serve(async (req) => {
       throw new Error('Twilio credentials not configured');
     }
 
-    // Generate registration link
-    const appUrl = Deno.env.get('APP_URL') || 'https://holzbau-lutz.at';
-    const registrationLink = `${appUrl}/auth`;
+    // Generate registration link — WURZEL-URL verwenden.
+    // Deep-Links wie /auth liefern beim Hoster 404 (kein SPA-Fallback);
+    // der Router leitet nicht angemeldete Nutzer clientseitig auf /auth weiter.
+    const appUrl = Deno.env.get('APP_URL') || 'https://lutz.handwerkapp.at';
+    const registrationLink = appUrl;
 
     // Compose SMS message
     const smsText = `Willkommen bei Holzbau Lutz! Bitte registriere dich in unserer Mitarbeiter-App:\n${registrationLink}`;
