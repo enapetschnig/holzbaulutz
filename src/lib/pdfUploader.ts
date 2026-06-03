@@ -12,6 +12,7 @@
  * Wenn project_id fehlt (Orphan), wird unter _orphan/ abgelegt.
  */
 import { supabase } from "@/integrations/supabase/client";
+import { safeStorageName } from "@/lib/projectFiles";
 
 export type PdfCategory = "berichte" | "protokolle" | "rechnungen" | "angebote" | "regieberichte";
 
@@ -32,12 +33,10 @@ export interface UploadPdfResult {
 const BUCKET = "project-reports";
 const SIGNED_TTL = 60 * 60; // 1 Stunde
 
-/** Sanitiert einen Dateinamen-Baustein (ä/ö/ü/ß ok, keine Slashes etc.) */
+/** Sanitiert einen Dateinamen-Baustein storage-sicher (Umlaute werden
+ *  transliteriert — Supabase lehnt Umlaute im Key sonst ab). */
 function sanitize(name: string): string {
-  return name
-    .replace(/[\\/:*?"<>|]/g, "_")
-    .replace(/\s+/g, "_")
-    .slice(0, 120);
+  return safeStorageName(name).slice(0, 120);
 }
 
 export async function uploadProjectPdf(opts: UploadPdfOptions): Promise<UploadPdfResult> {

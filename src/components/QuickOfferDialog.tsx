@@ -131,11 +131,14 @@ export function QuickOfferDialog({ open, onOpenChange }: QuickOfferDialogProps) 
 
       const customerId = selectedCustomer?.id || null;
 
-      // Generate offer number
-      const { data: numData, error: numError } = await supabase.rpc("next_invoice_number", {
+      // Einheitlicher Nummernkreis wie im Rechnungs-Editor: next_document_number
+      // ist zählergestützt (number_ranges) + zeilengesperrt (FOR UPDATE) und
+      // prüft auf Eindeutigkeit. Das frühere next_invoice_number (MAX-basiert)
+      // lief getrennt → doppelte Nummern. Jetzt nutzen beide Wege denselben Kreis.
+      const { data: numData, error: numError } = await supabase.rpc("next_document_number" as never, {
         p_typ: "angebot",
         p_jahr: new Date().getFullYear(),
-      });
+      } as never);
       if (numError) throw numError;
 
       const nummer = numData as string;
@@ -191,7 +194,8 @@ export function QuickOfferDialog({ open, onOpenChange }: QuickOfferDialogProps) 
         rabatt_prozent: 0,
       }));
 
-      await supabase.from("invoice_items").insert(itemsToInsert);
+      const { error: itemsError } = await supabase.from("invoice_items").insert(itemsToInsert);
+      if (itemsError) throw itemsError;
 
       toast({ title: "Angebot erstellt!", description: `${nummer} – € ${brutto.toFixed(2)} brutto` });
       onOpenChange(false);

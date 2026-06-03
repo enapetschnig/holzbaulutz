@@ -1215,26 +1215,39 @@ export default function Invoices() {
                 }
 
                 const inv = invoices.find(i => i.id === paymentInvoiceId);
-                const maxBetrag = Math.round(((inv?.brutto_summe || 0) - (inv?.bezahlt_betrag || 0)) * 100) / 100;
+                // Einzige Quelle der Wahrheit = Summe der erfassten Zahlungen
+                // (NICHT das denormalisierte bezahlt_betrag, das durch
+                // Gutschrift/Storno abweichen kann — sonst werden gültige
+                // Beträge abgelehnt oder Überzahlung zugelassen).
+                const bereitsGezahlt = existingPayments.reduce((s, p) => s + Number(p.betrag), 0);
+                const maxBetrag = Math.round(((inv?.brutto_summe || 0) - bereitsGezahlt) * 100) / 100;
                 if (betrag > maxBetrag) {
                   toast({ variant: "destructive", title: "Betrag zu hoch", description: `Maximaler Betrag: €${maxBetrag.toFixed(2)}` });
                   return;
                 }
 
-                await supabase.from("invoice_payments").insert({
+                const { error: payErr } = await supabase.from("invoice_payments").insert({
                   invoice_id: paymentInvoiceId,
                   betrag,
                   datum: paymentDatum,
                   notizen: paymentNotiz.trim() || null,
                 });
+                if (payErr) {
+                  toast({ variant: "destructive", title: "Zahlung nicht gespeichert", description: payErr.message });
+                  return;
+                }
 
-                const newBezahlt = (inv?.bezahlt_betrag || 0) + betrag;
+                const newBezahlt = Math.round((bereitsGezahlt + betrag) * 100) / 100;
                 const newStatus = newBezahlt >= (inv?.brutto_summe || 0) ? "bezahlt" : "teilbezahlt";
 
-                await supabase.from("invoices").update({
+                const { error: updErr } = await supabase.from("invoices").update({
                   status: newStatus,
                   bezahlt_betrag: newBezahlt,
                 }).eq("id", paymentInvoiceId);
+                if (updErr) {
+                  toast({ variant: "destructive", title: "Status nicht aktualisiert", description: updErr.message });
+                  return;
+                }
 
                 setInvoices(prev => prev.map(i =>
                   i.id === paymentInvoiceId ? { ...i, status: newStatus, bezahlt_betrag: newBezahlt } : i

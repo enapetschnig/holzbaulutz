@@ -1274,6 +1274,7 @@ export default function InvoiceDetail() {
     // Double-click protection — SOFORT setzen um Race-Condition bei schnellen Klicks zu verhindern
     if (saving) return false;
     setSaving(true);
+    try {
 
     if (!form.kunde_name.trim()) {
       setSaving(false);
@@ -1394,7 +1395,7 @@ export default function InvoiceDetail() {
           if (existingCust) {
             customerId = existingCust.id;
           } else {
-            const { data: newCust } = await supabase.from("customers").insert({
+            const { data: newCust, error: custErr } = await supabase.from("customers").insert({
               user_id: user.id,
               name: form.kunde_name,
               adresse: form.kunde_adresse || null,
@@ -1405,7 +1406,13 @@ export default function InvoiceDetail() {
               telefon: form.kunde_telefon || null,
               uid_nummer: form.kunde_uid || null,
             }).select("id").single();
-            if (newCust) customerId = newCust.id;
+            if (custErr) {
+              // Stammkunde konnte nicht angelegt werden — Rechnung/Angebot
+              // trotzdem speichern (eigener Kunden-Snapshot bleibt erhalten).
+              console.warn("Kunde nicht als Stammkunde angelegt:", custErr.message);
+            } else if (newCust) {
+              customerId = newCust.id;
+            }
           }
           updateField("customer_id", customerId);
         }
@@ -1663,6 +1670,11 @@ export default function InvoiceDetail() {
       toast({ variant: "destructive", title: "Fehler", description: err.message || "Speichern fehlgeschlagen" });
       setSaving(false);
       return false;
+    }
+    } finally {
+      // Garantie: der Speichern-Button bleibt NIE hängen — auch wenn eine
+      // Validierung oben früh mit `return false` abbricht.
+      setSaving(false);
     }
   };
 
