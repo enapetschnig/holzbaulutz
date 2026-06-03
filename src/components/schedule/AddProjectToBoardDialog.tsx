@@ -61,7 +61,8 @@ export function AddProjectToBoardDialog({ open, onOpenChange, availableProjects,
   }, [projectId, availableProjects]);
 
   const handleSaveExisting = async () => {
-    if (!projectId || !startDate || !endDate) return;
+    if (!projectId) { toast({ variant: "destructive", title: "Bitte ein Projekt wählen" }); return; }
+    if (!startDate || !endDate) { toast({ variant: "destructive", title: "Start und Ende erforderlich" }); return; }
     setSaving(true);
     try {
       await onSave(projectId, color, startDate, endDate, beschreibung);
@@ -71,7 +72,8 @@ export function AddProjectToBoardDialog({ open, onOpenChange, availableProjects,
   };
 
   const handleSaveNew = async () => {
-    if (!newName.trim() || !startDate || !endDate) return;
+    if (!newName.trim()) { toast({ variant: "destructive", title: "Projektname erforderlich" }); return; }
+    if (!startDate || !endDate) { toast({ variant: "destructive", title: "Start und Ende erforderlich" }); return; }
     setSaving(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -207,12 +209,7 @@ export function AddProjectToBoardDialog({ open, onOpenChange, availableProjects,
           <Button variant="outline" onClick={() => onOpenChange(false)}>Abbrechen</Button>
           <Button
             onClick={tab === "existing" ? handleSaveExisting : handleSaveNew}
-            disabled={
-              saving ||
-              !startDate || !endDate ||
-              (tab === "existing" && !projectId) ||
-              (tab === "new" && !newName.trim())
-            }
+            disabled={saving}
           >
             {saving ? "Speichern..." : "Speichern"}
           </Button>

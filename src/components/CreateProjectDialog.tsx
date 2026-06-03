@@ -830,7 +830,7 @@ export function CreateProjectDialog({
               <Button variant="outline" onClick={onClose}>
                 Abbrechen
               </Button>
-              <Button onClick={handleSave} disabled={saving || !projectName.trim()}>
+              <Button onClick={handleSave} disabled={saving}>
                 {saving ? "Erstellt..." : "Projekt erstellen"}
               </Button>
             </div>
