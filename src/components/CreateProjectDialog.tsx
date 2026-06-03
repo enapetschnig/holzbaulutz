@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, UserPlus, Building, Upload, Trash2, CheckCircle, FileText, Image, Map } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { buildProjectFilePath } from "@/lib/projectFiles";
 import { useToast } from "@/hooks/use-toast";
 import {
   CustomerForm,
@@ -380,8 +381,8 @@ export function CreateProjectDialog({
       const newFiles: UploadedFile[] = [];
 
       for (const file of Array.from(files)) {
-        const timestamp = Date.now();
-        const filePath = `${createdProjectId}/${timestamp}-${file.name}`;
+        // Storage-sicherer Pfad (Umlaute/Sonderzeichen); Originalname für die Anzeige behalten
+        const filePath = buildProjectFilePath(createdProjectId, file.name);
 
         const { error } = await supabase.storage.from(bucket).upload(filePath, file);
         if (error) throw error;

@@ -36,6 +36,42 @@ export const BUCKET_TYP: Record<string, string> = {
 /** Nur dieser Bucket ist öffentlich — alle anderen brauchen signierte URLs. */
 const PUBLIC_BUCKETS = new Set(["project-photos"]);
 
+const UMLAUT: Record<string, string> = {
+  "ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss",
+};
+
+/**
+ * Macht einen Dateinamen storage-sicher. Supabase-Storage lehnt Schlüssel mit
+ * Umlauten/Sonderzeichen ab ("Invalid key") — z.B. "Plän Übersicht.pdf".
+ * Umlaute werden transliteriert (ä→ae …), restliche Akzente entfernt und alles
+ * Unsichere durch "_" ersetzt. Die Endung bleibt erhalten. Der ORIGINALname
+ * wird separat in documents.name gespeichert (für die exakte Anzeige).
+ */
+export function safeStorageName(name: string): string {
+  let s = (name || "").trim();
+  s = s.replace(/[äöüÄÖÜß]/g, (c) => UMLAUT[c] || c);
+  s = s.normalize("NFKD").replace(/[\u0300-\u036f]/g, ""); // Akzente entfernen: é->e, à->a
+  s = s.replace(/[^A-Za-z0-9._-]+/g, "_");                  // alles Unsichere → _
+  s = s.replace(/_+/g, "_").replace(/^[._]+/, "");          // führende _/. entfernen
+  return s || "datei";
+}
+
+/** Eindeutiger, storage-sicherer Pfad. "__" trennt das Unique-Präfix vom
+ *  (sicheren) Originalnamen, damit humanizeStorageName ihn wiederherstellen kann. */
+export function buildProjectFilePath(projectId: string, originalName: string): string {
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `${projectId}/${Date.now()}-${rand}__${safeStorageName(originalName)}`;
+}
+
+/** Lesbarer Anzeigename aus einem Storage-Schlüssel (Fallback, wenn keine
+ *  documents-Zeile mit dem Originalnamen existiert). */
+export function humanizeStorageName(storageName: string): string {
+  const base = storageName.split("/").pop() || storageName;
+  const i = base.indexOf("__");
+  if (i >= 0) return base.slice(i + 2);
+  return base.replace(/^\d{10,}[-_]/, ""); // Legacy: führenden Timestamp entfernen
+}
+
 /** Echte Dateien aus dem Storage-Listing (Unterordner haben id===null,
  *  Supabase-Platzhalter beginnen mit "."). */
 function realFiles<T extends { id: string | null; name: string }>(objects: T[]): T[] {
@@ -66,18 +102,19 @@ export async function listProjectFiles(projectId: string, bucket: string): Promi
     (signed || []).forEach((s, i) => { if (s?.signedUrl) urlByPath.set(paths[i], s.signedUrl); });
   }
 
-  // documents-Metadaten einmalig laden und per Dateiname zuordnen.
+  // documents-Metadaten einmalig laden und per Storage-Dateiname zuordnen.
+  // Liefert den ORIGINALnamen (mit Umlauten) + Kommentar.
   const typ = BUCKET_TYP[bucket];
-  const metaByName = new Map<string, { id: string; beschreibung: string | null }>();
+  const metaByName = new Map<string, { id: string; name: string | null; beschreibung: string | null }>();
   if (typ) {
     const { data: rows } = await supabase
       .from("documents")
-      .select("id, file_url, beschreibung")
+      .select("id, name, file_url, beschreibung")
       .eq("project_id", projectId)
       .eq("typ", typ);
     for (const r of ((rows as any[]) || [])) {
       const seg = decodeURIComponent(((r.file_url || "").split("/").pop() || ""));
-      if (seg) metaByName.set(seg, { id: r.id, beschreibung: r.beschreibung ?? null });
+      if (seg) metaByName.set(seg, { id: r.id, name: r.name ?? null, beschreibung: r.beschreibung ?? null });
     }
   }
 
@@ -86,7 +123,7 @@ export async function listProjectFiles(projectId: string, bucket: string): Promi
     const meta = metaByName.get(o.name);
     return {
       path,
-      name: o.name,
+      name: meta?.name || humanizeStorageName(o.name),
       url: urlByPath.get(path) || "",
       createdAt: (o as any).created_at || (o as any).updated_at || new Date().toISOString(),
       size: (o as any).metadata?.size ?? 0,

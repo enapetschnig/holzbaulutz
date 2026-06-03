@@ -6,6 +6,7 @@ import { Upload, X, Info } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { Progress } from "@/components/ui/progress";
+import { buildProjectFilePath } from "@/lib/projectFiles";
 
 type DocumentType = "plans" | "reports" | "materials" | "photos";
 
@@ -66,7 +67,8 @@ export function QuickUploadDialog({
 
     for (let i = 0; i < selectedFiles.length; i++) {
       const file = selectedFiles[i];
-      const filePath = `${projectId}/${Date.now()}_${file.name}`;
+      // Storage-sicherer Pfad (Umlaute/Sonderzeichen) — Originalname kommt in documents.name
+      const filePath = buildProjectFilePath(projectId, file.name);
 
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from(bucket)

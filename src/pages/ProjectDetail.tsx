@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/PageHeader";
 import { FileViewer } from "@/components/FileViewer";
 import { ProjectPhotoGallery } from "@/components/ProjectPhotoGallery";
+import { buildProjectFilePath, humanizeStorageName } from "@/lib/projectFiles";
 
 type DocumentType = "plans" | "reports" | "photos" | "chef";
 
@@ -144,27 +145,36 @@ const ProjectDetail = () => {
     if (!e.target.files || e.target.files.length === 0 || !projectId || !type) return;
 
     setUploading(true);
-    const file = e.target.files[0];
     const bucket = bucketMap[type];
-    const filePath = `${projectId}/${Date.now()}_${file.name}`;
+    const { data: { user } } = await supabase.auth.getUser();
+    const selected = Array.from(e.target.files);
+    let ok = 0;
+    let lastError = "";
 
-    const { error } = await supabase
-      .storage
-      .from(bucket)
-      .upload(filePath, file);
+    for (const file of selected) {
+      // Storage-sicherer Pfad (Umlaute/Sonderzeichen) — Originalname in documents.name
+      const filePath = buildProjectFilePath(projectId, file.name);
+      const { error } = await supabase.storage.from(bucket).upload(filePath, file);
+      if (error) { lastError = error.message; continue; }
+      ok++;
+      // documents-Index für die exakte Namensanzeige in den anderen Ordnern
+      if (user) {
+        const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(filePath);
+        await supabase.from("documents").insert({
+          project_id: projectId,
+          user_id: user.id,
+          typ: type,
+          name: file.name,
+          file_url: urlData.publicUrl,
+        } as any);
+      }
+    }
 
-    if (error) {
-      toast({
-        variant: "destructive",
-        title: "Fehler",
-        description: "Datei konnte nicht hochgeladen werden",
-      });
-    } else {
-      toast({
-        title: "Erfolg",
-        description: "Datei wurde hochgeladen",
-      });
+    if (ok > 0) {
+      toast({ title: "Erfolg", description: `${ok} Datei(en) hochgeladen` });
       fetchFiles();
+    } else {
+      toast({ variant: "destructive", title: "Fehler", description: lastError || "Datei konnte nicht hochgeladen werden" });
     }
     setUploading(false);
     e.target.value = "";
@@ -200,7 +210,7 @@ const ProjectDetail = () => {
     const filePath = `${projectId}/${file.name}`;
     setViewerState({
       open: true,
-      fileName: file.name,
+      fileName: humanizeStorageName(file.name),
       filePath: filePath
     });
   };
@@ -307,7 +317,7 @@ const ProjectDetail = () => {
                       <FileText className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground shrink-0" />
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">{file.name}</p>
+                      <p className="font-medium truncate">{humanizeStorageName(file.name)}</p>
                       <p className="text-sm text-muted-foreground">
                         {new Date(file.created_at).toLocaleDateString("de-DE")}
                       </p>

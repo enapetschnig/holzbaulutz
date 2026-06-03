@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Upload, Download, Trash2, Camera, FileText, Package, Lock, ClipboardList } from "lucide-react";
 import { toast } from "sonner";
 import { useToast } from "@/hooks/use-toast";
-import { listProjectFiles, deleteProjectFile, type ProjectFile } from "@/lib/projectFiles";
+import { listProjectFiles, deleteProjectFile, buildProjectFilePath, type ProjectFile } from "@/lib/projectFiles";
 
 type DocumentType = 'photos' | 'plans' | 'reports' | 'materials' | 'chef' | 'notizen';
 
@@ -112,9 +112,8 @@ export function ProjectFilesManager({ projectId, defaultTab = 'photos' }: Projec
 
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const fileExt = file.name.split('.').pop();
-        const fileName = `${Date.now()}-${i}.${fileExt}`;
-        const filePath = `${projectId}/${fileName}`;
+        // Storage-sicherer Pfad (Umlaute/Sonderzeichen) — Originalname in documents.name
+        const filePath = buildProjectFilePath(projectId, file.name);
 
         // Upload zu Supabase Storage
         const { error: uploadError } = await supabase.storage

@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { buildProjectFilePath } from "@/lib/projectFiles";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { QuickUploadDialog } from "@/components/QuickUploadDialog";
@@ -293,9 +294,9 @@ const Projects = () => {
       throw new Error("Kein Projekt ausgewählt");
     }
 
-    const timestamp = Date.now();
-    const filePath = `${quickUploadProject.projectId}/${timestamp}_${file.name}`;
-    
+    // Storage-sicherer Pfad (Umlaute/Sonderzeichen) — Originalname in documents.name
+    const filePath = buildProjectFilePath(quickUploadProject.projectId, file.name);
+
     const { error: uploadError } = await supabase
       .storage
       .from('project-photos')
