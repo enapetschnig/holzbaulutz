@@ -1014,9 +1014,10 @@ export default function Admin() {
                       onClick={async () => {
                         setSavingSettings(true);
                         try {
-                          await supabase.from("app_settings").upsert([
+                          const { error } = await supabase.from("app_settings").upsert([
                             { key: "firmen_uid", value: firmenUid, updated_at: new Date().toISOString() },
-                          ]);
+                          ], { onConflict: "key" });
+                          if (error) throw error;
                           toast({ title: "UID-Nummer gespeichert" });
                         } catch (err: any) {
                           toast({ variant: "destructive", title: "Fehler", description: err.message });
@@ -1053,10 +1054,11 @@ export default function Admin() {
                     onClick={async () => {
                       setSavingSettings(true);
                       try {
-                        await supabase.from("app_settings").upsert([
+                        const { error } = await supabase.from("app_settings").upsert([
                           { key: "default_betreff_rechnung", value: defaultBetreffRechnung, updated_at: new Date().toISOString() },
                           { key: "default_betreff_angebot", value: defaultBetreffAngebot, updated_at: new Date().toISOString() },
-                        ]);
+                        ], { onConflict: "key" });
+                        if (error) throw error;
                         toast({ title: "Standard-Betreff gespeichert" });
                       } catch (err: any) {
                         toast({ variant: "destructive", title: "Fehler", description: err.message });
@@ -1096,14 +1098,16 @@ export default function Admin() {
                     onClick={async () => {
                       setSavingSettings(true);
                       try {
-                        await supabase.from("app_settings").upsert([
+                        const { error } = await supabase.from("app_settings").upsert([
                           { key: "bank_kontoinhaber", value: bankKontoinhaber, updated_at: new Date().toISOString() },
                           { key: "bank_iban", value: bankIban, updated_at: new Date().toISOString() },
                           { key: "bank_bic", value: bankBic, updated_at: new Date().toISOString() },
-                        ]);
+                        ], { onConflict: "key" });
+                        if (error) throw error;
+                        await fetchAppSettings();
                         toast({ title: "Bankverbindung gespeichert" });
                       } catch (err: any) {
-                        toast({ variant: "destructive", title: "Fehler", description: err.message });
+                        toast({ variant: "destructive", title: "Fehler beim Speichern", description: err.message });
                       } finally {
                         setSavingSettings(false);
                       }
@@ -1153,9 +1157,10 @@ export default function Admin() {
                       onClick={async () => {
                         setSavingSettings(true);
                         try {
-                          await supabase.from("app_settings").upsert([
+                          const { error } = await supabase.from("app_settings").upsert([
                             { key: "einheiten", value: einheitenStr.trim(), updated_at: new Date().toISOString() },
-                          ]);
+                          ], { onConflict: "key" });
+                          if (error) throw error;
                           toast({ title: "Einheiten gespeichert" });
                         } catch (err: any) {
                           toast({ variant: "destructive", title: "Fehler", description: err.message });
