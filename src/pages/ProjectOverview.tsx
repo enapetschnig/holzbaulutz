@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
+import { countProjectFiles } from "@/lib/projectFiles";
 import { useProjectStatuses } from "@/hooks/useProjectStatuses";
 import { Badge } from "@/components/ui/badge";
 
@@ -377,14 +378,11 @@ const ProjectOverview = () => {
         }
         
         const bucket = bucketMap[category.type];
-        const { data } = await supabase
-          .storage
-          .from(bucket)
-          .list(projectId);
-
+        // Gleiche Filterlogik wie der Ordner (ohne Unterordner/Platzhalter),
+        // damit die Zahl exakt mit dem übereinstimmt, was der Ordner zeigt.
         return {
           ...category,
-          count: data?.length || 0,
+          count: await countProjectFiles(projectId, bucket),
         };
       })
     );

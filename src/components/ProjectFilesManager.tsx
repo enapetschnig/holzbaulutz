@@ -7,17 +7,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Upload, Download, Trash2, Camera, FileText, Package, Lock, ClipboardList } from "lucide-react";
 import { toast } from "sonner";
 import { useToast } from "@/hooks/use-toast";
+import { listProjectFiles, deleteProjectFile, type ProjectFile } from "@/lib/projectFiles";
 
 type DocumentType = 'photos' | 'plans' | 'reports' | 'materials' | 'chef' | 'notizen';
-
-interface Document {
-  id: string;
-  name: string;
-  typ: string;
-  file_url: string;
-  created_at: string;
-  beschreibung: string | null;
-}
 
 interface ProjectFilesManagerProps {
   projectId: string;
@@ -53,15 +45,13 @@ const iconMap: Record<DocumentType, React.ReactNode> = {
 
 export function ProjectFilesManager({ projectId, defaultTab = 'photos' }: ProjectFilesManagerProps) {
   const { toast: reactToast } = useToast();
-  const [documents, setDocuments] = useState<Document[]>([]);
+  const [filesByType, setFilesByType] = useState<Record<string, ProjectFile[]>>({});
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState<DocumentType | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  useEffect(() => {
-    checkAdminStatus();
-    fetchDocuments();
-  }, [projectId]);
+  useEffect(() => { checkAdminStatus(); }, []);
+  useEffect(() => { fetchFiles(); }, [projectId, isAdmin]);
 
   const checkAdminStatus = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -77,20 +67,17 @@ export function ProjectFilesManager({ projectId, defaultTab = 'photos' }: Projec
     setIsAdmin(!!data);
   };
 
-  const fetchDocuments = async () => {
+  const fetchFiles = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('documents')
-      .select('*')
-      .eq('project_id', projectId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error fetching documents:', error);
-      toast.error('Fehler beim Laden der Dateien');
-    } else {
-      setDocuments(data || []);
-    }
+    // Quelle der Wahrheit = Storage. So erscheint jede Datei im jeweiligen
+    // Tab, egal über welchen Upload-Weg sie kam.
+    const types: DocumentType[] = isAdmin
+      ? ['photos', 'plans', 'reports', 'materials', 'chef']
+      : ['photos', 'plans', 'reports', 'materials'];
+    const entries = await Promise.all(
+      types.map(async (t) => [t, await listProjectFiles(projectId, bucketMap[t])] as const)
+    );
+    setFilesByType(Object.fromEntries(entries));
     setLoading(false);
   };
 
@@ -156,7 +143,7 @@ export function ProjectFilesManager({ projectId, defaultTab = 'photos' }: Projec
       }
 
       toast.success(`${files.length} Datei(en) hochgeladen`);
-      fetchDocuments();
+      fetchFiles();
     } catch (error) {
       console.error('Upload error:', error);
       toast.error('Fehler beim Hochladen');
@@ -184,39 +171,20 @@ export function ProjectFilesManager({ projectId, defaultTab = 'photos' }: Projec
     }
   };
 
-  const deleteFile = async (docId: string, fileUrl: string, type: DocumentType) => {
+  const deleteFile = async (file: ProjectFile, type: DocumentType) => {
     if (!isAdmin) {
       toast.error('Keine Berechtigung zum Löschen');
       return;
     }
-
-    try {
-      // Extract path from URL
-      const urlParts = fileUrl.split('/');
-      const bucketName = bucketMap[type];
-      const filePath = `${projectId}/${urlParts[urlParts.length - 1]}`;
-
-      // Delete from storage
-      const { error: storageError } = await supabase.storage
-        .from(bucketName)
-        .remove([filePath]);
-
-      if (storageError) throw storageError;
-
-      // Delete from DB
-      const { error: dbError } = await supabase
-        .from('documents')
-        .delete()
-        .eq('id', docId);
-
-      if (dbError) throw dbError;
-
-      toast.success('Datei gelöscht');
-      fetchDocuments();
-    } catch (error) {
+    // Storage zuerst (Quelle der Wahrheit) + best effort documents-Zeile.
+    const { error } = await deleteProjectFile(bucketMap[type], file);
+    if (error) {
       console.error('Delete error:', error);
       toast.error('Fehler beim Löschen');
+      return;
     }
+    toast.success('Datei gelöscht');
+    fetchFiles();
   };
 
   const formatDate = (dateString: string) => {
@@ -231,7 +199,7 @@ export function ProjectFilesManager({ projectId, defaultTab = 'photos' }: Projec
   };
 
   const renderTabContent = (type: DocumentType) => {
-    const filteredDocs = documents.filter(doc => doc.typ === type);
+    const filteredDocs = filesByType[type] || [];
 
     return (
       <div className="space-y-4">
@@ -270,11 +238,11 @@ export function ProjectFilesManager({ projectId, defaultTab = 'photos' }: Projec
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {filteredDocs.map((doc) => (
-                <Card key={doc.id} className="overflow-hidden">
+                <Card key={doc.path} className="overflow-hidden">
                   {type === 'photos' && (
                     <div className="aspect-video w-full overflow-hidden bg-muted">
                       <img
-                        src={doc.file_url}
+                        src={doc.url}
                         alt={doc.name}
                         className="w-full h-full object-cover hover:scale-105 transition-transform"
                       />
@@ -283,13 +251,13 @@ export function ProjectFilesManager({ projectId, defaultTab = 'photos' }: Projec
                   <CardContent className="p-3">
                     <p className="font-medium text-sm truncate mb-1">{doc.name}</p>
                     <p className="text-xs text-muted-foreground mb-3">
-                      {formatDate(doc.created_at)}
+                      {formatDate(doc.createdAt)}
                     </p>
                     <div className="flex gap-2">
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => downloadFile(doc.file_url, doc.name)}
+                        onClick={() => downloadFile(doc.url, doc.name)}
                         className="flex-1"
                       >
                         <Download className="w-3 h-3 mr-1" />
@@ -299,7 +267,7 @@ export function ProjectFilesManager({ projectId, defaultTab = 'photos' }: Projec
                         <Button
                           size="sm"
                           variant="destructive"
-                          onClick={() => deleteFile(doc.id, doc.file_url, type)}
+                          onClick={() => deleteFile(doc, type)}
                         >
                           <Trash2 className="w-3 h-3" />
                         </Button>
