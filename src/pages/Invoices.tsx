@@ -93,9 +93,6 @@ export default function Invoices() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showArchive, setShowArchive] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
-  const [exportMonth, setExportMonth] = useState<string>(format(new Date(), "yyyy-MM"));
-  const [exportMode, setExportMode] = useState<"month" | "year">("month");
-  const [exporting, setExporting] = useState(false);
   const [bankKontoinhaber, setBankKontoinhaber] = useState("");
   const [bankIban, setBankIban] = useState("");
   const [bankBic, setBankBic] = useState("");
@@ -419,59 +416,9 @@ export default function Invoices() {
     }
   };
 
-  const handleExport = async () => {
-    setExporting(true);
-    const year = exportMonth.substring(0, 4);
-    const month = exportMonth.substring(5, 7);
-
-    let startDate: string, endDate: string, label: string;
-    if (exportMode === "month") {
-      startDate = `${year}-${month}-01`;
-      const nextMonth = Number(month) === 12 ? `${Number(year) + 1}-01-01` : `${year}-${String(Number(month) + 1).padStart(2, "0")}-01`;
-      endDate = nextMonth;
-      label = format(parseISO(startDate), "MMMM yyyy", { locale: de });
-    } else {
-      startDate = `${year}-01-01`;
-      endDate = `${Number(year) + 1}-01-01`;
-      label = `Jahr ${year}`;
-    }
-
-    // Get matching invoices
-    const toExport = invoices.filter(i => {
-      const d = i.datum;
-      return d >= startDate && d < endDate && i.status !== "entwurf";
-    });
-
-    if (toExport.length === 0) {
-      toast({ title: "Keine Dokumente", description: `Keine Rechnungen/Angebote für ${label} gefunden` });
-      setExporting(false);
-      return;
-    }
-
-    // Open each PDF in sequence
-    let success = 0;
-    for (const inv of toExport) {
-      try {
-        const { data, error } = await supabase.functions.invoke("generate-invoice-pdf", {
-          body: { invoiceId: inv.id },
-        });
-        if (error) continue;
-        const html = decodeURIComponent(escape(atob(data.pdf)));
-        const win = window.open("", "_blank");
-        if (win) {
-          win.document.write(html);
-          win.document.close();
-          win.document.title = `${inv.nummer} - ${inv.kunde_name}`;
-        }
-        success++;
-      } catch {
-        // skip
-      }
-    }
-    toast({ title: `${success} PDFs geöffnet`, description: `Export für ${label}` });
-    setExporting(false);
-    setExportDialogOpen(false);
-  };
+  // Sammel-Export läuft über <ExportInvoicesDialog/> (clientseitige PDFs → ZIP).
+  // Der frühere Inline-Export (HTML-Tabs via Edge-Function) war Dead Code und
+  // bei mehreren Dokumenten durch Popup-Blocker unbrauchbar — entfernt.
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);

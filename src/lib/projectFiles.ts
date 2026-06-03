@@ -78,22 +78,53 @@ function realFiles<T extends { id: string | null; name: string }>(objects: T[]):
   return objects.filter((o) => o.id !== null && !o.name.startsWith("."));
 }
 
+/** Storage-Einträge eines Projekts: Top-Level + EINE Ebene Unterordner
+ *  (z.B. project-reports/<id>/angebote/…, wo generierte Rechnungs-/Angebots-
+ *  PDFs liegen). Der relative Pfad inkl. Unterordner steckt in `name`. */
+async function gatherEntries(
+  projectId: string,
+  bucket: string,
+): Promise<Array<{ name: string; created_at?: string; size: number }>> {
+  const { data: top, error } = await supabase.storage
+    .from(bucket)
+    .list(projectId, { limit: 1000, sortBy: { column: "created_at", order: "desc" } });
+  if (error || !top) return [];
+
+  const toEntry = (o: any) => ({ name: o.name, created_at: o.created_at || o.updated_at, size: o.metadata?.size ?? 0 });
+  const entries = realFiles(top).map(toEntry);
+
+  // Unterordner (id===null) eine Ebene tief mitnehmen — sonst wären z.B.
+  // generierte Rechnungs-/Angebots-PDFs im Projekt unsichtbar.
+  const subfolders = top.filter((o) => o.id === null && !o.name.startsWith("."));
+  if (subfolders.length > 0) {
+    const subArrays = await Promise.all(
+      subfolders.map(async (sf) => {
+        const { data: subObjs } = await supabase.storage
+          .from(bucket)
+          .list(`${projectId}/${sf.name}`, { limit: 1000, sortBy: { column: "created_at", order: "desc" } });
+        return realFiles(subObjs || []).map((o: any) => ({
+          name: `${sf.name}/${o.name}`,
+          created_at: o.created_at || o.updated_at,
+          size: o.metadata?.size ?? 0,
+        }));
+      }),
+    );
+    for (const arr of subArrays) entries.push(...arr);
+  }
+  return entries;
+}
+
 /**
- * Listet alle Dateien eines Projekts direkt aus dem Storage-Bucket und
- * reichert sie (best effort) mit documents-Metadaten (Kommentar) an.
+ * Listet alle Dateien eines Projekts direkt aus dem Storage-Bucket (inkl. einer
+ * Ebene Unterordner) und reichert sie (best effort) mit documents-Metadaten an.
  * Gibt JEDES Storage-Objekt zurück, auch ohne documents-Zeile.
  */
 export async function listProjectFiles(projectId: string, bucket: string): Promise<ProjectFile[]> {
-  const { data: objects, error } = await supabase.storage
-    .from(bucket)
-    .list(projectId, { limit: 1000, sortBy: { column: "created_at", order: "desc" } });
-  if (error || !objects) return [];
-
-  const files = realFiles(objects);
-  if (files.length === 0) return [];
+  const entries = await gatherEntries(projectId, bucket);
+  if (entries.length === 0) return [];
 
   // URLs auflösen: public direkt, privat als (gebündelte) signierte URLs.
-  const paths = files.map((o) => `${projectId}/${o.name}`);
+  const paths = entries.map((o) => `${projectId}/${o.name}`);
   const urlByPath = new Map<string, string>();
   if (PUBLIC_BUCKETS.has(bucket)) {
     for (const p of paths) urlByPath.set(p, supabase.storage.from(bucket).getPublicUrl(p).data.publicUrl);
@@ -118,27 +149,26 @@ export async function listProjectFiles(projectId: string, bucket: string): Promi
     }
   }
 
-  return files.map((o) => {
+  return entries.map((o) => {
     const path = `${projectId}/${o.name}`;
-    const meta = metaByName.get(o.name);
+    const baseName = o.name.split("/").pop() || o.name; // ohne Unterordner für den documents-Match
+    const meta = metaByName.get(baseName);
     return {
       path,
       name: meta?.name || humanizeStorageName(o.name),
       url: urlByPath.get(path) || "",
-      createdAt: (o as any).created_at || (o as any).updated_at || new Date().toISOString(),
-      size: (o as any).metadata?.size ?? 0,
+      createdAt: o.created_at || new Date().toISOString(),
+      size: o.size ?? 0,
       docId: meta?.id ?? null,
       beschreibung: meta?.beschreibung ?? null,
     };
   });
 }
 
-/** Nur die Anzahl der Dateien (für Zähler/Badges) — identische Filterlogik
- *  wie listProjectFiles, aber ohne URL-/Metadaten-Auflösung (schnell). */
+/** Nur die Anzahl der Dateien (für Zähler/Badges) — identische Filter-/
+ *  Rekursionslogik wie listProjectFiles, aber ohne URL-/Metadaten-Auflösung. */
 export async function countProjectFiles(projectId: string, bucket: string): Promise<number> {
-  const { data: objects, error } = await supabase.storage.from(bucket).list(projectId, { limit: 1000 });
-  if (error || !objects) return 0;
-  return realFiles(objects).length;
+  return (await gatherEntries(projectId, bucket)).length;
 }
 
 /**

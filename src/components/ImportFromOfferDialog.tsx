@@ -10,12 +10,26 @@ interface OfferItem {
   menge: number;
   einheit: string;
   einzelpreis: number;
+  rabatt_prozent: number;
+  gesamtpreis: number;
+  langtext: string | null;
+  kurztext: string | null;
+  mwst_exempt: boolean;
+  produktnummer: string | null;
 }
 
 interface Offer {
   id: string;
   nummer: string;
   kunde_name: string;
+  kunde_adresse: string | null;
+  kunde_plz: string | null;
+  kunde_ort: string | null;
+  kunde_land: string | null;
+  kunde_email: string | null;
+  kunde_telefon: string | null;
+  kunde_uid: string | null;
+  customer_id: string | null;
   status: string;
   datum: string;
   brutto_summe: number;
@@ -48,7 +62,7 @@ export function ImportFromOfferDialog({ open, onClose, projectId, onImport }: Im
     setLoading(true);
     let query = supabase
       .from("invoices")
-      .select("id, nummer, kunde_name, status, datum, brutto_summe, project_id")
+      .select("id, nummer, kunde_name, kunde_adresse, kunde_plz, kunde_ort, kunde_land, kunde_email, kunde_telefon, kunde_uid, customer_id, status, datum, brutto_summe, project_id")
       .eq("typ", "angebot")
       .order("datum", { ascending: false });
 
@@ -66,7 +80,7 @@ export function ImportFromOfferDialog({ open, onClose, projectId, onImport }: Im
     setLoadingItems(true);
     const { data } = await supabase
       .from("invoice_items")
-      .select("beschreibung, menge, einheit, einzelpreis")
+      .select("beschreibung, menge, einheit, einzelpreis, rabatt_prozent, gesamtpreis, langtext, kurztext, mwst_exempt, produktnummer")
       .eq("invoice_id", offer.id)
       .order("position");
     setOfferItems(data || []);

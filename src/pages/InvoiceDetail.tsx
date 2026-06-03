@@ -20,7 +20,6 @@ import { ImportMaterialsDialog } from "@/components/ImportMaterialsDialog";
 import { ImportFromProjectDialog } from "@/components/ImportFromProjectDialog";
 import { ImportDisturbanceDialog } from "@/components/ImportDisturbanceDialog";
 import { ImportFromOfferDialog } from "@/components/ImportFromOfferDialog";
-import { ImportTimeDialog } from "@/components/ImportTimeDialog";
 import { useEinheiten } from "@/hooks/useEinheiten";
 import { ImportDisturbanceToInvoiceDialog } from "@/components/ImportDisturbanceToInvoiceDialog";
 import { CreateProjectDialog } from "@/components/CreateProjectDialog";
@@ -4730,24 +4729,9 @@ export default function InvoiceDetail() {
         />
 
         {/* Import Time Dialog */}
-        <ImportTimeDialog
-          open={importTimeOpen}
-          onClose={() => setImportTimeOpen(false)}
-          projectId={form.project_id}
-          onImport={(importedItems) => {
-            const newItems = importedItems.map((item, idx) => ({
-              position: items.length + idx + 1,
-              beschreibung: item.beschreibung,
-              menge: item.menge,
-              einheit: item.einheit,
-              einzelpreis: item.einzelpreis,
-              gesamtpreis: item.menge * item.einzelpreis,
-            }));
-            setItems(prev => mergeItems(prev, newItems));
-            setImportTimeOpen(false);
-            toast({ title: "Arbeitszeit importiert", description: `${newItems.length} Positionen hinzugefügt` });
-          }}
-        />
+        {/* Arbeitszeit-Import läuft ausschließlich über <ImportFromProjectDialog
+            mode="zeit"/> (weiter unten). Der frühere zweite ImportTimeDialog war
+            an dieselbe Variable gebunden und öffnete sich doppelt — entfernt. */}
 
         {/* Kunden-Bearbeiten Dialog */}
         <CustomerEditDialog
@@ -4945,19 +4929,30 @@ export default function InvoiceDetail() {
           onClose={() => setImportOfferOpen(false)}
           projectId={form.project_id}
           onImport={(importedItems, offer) => {
-            const newItems = importedItems.map((item, idx) => ({
+            // ALLE Positionsdaten übernehmen (Rabatt, Lang-/Kurztext,
+            // MwSt-Befreiung, Produktnummer) — nicht nur Menge×Preis.
+            const newItems = importedItems.map((item: any, idx) => ({
               position: items.length + idx + 1,
               beschreibung: item.beschreibung,
+              kurztext: item.kurztext || item.beschreibung,
+              langtext: item.langtext || "",
               menge: item.menge,
               einheit: item.einheit,
               einzelpreis: item.einzelpreis,
-              gesamtpreis: item.menge * item.einzelpreis,
+              rabatt_prozent: item.rabatt_prozent || 0,
+              gesamtpreis: item.gesamtpreis ?? (item.menge * item.einzelpreis),
+              produktnummer: item.produktnummer || "",
+              mwst_exempt: !!item.mwst_exempt,
             }));
             setItems(prev => mergeItems(prev, newItems));
-            // Fill customer data from offer if empty
-            if (!form.kunde_name && offer.kunde_name) {
-              setForm(prev => ({
-                ...prev,
+            // Quell-Angebot verknüpfen → wird beim Speichern als Rechnung auf
+            // "verrechnet" gesetzt. Parent nur setzen, wenn noch keiner da ist
+            // (kein Überschreiben bei Import aus mehreren Quellen).
+            setFromAngebotId(offer.id);
+            setForm(prev => ({
+              ...prev,
+              parent_invoice_id: (prev as any).parent_invoice_id || offer.id,
+              ...(!prev.kunde_name ? {
                 kunde_name: (offer as any).kunde_name || prev.kunde_name,
                 kunde_adresse: (offer as any).kunde_adresse || prev.kunde_adresse,
                 kunde_plz: (offer as any).kunde_plz || prev.kunde_plz,
@@ -4967,8 +4962,8 @@ export default function InvoiceDetail() {
                 kunde_telefon: (offer as any).kunde_telefon || prev.kunde_telefon,
                 kunde_uid: (offer as any).kunde_uid || prev.kunde_uid,
                 customer_id: (offer as any).customer_id || prev.customer_id,
-              }));
-            }
+              } : {}),
+            }));
             setImportOfferOpen(false);
             toast({ title: "Aus Angebot importiert", description: `${newItems.length} Positionen hinzugefügt` });
           }}
