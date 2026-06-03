@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Shield, User as UserIcon, UserPlus, Mail, Phone, MapPin, Shirt, FileText, Clock, Trash2, Settings, Save } from "lucide-react";
+import { ArrowLeft, Shield, User as UserIcon, Mail, Phone, MapPin, Shirt, FileText, Clock, Trash2, Settings, Save, MessageSquare, Send } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -25,7 +25,6 @@ import { EmployeeColorSettings } from "@/components/schedule/EmployeeColorSettin
 import { InvoiceLayoutEditor } from "@/components/InvoiceLayoutEditor";
 import { InvoiceNumberSettings } from "@/components/admin/InvoiceNumberSettings";
 import { DocumentTextsEditor } from "@/components/admin/DocumentTextsEditor";
-import { CreateUserDialog } from "@/components/admin/CreateUserDialog";
 import { ProjectStatusSettings } from "@/components/admin/ProjectStatusSettings";
 import { MahnungSettings } from "@/components/admin/MahnungSettings";
 import { CustomerColorSettings } from "@/components/admin/CustomerColorSettings";
@@ -115,7 +114,35 @@ export default function Admin() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [userRoles, setUserRoles] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
-  const [createUserOpen, setCreateUserOpen] = useState(false);
+  const [invitePhone, setInvitePhone] = useState("");
+  const [inviteSending, setInviteSending] = useState(false);
+
+  // Normalisiert auf E.164 (+43…). Akzeptiert 0660…, 0043…, +43…, auch mit Leerzeichen.
+  const normalizeAtPhone = (raw: string): string | null => {
+    let p = raw.replace(/[\s\-()/.]/g, "");
+    if (p.startsWith("0043")) p = "+43" + p.slice(4);
+    else if (p.startsWith("00")) p = "+" + p.slice(2);
+    else if (p.startsWith("0")) p = "+43" + p.slice(1);
+    else if (!p.startsWith("+")) p = "+43" + p;
+    return /^\+43\d{9,13}$/.test(p) ? p : null;
+  };
+
+  const handleSendInvitation = async () => {
+    const phone = normalizeAtPhone(invitePhone);
+    if (!phone) {
+      toast({ variant: "destructive", title: "Ungültige Nummer", description: "Bitte eine gültige österreichische Mobilnummer eingeben, z.B. +43 660 1234567." });
+      return;
+    }
+    setInviteSending(true);
+    const { data, error } = await supabase.functions.invoke("send-invitation", { body: { telefonnummer: phone } });
+    setInviteSending(false);
+    if (error || (data && (data as any).success === false)) {
+      toast({ variant: "destructive", title: "SMS nicht gesendet", description: (data as any)?.error || error?.message || "Bitte später erneut versuchen." });
+      return;
+    }
+    toast({ title: "Einladung gesendet", description: `SMS mit Registrierungs-Link an ${phone} verschickt.` });
+    setInvitePhone("");
+  };
   
   // Config options
   const { options: familienstandOptions } = useConfigOptions("familienstand");
@@ -633,18 +660,40 @@ export default function Admin() {
 
           {/* ===== TAB 1: BENUTZER & MITARBEITER ===== */}
           <TabsContent value="benutzer" className="space-y-6">
-            {/* Neuen Benutzer anlegen */}
-            <div className="flex justify-end">
-              <Button onClick={() => setCreateUserOpen(true)} className="gap-2">
-                <UserPlus className="h-4 w-4" />
-                Neuen Benutzer anlegen
-              </Button>
-            </div>
-            <CreateUserDialog
-              open={createUserOpen}
-              onOpenChange={setCreateUserOpen}
-              onCreated={() => fetchUsers()}
-            />
+            {/* ===== MITARBEITER PER SMS EINLADEN (prominent, ganz oben) ===== */}
+            <Card className="border-primary/40 bg-primary/5">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <MessageSquare className="h-5 w-5 text-primary" />
+                  Mitarbeiter per SMS einladen
+                </CardTitle>
+                <CardDescription>
+                  Sende eine SMS mit dem Registrierungs-Link. Der Mitarbeiter registriert sich selbst
+                  und erscheint danach unter „Wartende Aktivierungen" zur Freischaltung.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="relative flex-1">
+                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="tel"
+                      inputMode="tel"
+                      placeholder="+43 660 1234567"
+                      value={invitePhone}
+                      onChange={(e) => setInvitePhone(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleSendInvitation(); }}
+                      disabled={inviteSending}
+                      className="pl-9"
+                    />
+                  </div>
+                  <Button onClick={handleSendInvitation} disabled={inviteSending || !invitePhone.trim()} className="gap-2">
+                    <Send className="h-4 w-4" />
+                    {inviteSending ? "Wird gesendet…" : "Einladung senden"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
 
             {/* ===== WARTENDE AKTIVIERUNGEN ===== */}
             {profiles.filter(p => !p.is_active).length > 0 && (
