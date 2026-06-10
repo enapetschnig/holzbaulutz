@@ -205,8 +205,11 @@ export function MitarbeiterSection({
     <div className="border-b">
       {/* Header */}
       <div className="flex items-center border-b">
-        <button
-          className="flex items-center gap-2 px-3 py-2 hover:bg-muted/30 transition-colors text-left"
+        {/* div statt button: enthält einen echten Button (Verwalten) — button-in-button ist invalides HTML */}
+        <div
+          role="button"
+          tabIndex={0}
+          className="flex items-center gap-2 px-3 py-2 hover:bg-muted/30 transition-colors text-left cursor-pointer"
           style={{ width: 280 }}
           onClick={() => setCollapsed(!collapsed)}
         >
@@ -215,7 +218,7 @@ export function MitarbeiterSection({
           <button className="ml-auto p-1 rounded hover:bg-muted/40" onClick={(e) => { e.stopPropagation(); onManageClick(); }}>
             <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
           </button>
-        </button>
+        </div>
       </div>
 
       {!collapsed && profiles.map(renderMemberRow)}

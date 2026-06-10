@@ -1262,7 +1262,12 @@ export default function InvoiceDetail() {
   const bruttoSumme = r2(nettoSumme + mwstBetrag + exemptBrutto);
   const restBetrag = r2(bruttoSumme - form.bezahlt_betrag);
 
-  const canDelete = form.typ === "angebot";
+  // Angebote sind löschbar (anders als ausgestellte Rechnungen), aber nur
+  // GESPEICHERTE und solange sie nicht verrechnet/storniert sind — sonst
+  // zeigt der Editor einen Löschen-Button für ein Dokument, das es noch
+  // gar nicht gibt bzw. dessen Belegkette erhalten bleiben muss.
+  const canDelete = form.typ === "angebot" && !isNew && !!invoiceId
+    && form.status !== "verrechnet" && form.status !== "storniert";
   // Stornieren ist für alle rechnungs-artigen Dokumente möglich
   // (Rechnung, Anzahlungsrechnung, Schlussrechnung, Gutschrift) —
   // AT-Rechtsvorschrift: ein Rechnungsbeleg muss stornierbar sein.
@@ -4317,15 +4322,10 @@ export default function InvoiceDetail() {
                 Storno-Beleg
               </Button>
             )}
-            {isLocked && form.typ === "angebot" && form.status !== "verrechnet" && (
-              <Button variant="destructive" onClick={async () => {
-                if (!confirm("Angebot wirklich löschen?")) return;
-                await supabase.from("invoice_items").delete().eq("invoice_id", invoiceId);
-                await supabase.from("invoices").delete().eq("id", invoiceId);
-                toast({ title: "Angebot gelöscht" });
-                navigate("/invoices");
-              }}>Löschen</Button>
-            )}
+            {/* Angebot-Löschen läuft über den canDelete-AlertDialog im Kopfbereich
+                (mit Folgedokument-Prüfung). Der frühere zweite Button hier war an
+                isLocked && typ==='angebot' gebunden — eine nie erfüllbare Bedingung
+                (isLocked gilt nur für Rechnungen) — und wurde entfernt. */}
             {isLocked ? (
               <>
                 <Button onClick={handleDownloadPdf} variant="outline" className="gap-2">

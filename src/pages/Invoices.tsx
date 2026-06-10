@@ -399,17 +399,24 @@ export default function Invoices() {
     }
   };
 
+  // Löschbar: Entwürfe immer; Angebote auch nach dem Ausstellen (rechtlich
+  // unbedenklich), solange sie nicht verrechnet/storniert sind. Ausgestellte
+  // Rechnungen NIE löschen — nur Storno (Belegkette).
+  const isDeletable = (inv: Invoice) =>
+    inv.status === "entwurf" ||
+    (inv.typ === "angebot" && inv.status !== "verrechnet" && inv.status !== "storniert");
+
   const handleDelete = async (invoiceId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const inv = invoices.find(i => i.id === invoiceId);
-    if (inv && inv.status !== "entwurf") {
-      toast({ variant: "destructive", title: "Löschen nicht möglich", description: "Ausgestellte Rechnungen/Angebote können aus rechtlichen Gründen nicht gelöscht werden. Verwenden Sie stattdessen die Storno-Funktion." });
+    if (inv && !isDeletable(inv)) {
+      toast({ variant: "destructive", title: "Löschen nicht möglich", description: "Ausgestellte Rechnungen können aus rechtlichen Gründen nicht gelöscht werden. Verwenden Sie stattdessen die Storno-Funktion." });
       return;
     }
     if (!confirm("Wirklich endgültig löschen?")) return;
     const { error } = await supabase.from("invoices").delete().eq("id", invoiceId);
     if (error) {
-      toast({ variant: "destructive", title: "Fehler" });
+      toast({ variant: "destructive", title: "Fehler", description: error.message });
     } else {
       setInvoices(prev => prev.filter(inv => inv.id !== invoiceId));
       toast({ title: "Gelöscht" });
@@ -1010,6 +1017,14 @@ export default function Invoices() {
                                     }}
                                   >
                                     <AlertTriangle className="h-4 w-4 mr-2" /> Mahnung {Number(inv.mahnstufe || 0) + 1} erstellen
+                                  </DropdownMenuItem>
+                                )}
+                                {isDeletable(inv) && (
+                                  <DropdownMenuItem
+                                    className="text-red-600 focus:text-red-700"
+                                    onClick={(e) => handleDelete(inv.id, e as any)}
+                                  >
+                                    <Trash2 className="h-4 w-4 mr-2" /> Löschen
                                   </DropdownMenuItem>
                                 )}
                               </DropdownMenuContent>

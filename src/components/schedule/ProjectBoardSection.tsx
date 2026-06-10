@@ -31,8 +31,11 @@ export function ProjectBoardSection({ boardProjects, projects, days, onAddClick,
     <div className="border-b">
       {/* Section header */}
       <div className="flex items-center border-b">
-        <button
-          className="flex items-center gap-2 px-3 py-2 hover:bg-muted/30 transition-colors text-left"
+        {/* div statt button: enthält einen echten Button — button-in-button ist invalides HTML */}
+        <div
+          role="button"
+          tabIndex={0}
+          className="flex items-center gap-2 px-3 py-2 hover:bg-muted/30 transition-colors text-left cursor-pointer"
           style={{ width: 280 }}
           onClick={() => setCollapsed(!collapsed)}
         >
@@ -47,7 +50,7 @@ export function ProjectBoardSection({ boardProjects, projects, days, onAddClick,
               <Plus className="h-4 w-4 text-muted-foreground" />
             </button>
           )}
-        </button>
+        </div>
       </div>
 
       {!collapsed && boardProjects.map((bp) => {

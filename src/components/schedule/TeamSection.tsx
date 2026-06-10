@@ -236,8 +236,11 @@ export function TeamSection({
   return (
     <div className="border-b">
       <div className="flex items-center border-b">
-        <button
-          className="flex items-center gap-2 px-3 py-2 hover:bg-muted/30 transition-colors text-left"
+        {/* div statt button: enthält echte Buttons — button-in-button ist invalides HTML */}
+        <div
+          role="button"
+          tabIndex={0}
+          className="flex items-center gap-2 px-3 py-2 hover:bg-muted/30 transition-colors text-left cursor-pointer"
           style={{ width: 280 }}
           onClick={() => setSectionCollapsed(!sectionCollapsed)}
         >
@@ -248,7 +251,7 @@ export function TeamSection({
               <Plus className="h-4 w-4 text-muted-foreground" />
             </button>
           )}
-        </button>
+        </div>
       </div>
 
       {!sectionCollapsed && teams.map((team) => {
@@ -258,8 +261,10 @@ export function TeamSection({
         return (
           <div key={team.id}>
             <div className="flex items-center border-t bg-muted/20">
-              <button
-                className="flex items-center gap-2 px-3 py-1.5 hover:bg-muted/40 transition-colors text-left"
+              <div
+                role="button"
+                tabIndex={0}
+                className="flex items-center gap-2 px-3 py-1.5 hover:bg-muted/40 transition-colors text-left cursor-pointer"
                 style={{ width: 280 }}
                 onClick={() => toggleTeam(team.id)}
               >
@@ -269,7 +274,7 @@ export function TeamSection({
                 <button className="p-0.5 rounded hover:bg-muted/60 ml-auto" onClick={(e) => { e.stopPropagation(); onEditTeam(team); }}>
                   <Pencil className="h-3 w-3 text-muted-foreground" />
                 </button>
-              </button>
+              </div>
             </div>
             {!isTeamCollapsed && teamProfiles.map((p, idx) => renderMemberRow(p, team.id, idx))}
             {!isTeamCollapsed && teamProfiles.length === 0 && (
