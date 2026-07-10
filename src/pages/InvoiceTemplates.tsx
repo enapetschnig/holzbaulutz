@@ -9,13 +9,15 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/PageHeader";
-import { Plus, Trash2, Save, Package, Search, Filter, Upload, Star, TrendingUp, Percent, Euro, ImagePlus, X, Boxes } from "lucide-react";
+import { Plus, Trash2, Save, Package, Search, Filter, Upload, Star, TrendingUp, Percent, Euro, ImagePlus, X, Calculator } from "lucide-react";
 import { MaterialFileImport } from "@/components/MaterialFileImport";
 import { Textarea } from "@/components/ui/textarea";
 import { useEinheiten } from "@/hooks/useEinheiten";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
-import { MaterialSetEditor, type SetComponent } from "@/components/MaterialSetEditor";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PositionComponentsEditor, type MaterialOption } from "@/components/PositionComponentsEditor";
+import { type PositionComponent, calcPositionPreis } from "@/lib/positionen";
 import { BulkPriceDialog } from "@/components/BulkPriceDialog";
 import { KalkulationFields } from "@/components/KalkulationFields";
 import { calcEinzelpreis } from "@/lib/kalkulation";
@@ -59,6 +61,8 @@ interface Template {
   sonstiges_preis: number;
   arbeitszeit_minuten: number;
   stundensatz: number;
+  /** 'material' = Einkaufspreis-Eintrag · 'position' = kalkulierte Leistung */
+  art: "material" | "position";
 }
 
 export default function InvoiceTemplates() {
@@ -68,6 +72,8 @@ export default function InvoiceTemplates() {
   const [editId, setEditId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filterKategorie, setFilterKategorie] = useState<string>("alle");
+  // Aktiver Tab: Positionen (kalkulierte Leistungen) oder Materialien (EK-Liste)
+  const [activeArt, setActiveArt] = useState<"position" | "material">("position");
   const [form, setForm] = useState({
     name: "", beschreibung: "", einheit: "Stk.", einzelpreis: 0, kategorie: "Allgemein", artikelnummer: "",
     produktnummer: "", kurzbezeichnung: "", langbezeichnung: "", netto_preis: 0, brutto_preis: 0, ust_satz: 20,
@@ -85,6 +91,7 @@ export default function InvoiceTemplates() {
     sonstiges_preis: 0,
     arbeitszeit_minuten: 0,
     stundensatz: 52,
+    art: "position" as "material" | "position",
   });
   const [importOpen, setImportOpen] = useState(false);
   const [bulkPriceOpen, setBulkPriceOpen] = useState(false);
@@ -92,9 +99,9 @@ export default function InvoiceTemplates() {
   const [priceAdjustValue, setPriceAdjustValue] = useState("");
   // Foto-Vorschau-URLs (signed) für Katalog-Liste + Edit-Dialog
   const [fotoUrls, setFotoUrls] = useState<Record<string, string>>({});
-  // Komponenten des aktuell editierten Sets (im Dialog lokal gehalten, wird
-  // beim Save synchron in invoice_template_components geschrieben)
-  const [setComponents, setSetComponents] = useState<SetComponent[]>([]);
+  // Komponenten der aktuell editierten Position (Material/Lohn/Sonstiges) —
+  // im Dialog lokal gehalten, beim Save synchron in position_components geschrieben
+  const [posComponents, setPosComponents] = useState<PositionComponent[]>([]);
   // Merker: welche Komponenten-Row-IDs waren beim Öffnen da? Für Diff beim Save.
   const [originalComponentIds, setOriginalComponentIds] = useState<string[]>([]);
   const [fotoUploading, setFotoUploading] = useState(false);
@@ -143,6 +150,7 @@ export default function InvoiceTemplates() {
           sonstiges_preis: Number((t as any).sonstiges_preis) || 0,
           arbeitszeit_minuten: Number((t as any).arbeitszeit_minuten) || 0,
           stundensatz: Number((t as any).stundensatz) || 52,
+          art: ((t as any).art === "material" ? "material" : "position") as "material" | "position",
         };
       }) as Template[];
       setTemplates(rows);
@@ -167,7 +175,7 @@ export default function InvoiceTemplates() {
     setLoading(false);
   };
 
-  const kategorien = [...new Set(templates.map(t => t.kategorie))].sort();
+  const kategorien = [...new Set(templates.filter(t => t.art === activeArt).map(t => t.kategorie))].sort();
   const produktgruppen = [...new Set(templates.map(t => t.produktgruppe).filter(Boolean))].sort() as string[];
   const lieferanten = [...new Set(templates.map(t => t.lieferant).filter(Boolean))].sort() as string[];
 
@@ -182,8 +190,19 @@ export default function InvoiceTemplates() {
       (t.langbezeichnung && t.langbezeichnung.toLowerCase().includes(s)) ||
       (t.lieferant && t.lieferant.toLowerCase().includes(s));
     const matchesKategorie = filterKategorie === "alle" || t.kategorie === filterKategorie;
-    return matchesSearch && matchesKategorie;
+    return matchesSearch && matchesKategorie && t.art === activeArt;
   });
+
+  // Materialien (EK-Liste) für den Komponenten-Picker im Positions-Dialog
+  const materialOptions: MaterialOption[] = templates
+    .filter(t => t.art === "material")
+    .map(t => ({
+      id: t.id,
+      name: t.kurzbezeichnung || t.name,
+      einheit: t.einheit,
+      ek_netto: t.ek_netto,
+      kategorie: t.kategorie,
+    }));
 
   const grouped = filtered.reduce<Record<string, Template[]>>((acc, t) => {
     (acc[t.kategorie] = acc[t.kategorie] || []).push(t);
@@ -193,14 +212,15 @@ export default function InvoiceTemplates() {
   const openNew = () => {
     setEditId(null);
     setForm({
-      name: "", beschreibung: "", einheit: "Stk.", einzelpreis: 0, kategorie: "Allgemein", artikelnummer: "",
+      name: "", beschreibung: "", einheit: activeArt === "position" ? "m2" : "Stk.", einzelpreis: 0, kategorie: "Allgemein", artikelnummer: "",
       produktnummer: "", kurzbezeichnung: "", langbezeichnung: "", netto_preis: 0, brutto_preis: 0, ust_satz: 20,
       ist_lagerartikel: false, lieferant: "", produktgruppe: "",
       foto_path: null, ist_set: false,
       ek_netto: 0, vk_netto: 0, bezugseinheit: "", aufschlag_prozent: 0, vk_preis_manuell: false,
       ist_kalkuliert: false, verschnitt_prozent: 0, befestigung_preis: 0, sonstiges_preis: 0, arbeitszeit_minuten: 0, stundensatz: 52,
+      art: activeArt,
     });
-    setSetComponents([]);
+    setPosComponents([]);
     setOriginalComponentIds([]);
     setEditFotoUrl(null);
     setDialogOpen(true);
@@ -228,35 +248,35 @@ export default function InvoiceTemplates() {
       sonstiges_preis: t.sonstiges_preis,
       arbeitszeit_minuten: t.arbeitszeit_minuten,
       stundensatz: t.stundensatz || 52,
+      art: t.art,
     });
     setPriceAdjustValue("");
     setEditFotoUrl(t.foto_path ? (fotoUrls[t.id] || null) : null);
     setDialogOpen(true);
 
-    // Komponenten für Sets laden
-    if (t.ist_set) {
+    // Komponenten der Position laden (Material/Lohn/Sonstiges)
+    if (t.art === "position") {
       const { data } = await (supabase as any)
-        .from("invoice_template_components")
-        .select("id, component_template_id, menge, sort_order, component:invoice_templates!component_template_id(id, name, kurzbezeichnung, einheit, einzelpreis, ek_netto, vk_netto)")
-        .eq("parent_template_id", t.id)
+        .from("position_components")
+        .select("id, material_template_id, typ, bezeichnung, einheit, menge_pro_einheit, preis, verschnitt_prozent, aufschlag_prozent, sort_order")
+        .eq("position_template_id", t.id)
         .order("sort_order");
-      const rows = ((data as any[]) || []).map(r => {
-        const nettoFallback = Number(r.component?.einzelpreis) || 0;
-        return {
-          id: r.id,
-          component_template_id: r.component_template_id,
-          component_name: r.component?.kurzbezeichnung || r.component?.name || "?",
-          component_einheit: r.component?.einheit || "Stk.",
-          component_netto_preis: Number(r.component?.vk_netto ?? nettoFallback) || 0,
-          component_ek_netto: Number(r.component?.ek_netto ?? nettoFallback) || 0,
-          menge: Number(r.menge) || 1,
-          sort_order: Number(r.sort_order) || 0,
-        };
-      }) as SetComponent[];
-      setSetComponents(rows);
+      const rows = ((data as any[]) || []).map(r => ({
+        id: r.id,
+        material_template_id: r.material_template_id || null,
+        typ: (r.typ || "material") as PositionComponent["typ"],
+        bezeichnung: r.bezeichnung || "",
+        einheit: r.einheit || "",
+        menge_pro_einheit: Number(r.menge_pro_einheit) || 0,
+        preis: Number(r.preis) || 0,
+        verschnitt_prozent: Number(r.verschnitt_prozent) || 0,
+        aufschlag_prozent: Number(r.aufschlag_prozent) || 0,
+        sort_order: Number(r.sort_order) || 0,
+      })) as PositionComponent[];
+      setPosComponents(rows);
       setOriginalComponentIds(rows.map(r => r.id!).filter(Boolean));
     } else {
-      setSetComponents([]);
+      setPosComponents([]);
       setOriginalComponentIds([]);
     }
   };
@@ -315,7 +335,13 @@ export default function InvoiceTemplates() {
 
     // VK ist der Primärwert für Rechnungen; netto_preis und einzelpreis werden
     // daraus gespiegelt für Abwärtskompatibilität mit Altcode.
-    // Im Kalkulations-Modus wird der VK aus EK + Verschnitt + Aufschlag + Lohn berechnet.
+    // Positionen mit Komponenten: VK = Summe der Komponenten (Excel-Modell).
+    // Legacy-Positionen ohne Komponenten: alter Kalkulations-Modus (ein EK).
+    const hatKomponenten = form.art === "position" && posComponents.length > 0;
+    const ekLookup: Record<string, number> = {};
+    for (const m of materialOptions) ekLookup[m.id] = m.ek_netto;
+    const komponentenPreis = calcPositionPreis(posComponents, ekLookup);
+
     const kalkVk = calcEinzelpreis({
       ek_preis: Number(form.ek_netto) || 0,
       verschnitt_prozent: Number(form.verschnitt_prozent) || 0,
@@ -325,14 +351,17 @@ export default function InvoiceTemplates() {
       arbeitszeit_minuten: Number(form.arbeitszeit_minuten) || 0,
       stundensatz: Number(form.stundensatz) || 52,
     });
-    const vkEffective = form.ist_kalkuliert ? kalkVk : (Number(form.vk_netto) || Number(form.netto_preis) || 0);
-    const ekEffective = Number(form.ek_netto) || vkEffective;
+    const vkEffective = hatKomponenten
+      ? komponentenPreis.einzelpreis
+      : form.ist_kalkuliert ? kalkVk : (Number(form.vk_netto) || Number(form.netto_preis) || 0);
+    const ekEffective = Number(form.ek_netto) || (form.art === "material" ? 0 : vkEffective);
     const bruttoEffective = Math.round(vkEffective * (1 + Number(form.ust_satz) / 100) * 100) / 100;
+    const istKalkuliert = hatKomponenten ? false : form.ist_kalkuliert;
 
     const payload: any = {
       name: form.kurzbezeichnung || form.name,
       beschreibung: form.langbezeichnung || form.beschreibung || form.kurzbezeichnung || form.name,
-      einheit: form.ist_set && form.bezugseinheit ? form.bezugseinheit : form.einheit,
+      einheit: form.einheit,
       einzelpreis: vkEffective,
       kategorie: form.produktgruppe || form.kategorie,
       artikelnummer: form.produktnummer || form.artikelnummer || null,
@@ -346,17 +375,19 @@ export default function InvoiceTemplates() {
       ist_lagerartikel: form.ist_lagerartikel,
       lieferant: form.lieferant || null,
       foto_path: form.foto_path,
-      ist_set: form.ist_set,
+      art: form.art,
+      ist_set: false,
       ek_netto: ekEffective,
       vk_netto: vkEffective,
-      bezugseinheit: form.ist_set ? (form.bezugseinheit || null) : null,
-      aufschlag_prozent: (form.ist_set || form.ist_kalkuliert) ? Number(form.aufschlag_prozent) || 0 : 0,
-      vk_preis_manuell: form.ist_set ? form.vk_preis_manuell : false,
-      ist_kalkuliert: form.ist_kalkuliert,
-      verschnitt_prozent: form.ist_kalkuliert ? Number(form.verschnitt_prozent) || 0 : 0,
-      befestigung_preis: form.ist_kalkuliert ? Number(form.befestigung_preis) || 0 : 0,
-      sonstiges_preis: form.ist_kalkuliert ? Number(form.sonstiges_preis) || 0 : 0,
-      arbeitszeit_minuten: form.ist_kalkuliert ? Number(form.arbeitszeit_minuten) || 0 : 0,
+      bezugseinheit: null,
+      aufschlag_prozent: istKalkuliert ? Number(form.aufschlag_prozent) || 0 : 0,
+      vk_preis_manuell: false,
+      ist_kalkuliert: istKalkuliert,
+      verschnitt_prozent: istKalkuliert ? Number(form.verschnitt_prozent) || 0 : 0,
+      befestigung_preis: istKalkuliert ? Number(form.befestigung_preis) || 0 : 0,
+      sonstiges_preis: istKalkuliert ? Number(form.sonstiges_preis) || 0 : 0,
+      // Lohnminuten/EH: bei Komponenten aus deren Summe (für Stundenabgleich)
+      arbeitszeit_minuten: hatKomponenten ? komponentenPreis.minutenProEinheit : (istKalkuliert ? Number(form.arbeitszeit_minuten) || 0 : 0),
       stundensatz: Number(form.stundensatz) || 52,
     };
 
@@ -373,35 +404,34 @@ export default function InvoiceTemplates() {
       templateId = (data as any)?.id || null;
     }
 
-    // Komponenten-Diff synchronisieren (nur relevant für Sets)
-    if (form.ist_set && templateId) {
-      // Alte Rows entfernen, die nicht mehr in setComponents vorhanden sind
-      const currentIds = setComponents.map(c => c.id).filter(Boolean) as string[];
+    // Komponenten-Diff synchronisieren (nur für Positionen).
+    // Die DB rechnet den VK danach per Trigger nochmal — identische Formel.
+    if (form.art === "position" && templateId) {
+      const currentIds = posComponents.map(c => c.id).filter(Boolean) as string[];
       const toDelete = originalComponentIds.filter(id => !currentIds.includes(id));
       if (toDelete.length > 0) {
-        await (supabase as any).from("invoice_template_components")
-          .delete().in("id", toDelete);
+        await (supabase as any).from("position_components").delete().in("id", toDelete);
       }
-      // Insert / Update pro Komponente
-      for (const c of setComponents) {
+      for (let i = 0; i < posComponents.length; i++) {
+        const c = posComponents[i];
+        const row = {
+          material_template_id: c.material_template_id,
+          typ: c.typ,
+          bezeichnung: c.bezeichnung || (c.typ === "lohn" ? "Arbeitszeit" : "Komponente"),
+          einheit: c.einheit || "",
+          menge_pro_einheit: Number(c.menge_pro_einheit) || 0,
+          preis: Number(c.preis) || 0,
+          verschnitt_prozent: Number(c.verschnitt_prozent) || 0,
+          aufschlag_prozent: Number(c.aufschlag_prozent) || 0,
+          sort_order: i,
+        };
         if (c.id) {
-          await (supabase as any).from("invoice_template_components")
-            .update({ menge: c.menge, sort_order: c.sort_order })
-            .eq("id", c.id);
+          await (supabase as any).from("position_components").update(row).eq("id", c.id);
         } else {
-          await (supabase as any).from("invoice_template_components")
-            .insert({
-              parent_template_id: templateId,
-              component_template_id: c.component_template_id,
-              menge: c.menge,
-              sort_order: c.sort_order,
-            });
+          await (supabase as any).from("position_components")
+            .insert({ ...row, position_template_id: templateId });
         }
       }
-    } else if (!form.ist_set && originalComponentIds.length > 0 && templateId) {
-      // Vom Set zum normalen Material zurück → alle Komponenten löschen
-      await (supabase as any).from("invoice_template_components")
-        .delete().eq("parent_template_id", templateId);
     }
 
     toast({ title: editId ? "Gespeichert" : "Erstellt" });
@@ -427,6 +457,21 @@ export default function InvoiceTemplates() {
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8 max-w-[1400px]">
         <PageHeader title="Materialien & Kalkulation" backPath="/" />
+
+        {/* Zwei Ebenen nach Excel-Vorlage: Positionen (kalkulierte Leistungen)
+            bestehen aus Materialien (Einkaufspreis-Liste inkl. Stundensätze). */}
+        <Tabs value={activeArt} onValueChange={(v) => { setActiveArt(v as "position" | "material"); setFilterKategorie("alle"); }} className="mb-4">
+          <TabsList className="grid w-full max-w-md grid-cols-2">
+            <TabsTrigger value="position" className="gap-1.5">
+              <Calculator className="w-4 h-4" />
+              Positionen
+            </TabsTrigger>
+            <TabsTrigger value="material" className="gap-1.5">
+              <Package className="w-4 h-4" />
+              Materialien (EK)
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
 
         {/* Search & Filter Bar */}
         <div className="flex flex-wrap gap-3 mb-4 items-center">
@@ -464,7 +509,7 @@ export default function InvoiceTemplates() {
             </Button>
             <Button onClick={openNew} className="gap-2">
               <Plus className="w-4 h-4" />
-              Neues Material
+              {activeArt === "position" ? "Neue Position" : "Neues Material"}
             </Button>
           </div>
         </div>
@@ -475,9 +520,13 @@ export default function InvoiceTemplates() {
           <Card>
             <CardContent className="py-12 text-center text-muted-foreground">
               <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>{search || filterKategorie !== "alle" ? "Keine Materialien gefunden" : "Noch keine Materialien angelegt"}</p>
+              <p>{search || filterKategorie !== "alle"
+                ? (activeArt === "position" ? "Keine Positionen gefunden" : "Keine Materialien gefunden")
+                : (activeArt === "position" ? "Noch keine Positionen angelegt" : "Noch keine Materialien angelegt")}</p>
               {!search && filterKategorie === "alle" && (
-                <Button className="mt-4" onClick={openNew}>Erstes Material anlegen</Button>
+                <Button className="mt-4" onClick={openNew}>
+                  {activeArt === "position" ? "Erste Position anlegen" : "Erstes Material anlegen"}
+                </Button>
               )}
             </CardContent>
           </Card>
@@ -536,15 +585,7 @@ export default function InvoiceTemplates() {
                         </TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">{t.produktnummer || t.artikelnummer || "–"}</TableCell>
                         <TableCell className="font-medium max-w-[200px] truncate">
-                          <div className="flex items-center gap-1.5">
-                            <span>{t.kurzbezeichnung || t.name}</span>
-                            {t.ist_set && (
-                              <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 gap-1 border-primary/40 text-primary">
-                                <Boxes className="w-3 h-3" />
-                                Set
-                              </Badge>
-                            )}
-                          </div>
+                          <span>{t.kurzbezeichnung || t.name}</span>
                         </TableCell>
                         <TableCell className="text-muted-foreground max-w-[250px] truncate text-xs">{t.langbezeichnung || t.beschreibung}</TableCell>
                         <TableCell className="text-xs">{t.einheit}</TableCell>
@@ -569,7 +610,11 @@ export default function InvoiceTemplates() {
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{editId ? "Material bearbeiten" : "Neues Material"}</DialogTitle>
+              <DialogTitle>
+                {form.art === "position"
+                  ? (editId ? "Position bearbeiten" : "Neue Position (kalkulierte Leistung)")
+                  : (editId ? "Material bearbeiten" : "Neues Material (Einkaufspreis)")}
+              </DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-3">
@@ -675,58 +720,54 @@ export default function InvoiceTemplates() {
                   </div>
                 </div>
               </div>
-              {/* Kalkulation — prominent über den Preisfeldern (nach Excel-Vorlage) */}
-              {!form.ist_set && (
-                <div className="border-2 border-primary/30 bg-primary/5 rounded-lg p-3 space-y-3">
+              {/* Kalkulation mit Komponenten (Positionen) — nach Excel-Vorlage:
+                  Position = Materialien + Arbeitszeit + Sonstiges */}
+              {form.art === "position" && (
+                <PositionComponentsEditor
+                  components={posComponents}
+                  onChange={setPosComponents}
+                  einheit={form.einheit}
+                  materialien={materialOptions}
+                />
+              )}
+              {/* Legacy: alte Einzel-Kalkulation (EK+Verschnitt+Aufschlag+Lohn in einem)
+                  — nur noch für bestehende Positionen OHNE Komponenten */}
+              {form.art === "position" && posComponents.length === 0 && form.ist_kalkuliert && (
+                <div className="border rounded-lg p-3 space-y-3 bg-muted/20">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <Label className="font-semibold text-primary text-base">🧮 Kalkulation</Label>
-                      <p className="text-xs text-muted-foreground">Verkaufspreis automatisch aus EK + Verschnitt + Aufschlag + Lohn berechnen (nach deiner Excel)</p>
+                      <Label className="font-medium">Einfache Kalkulation (alt)</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Diese Position nutzt noch die einfache Ein-Material-Kalkulation.
+                        Füge oben Komponenten hinzu, um auf das neue Modell umzustellen.
+                      </p>
                     </div>
                     <Switch
                       checked={form.ist_kalkuliert}
-                      onCheckedChange={(c) => setForm(f => {
-                        const next = { ...f, ist_kalkuliert: !!c };
-                        if (c) {
-                          const vk = calcEinzelpreis({
-                            ek_preis: f.ek_netto, verschnitt_prozent: f.verschnitt_prozent,
-                            aufschlag_prozent: f.aufschlag_prozent, befestigung_preis: f.befestigung_preis,
-                            sonstiges_preis: f.sonstiges_preis, arbeitszeit_minuten: f.arbeitszeit_minuten,
-                            stundensatz: f.stundensatz || 52,
-                          });
-                          next.vk_netto = vk; next.netto_preis = vk;
-                          next.brutto_preis = Math.round(vk * (1 + f.ust_satz / 100) * 100) / 100;
-                        }
-                        return next;
-                      })}
+                      onCheckedChange={(c) => setForm(f => ({ ...f, ist_kalkuliert: !!c }))}
                     />
                   </div>
-                  {form.ist_kalkuliert && (
-                    <KalkulationFields
-                      einheit={form.einheit}
-                      value={{
-                        ek_preis: form.ek_netto, verschnitt_prozent: form.verschnitt_prozent,
-                        aufschlag_prozent: form.aufschlag_prozent, befestigung_preis: form.befestigung_preis,
-                        sonstiges_preis: form.sonstiges_preis, arbeitszeit_minuten: form.arbeitszeit_minuten,
-                        stundensatz: form.stundensatz || 52,
-                      }}
-                      onChange={(v) => setForm(f => {
-                        const vk = calcEinzelpreis(v);
-                        return {
-                          ...f,
-                          ek_netto: v.ek_preis, verschnitt_prozent: v.verschnitt_prozent,
-                          aufschlag_prozent: v.aufschlag_prozent, befestigung_preis: v.befestigung_preis,
-                          sonstiges_preis: v.sonstiges_preis, arbeitszeit_minuten: v.arbeitszeit_minuten,
-                          stundensatz: v.stundensatz,
-                          vk_netto: vk, netto_preis: vk,
-                          brutto_preis: Math.round(vk * (1 + f.ust_satz / 100) * 100) / 100,
-                        };
-                      })}
-                    />
-                  )}
-                  {form.ist_kalkuliert && (
-                    <p className="text-xs text-muted-foreground">Der berechnete Verkaufspreis steht unten als „VK netto".</p>
-                  )}
+                  <KalkulationFields
+                    einheit={form.einheit}
+                    value={{
+                      ek_preis: form.ek_netto, verschnitt_prozent: form.verschnitt_prozent,
+                      aufschlag_prozent: form.aufschlag_prozent, befestigung_preis: form.befestigung_preis,
+                      sonstiges_preis: form.sonstiges_preis, arbeitszeit_minuten: form.arbeitszeit_minuten,
+                      stundensatz: form.stundensatz || 52,
+                    }}
+                    onChange={(v) => setForm(f => {
+                      const vk = calcEinzelpreis(v);
+                      return {
+                        ...f,
+                        ek_netto: v.ek_preis, verschnitt_prozent: v.verschnitt_prozent,
+                        aufschlag_prozent: v.aufschlag_prozent, befestigung_preis: v.befestigung_preis,
+                        sonstiges_preis: v.sonstiges_preis, arbeitszeit_minuten: v.arbeitszeit_minuten,
+                        stundensatz: v.stundensatz,
+                        vk_netto: vk, netto_preis: vk,
+                        brutto_preis: Math.round(vk * (1 + f.ust_satz / 100) * 100) / 100,
+                      };
+                    })}
+                  />
                 </div>
               )}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -752,7 +793,9 @@ export default function InvoiceTemplates() {
                   <Label>VK netto (€)</Label>
                   <Input
                     type="number"
-                    value={form.vk_netto || ""}
+                    value={(form.art === "position" && posComponents.length > 0)
+                      ? calcPositionPreis(posComponents, Object.fromEntries(materialOptions.map(m => [m.id, m.ek_netto]))).einzelpreis
+                      : (form.vk_netto || "")}
                     onChange={(e) => {
                       const vk = Number(e.target.value);
                       setForm(f => ({
@@ -760,12 +803,11 @@ export default function InvoiceTemplates() {
                         vk_netto: vk,
                         netto_preis: vk,
                         brutto_preis: Math.round(vk * (1 + f.ust_satz / 100) * 100) / 100,
-                        vk_preis_manuell: f.ist_set ? true : f.vk_preis_manuell,
                       }));
                     }}
                     min={0}
                     step={0.01}
-                    disabled={(form.ist_set && !form.vk_preis_manuell) || form.ist_kalkuliert}
+                    disabled={(form.art === "position" && posComponents.length > 0) || form.ist_kalkuliert}
                   />
                 </div>
                 <div>
@@ -796,12 +838,11 @@ export default function InvoiceTemplates() {
                         vk_netto: vk,
                         netto_preis: vk,
                         brutto_preis: brutto,
-                        vk_preis_manuell: f.ist_set ? true : f.vk_preis_manuell,
                       }));
                     }}
                     min={0}
                     step={0.01}
-                    disabled={(form.ist_set && !form.vk_preis_manuell) || form.ist_kalkuliert}
+                    disabled={(form.art === "position" && posComponents.length > 0) || form.ist_kalkuliert}
                   />
                 </div>
               </div>
@@ -874,7 +915,6 @@ export default function InvoiceTemplates() {
                             vk_netto: newVk,
                             netto_preis: newVk,
                             brutto_preis: Math.round(newVk * (1 + f.ust_satz / 100) * 100) / 100,
-                            vk_preis_manuell: f.ist_set ? true : f.vk_preis_manuell,
                           };
                         });
                         const val2 = Number(priceAdjustValue);
@@ -911,42 +951,7 @@ export default function InvoiceTemplates() {
                   <Checkbox id="lagerartikel" checked={form.ist_lagerartikel} onCheckedChange={(c) => setForm(f => ({ ...f, ist_lagerartikel: !!c }))} />
                   <Label htmlFor="lagerartikel" className="cursor-pointer">Lagerartikel</Label>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Checkbox id="ist_set" checked={form.ist_set} onCheckedChange={(c) => setForm(f => ({ ...f, ist_set: !!c }))} />
-                  <Label htmlFor="ist_set" className="cursor-pointer flex items-center gap-1.5">
-                    <Boxes className="w-4 h-4" />
-                    Dies ist ein Set / Stückliste
-                  </Label>
-                </div>
               </div>
-
-              {/* Set-Editor: nur sichtbar wenn ist_set=true */}
-              {form.ist_set && (
-                <MaterialSetEditor
-                  components={setComponents}
-                  onChange={setSetComponents}
-                  bezugseinheit={form.bezugseinheit}
-                  onBezugseinheitChange={(v) =>
-                    setForm(f => ({ ...f, bezugseinheit: v, einheit: v || f.einheit }))
-                  }
-                  aufschlag_prozent={form.aufschlag_prozent}
-                  onAufschlagChange={(v) =>
-                    setForm(f => ({ ...f, aufschlag_prozent: v }))
-                  }
-                  currentVk={form.vk_netto}
-                  vk_preis_manuell={form.vk_preis_manuell}
-                  onAcceptAutoVk={(autoVk) => {
-                    setForm(f => ({
-                      ...f,
-                      vk_netto: autoVk,
-                      netto_preis: autoVk,
-                      brutto_preis: Math.round(autoVk * (1 + f.ust_satz / 100) * 100) / 100,
-                      vk_preis_manuell: false,
-                    }));
-                    toast({ title: "Set-VK übernommen", description: `Auto-Kalkulation: € ${autoVk.toFixed(2)} netto.` });
-                  }}
-                />
-              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Abbrechen</Button>

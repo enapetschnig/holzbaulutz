@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown } from "lucide-react";
+import { ArrowLeft, FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown, Package } from "lucide-react";
 import { getDocConfig } from "@/lib/documentTypes";
 import { Separator } from "@/components/ui/separator";
 import { ContactHistoryTimeline } from "@/components/ContactHistoryTimeline";
@@ -59,6 +59,8 @@ const ProjectOverview = () => {
   const [projectData, setProjectData] = useState<any>(null);
   const [projectHours, setProjectHours] = useState<{user_id: string, name: string, total: number}[]>([]);
   const [angebotPositionen, setAngebotPositionen] = useState<{position: number; beschreibung: string; menge: number; einheit: string}[]>([]);
+  // Stundenabgleich: im Angebot kalkulierte Lohnstunden (Σ arbeitszeit_minuten × Menge)
+  const [angeboteneStunden, setAngeboteneStunden] = useState<number | null>(null);
   const [categories, setCategories] = useState<DocumentCategory[]>([
     {
       type: "photos",
@@ -107,12 +109,18 @@ const ProjectOverview = () => {
       .order("datum", { ascending: false }).limit(1);
     if (angebote?.[0]) {
       const { data: items } = await supabase.from("invoice_items")
-        .select("position, beschreibung, kurztext, menge, einheit")
+        .select("position, beschreibung, kurztext, menge, einheit, arbeitszeit_minuten")
         .eq("invoice_id", angebote[0].id).order("position");
       setAngebotPositionen((items || []).map(i => ({
         position: i.position, beschreibung: (i as any).kurztext || i.beschreibung,
         menge: Number(i.menge), einheit: i.einheit || "Stk.",
       })));
+      // Angebotene Lohnstunden: Minuten/EH × Menge über alle Positionen
+      const minuten = (items || []).reduce((s, i) =>
+        s + (Number((i as any).arbeitszeit_minuten) || 0) * (Number(i.menge) || 0), 0);
+      setAngeboteneStunden(Math.round((minuten / 60) * 10) / 10);
+    } else {
+      setAngeboteneStunden(null);
     }
   };
 
@@ -541,13 +549,43 @@ const ProjectOverview = () => {
           </Card>
         )}
 
-        {/* Projektstunden (Admin only) */}
+        {/* Projektstunden + Stundenabgleich (Admin only) */}
         {isAdmin && (
           <Card className="mb-4">
             <CardHeader>
               <CardTitle className="text-base">Projektstunden</CardTitle>
             </CardHeader>
             <CardContent>
+              {/* Stundenabgleich: Angebot vs. tatsächlich gebucht */}
+              {(() => {
+                const gebucht = projectHours.reduce((s, h) => s + h.total, 0);
+                if (angeboteneStunden === null || angeboteneStunden <= 0) return null;
+                const pct = Math.min(100, Math.round((gebucht / angeboteneStunden) * 100));
+                const ueber = gebucht > angeboteneStunden;
+                return (
+                  <div className="mb-4 p-3 rounded-lg border bg-muted/30 space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Stunden laut Angebot</span>
+                      <span className="font-medium">{angeboteneStunden.toFixed(1)} Std.</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Bereits gebucht</span>
+                      <span className={`font-medium ${ueber ? "text-destructive" : ""}`}>{gebucht.toFixed(1)} Std.</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${ueber ? "bg-destructive" : "bg-primary"}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <p className={`text-xs ${ueber ? "text-destructive font-medium" : "text-muted-foreground"}`}>
+                      {ueber
+                        ? `⚠️ ${(gebucht - angeboteneStunden).toFixed(1)} Std. über dem Angebot`
+                        : `${(angeboteneStunden - gebucht).toFixed(1)} Std. verbleibend (${pct}% verbraucht)`}
+                    </p>
+                  </div>
+                );
+              })()}
               {projectHours.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Keine Stunden gebucht</p>
               ) : (
@@ -591,6 +629,25 @@ const ProjectOverview = () => {
               </CardContent>
             </Card>
           ))}
+
+          {/* Materialliste: Soll-Bedarf aus dem Angebot + Entnahmen/Verbrauch */}
+          <Card
+            className="cursor-pointer hover:shadow-lg transition-shadow"
+            onClick={() => navigate(`/projects/${projectId}/materials`)}
+          >
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="text-primary"><Package className="h-8 w-8" /></div>
+              </div>
+              <CardTitle className="text-xl">Materialliste</CardTitle>
+              <CardDescription>Bedarf laut Angebot, Entnahmen & Verbrauch</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="outline" className="w-full">
+                Öffnen
+              </Button>
+            </CardContent>
+          </Card>
 
           {/* Angebotspositionen — ohne Preise, für alle sichtbar */}
           {angebotPositionen.length > 0 && (

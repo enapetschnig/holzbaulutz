@@ -18,6 +18,7 @@ import {
 import ChangePasswordDialog from "@/components/ChangePasswordDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { MeineEinteilung } from "@/components/MeineEinteilung";
+import { StundenabgleichWidget } from "@/components/dashboard/StundenabgleichWidget";
 
 type Project = {
   id: string;
@@ -494,6 +495,13 @@ export default function Index() {
             </Card>
           )}
         </div>
+
+        {/* Stundenabgleich: Angebot vs. gebucht (Admin) */}
+        {isAdmin && (
+          <div className="mt-6">
+            <StundenabgleichWidget />
+          </div>
+        )}
 
         {/* Recent Time Entries */}
         {recentEntries.length > 0 && (

@@ -238,6 +238,8 @@ export default function InvoiceDetail() {
   const [employees, setEmployees] = useState<{ id: string; vorname: string; nachname: string; telefon: string | null; email: string | null; position: string | null }[]>([]);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [templateSearch, setTemplateSearch] = useState("");
+  // Picker-Filter: Positionen (Standard) / Materialien / Alle
+  const [templateArtFilter, setTemplateArtFilter] = useState<"position" | "material" | "alle">("position");
   const [templateFilter, setTemplateFilter] = useState("alle");
   const [autocompleteIdx, setAutocompleteIdx] = useState<number | null>(null);
   const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
@@ -279,6 +281,12 @@ export default function InvoiceDetail() {
   const [anzahlungMode, setAnzahlungMode] = useState<"prozent" | "betrag">("prozent");
   // Summe bereits ausgestellter Anzahlungen zum gleichen Auftrag (für Kumulations-Check)
   const [bestehendeAnzahlungenNetto, setBestehendeAnzahlungenNetto] = useState<number>(0);
+  // Kumulierte Folge-AR: IDs der bisherigen ARs + Wurzel-Auftrag (Angebot/AB)
+  const [anzahlungAbzugIds, setAnzahlungAbzugIds] = useState<string[]>([]);
+  const [anzahlungRootId, setAnzahlungRootId] = useState<string | null>(null);
+  // Basis (Netto des Wurzel-Auftrags) — bei "AR aus AR" ist nettoSumme nur das
+  // Delta der aktuellen AR und damit die falsche Bezugsgröße für %/Rest.
+  const [anzahlungBasisNetto, setAnzahlungBasisNetto] = useState<number | null>(null);
   // Dokumenten-Kette: Root (Angebot/AB) + alle abgeleiteten Dokumente. Zeigt
   // auf der Detailseite an, wo im Workflow wir sind, und macht Navigation
   // zwischen verknüpften Dokumenten möglich.
@@ -480,7 +488,12 @@ export default function InvoiceDetail() {
         stundensatz: Number((it as any).stundensatz) || 52,
       }));
 
-      // Anzahlungsrechnung: nur eine Zeile mit dem Anzahlungsbetrag.
+      // Anzahlungsrechnung: Zeile mit dem Anzahlungsbetrag (Delta).
+      // KUMULIERT (Folge-AR, opts.abzugIds gesetzt): positive Zeile zeigt den
+      // kumulierten Leistungsstand, darunter werden alle bisherigen ARs als
+      // negative NETTO-Zeilen abgezogen. Netto/MwSt/Brutto der Rechnung
+      // entsprechen damit weiterhin exakt dem DELTA — die Summen-Logik
+      // (auch für spätere SR/Folge-ARs) bleibt konsistent.
       if (targetTyp === "anzahlungsrechnung" && (opts?.anzahlungBetrag || opts?.anzahlungProzent)) {
         const gesamtNetto = nextItems.reduce((s, it) => s + it.gesamtpreis, 0);
         const quellNummer = data.nummer || "Auftragsbestätigung";
@@ -498,17 +511,61 @@ export default function InvoiceDetail() {
           labelLang = `Anzahlung ${prozent}% gemäß ${quellNummer}`;
         }
         anzBetrag = Math.round(anzBetrag * 100) / 100;
-        nextItems = [{
-          position: 1,
-          beschreibung: labelLang,
-          kurztext: labelKurz,
-          langtext: "",
-          menge: 1,
-          einheit: "pausch.",
-          einzelpreis: anzBetrag,
-          rabatt_prozent: 0,
-          gesamtpreis: anzBetrag,
-        }];
+
+        // Bisherige Anzahlungen zum selben Auftrag (kumulierte Folge-AR)
+        let vorherigeARs: any[] = [];
+        if (opts?.abzugIds && opts.abzugIds.length > 0) {
+          const { data: prev } = await supabase
+            .from("invoices")
+            .select("id, nummer, netto_summe, datum")
+            .in("id", opts.abzugIds);
+          vorherigeARs = (prev as any[]) || [];
+        }
+
+        if (vorherigeARs.length > 0) {
+          const bisherNetto = vorherigeARs.reduce((s, a) => s + (Number(a.netto_summe) || 0), 0);
+          const kumuliertNetto = Math.round((bisherNetto + anzBetrag) * 100) / 100;
+          const kumProzent = gesamtNetto > 0 ? Math.round((kumuliertNetto / gesamtNetto) * 1000) / 10 : 0;
+          nextItems = [{
+            position: 1,
+            beschreibung: `Leistungsstand kumuliert${kumProzent > 0 ? ` ${kumProzent}%` : ""} gemäß ${quellNummer}`,
+            kurztext: `Leistungsstand kumuliert`,
+            langtext: "",
+            menge: 1,
+            einheit: "pausch.",
+            einzelpreis: kumuliertNetto,
+            rabatt_prozent: 0,
+            gesamtpreis: kumuliertNetto,
+          }];
+          vorherigeARs
+            .sort((a, b) => String(a.datum).localeCompare(String(b.datum)))
+            .forEach((abz, i) => {
+              const netto = Number(abz.netto_summe) || 0;
+              nextItems.push({
+                position: i + 2,
+                beschreibung: `abzüglich ${i + 1}. Anzahlungsrechnung ${abz.nummer} vom ${abz.datum} (netto)`,
+                kurztext: `Abzug ${abz.nummer}`,
+                langtext: "",
+                menge: 1,
+                einheit: "pausch.",
+                einzelpreis: -netto,
+                rabatt_prozent: 0,
+                gesamtpreis: -netto,
+              });
+            });
+        } else {
+          nextItems = [{
+            position: 1,
+            beschreibung: labelLang,
+            kurztext: labelKurz,
+            langtext: "",
+            menge: 1,
+            einheit: "pausch.",
+            einzelpreis: anzBetrag,
+            rabatt_prozent: 0,
+            gesamtpreis: anzBetrag,
+          }];
+        }
       }
 
       // Schlussrechnung: Anzahlungen als negative BRUTTO-Zeilen anhängen.
@@ -1130,13 +1187,13 @@ export default function InvoiceDetail() {
 
   const fetchCatalogKalk = useCallback(async (): Promise<Record<string, any>> => {
     const ids = Array.from(new Set(
-      items.filter(it => it.ist_kalkuliert && it.kalkulation_template_id)
+      items.filter(it => it.kalkulation_template_id)
         .map(it => it.kalkulation_template_id as string)
     ));
     if (ids.length === 0) return {};
     const { data } = await supabase
       .from("invoice_templates")
-      .select("id, ek_netto, verschnitt_prozent, aufschlag_prozent, befestigung_preis, sonstiges_preis, arbeitszeit_minuten, stundensatz, ist_kalkuliert")
+      .select("id, ek_netto, vk_netto, netto_preis, einzelpreis, verschnitt_prozent, aufschlag_prozent, befestigung_preis, sonstiges_preis, arbeitszeit_minuten, stundensatz, ist_kalkuliert")
       .in("id", ids);
     const map: Record<string, any> = {};
     for (const t of (data || [])) map[(t as any).id] = t;
@@ -1153,6 +1210,18 @@ export default function InvoiceDetail() {
     stundensatz: Number(t.stundensatz) || 52,
   });
 
+  // Soll-Einzelpreis einer verknüpften Position laut Katalog:
+  // - alte Einzel-Kalkulation (item.ist_kalkuliert): Formel mit Doc-Override
+  // - Komponenten-Positionen & Materialien: aktueller Katalog-VK
+  //   (die DB hält vk_netto per Trigger aus den Komponenten aktuell)
+  const expectedEpFromCatalog = (it: any, t: any): number => {
+    if (it.ist_kalkuliert && t.ist_kalkuliert) {
+      const k = kalkFromTemplate(t);
+      return calcEinzelpreis({ ...k, aufschlag_prozent: docAufschlagOverride ?? k.aufschlag_prozent });
+    }
+    return Number(t.vk_netto ?? t.netto_preis) || Number(t.einzelpreis) || 0;
+  };
+
   const refreshKalkulationFromCatalog = async () => {
     setKalkRefreshing(true);
     try {
@@ -1164,14 +1233,17 @@ export default function InvoiceDetail() {
       let changed = 0;
       let oldTotal = 0, newTotal = 0;
       const next = items.map(it => {
-        if (!it.ist_kalkuliert || !it.kalkulation_template_id || !map[it.kalkulation_template_id]) return it;
-        const k = kalkFromTemplate(map[it.kalkulation_template_id]);
-        const eff = docAufschlagOverride ?? k.aufschlag_prozent;
-        const ep = calcEinzelpreis({ ...k, aufschlag_prozent: eff });
+        if (!it.kalkulation_template_id || !map[it.kalkulation_template_id]) return it;
+        const t = map[it.kalkulation_template_id];
+        const ep = expectedEpFromCatalog(it, t);
         oldTotal += Number(it.einzelpreis) || 0;
         newTotal += ep;
         if (Math.abs(ep - (Number(it.einzelpreis) || 0)) > 0.005) changed++;
-        const updated = { ...it, ...k, einzelpreis: ep };
+        // Alte Einzel-Kalkulation: Snapshot-Felder mitziehen. Komponenten-
+        // Positionen/Materialien: nur EP + Lohnminuten (für Stundenabgleich).
+        const updated = it.ist_kalkuliert && t.ist_kalkuliert
+          ? { ...it, ...kalkFromTemplate(t), einzelpreis: ep }
+          : { ...it, einzelpreis: ep, arbeitszeit_minuten: Number(t.arbeitszeit_minuten) || 0 };
         updated.gesamtpreis = computeItemTotal(updated);
         return updated;
       });
@@ -1194,7 +1266,7 @@ export default function InvoiceDetail() {
   // Materialkatalog inzwischen abweicht (Banner-Hinweis). Schlüssel ist die
   // Menge der verknüpften Template-IDs — läuft nicht bei jeder Preis-Eingabe.
   const linkedTemplateKey = useMemo(() => items
-    .filter(it => it.ist_kalkuliert && it.kalkulation_template_id)
+    .filter(it => it.kalkulation_template_id)
     .map(it => it.kalkulation_template_id).join(","), [items]);
 
   useEffect(() => {
@@ -1205,10 +1277,8 @@ export default function InvoiceDetail() {
       if (cancelled) return;
       let stale = 0;
       for (const it of items) {
-        if (it.ist_kalkuliert && it.kalkulation_template_id && map[it.kalkulation_template_id]) {
-          const k = kalkFromTemplate(map[it.kalkulation_template_id]);
-          const eff = docAufschlagOverride ?? k.aufschlag_prozent;
-          const ep = calcEinzelpreis({ ...k, aufschlag_prozent: eff });
+        if (it.kalkulation_template_id && map[it.kalkulation_template_id]) {
+          const ep = expectedEpFromCatalog(it, map[it.kalkulation_template_id]);
           if (Math.abs(ep - (Number(it.einzelpreis) || 0)) > 0.005) stale++;
         }
       }
@@ -1658,6 +1728,15 @@ export default function InvoiceDetail() {
       // Wenn Projekt zugeordnet → PDF zusätzlich in den Projektordner ablegen
       if (savedId && form.project_id) {
         void uploadInvoicePdfToProjectFolder(savedId);
+      }
+      // Angebot mit Projekt → Projekt-Materialliste (Soll-Bedarf) neu erzeugen.
+      // Best effort: Fehler blockieren das Speichern nicht.
+      if (savedId && form.project_id && getDocConfig(form.typ).isAngebotLike) {
+        const pid = form.project_id;
+        const sid = savedId;
+        void import("@/lib/materialbedarf")
+          .then(({ generateMaterialbedarfFromAngebot }) => generateMaterialbedarfFromAngebot(sid, pid))
+          .catch(() => {});
       }
 
       if (isNew && !previewOpen) {
@@ -2680,7 +2759,8 @@ export default function InvoiceDetail() {
                       const allow = {
                         auftragsbestaetigung: t === "angebot",
                         rechnung: t === "angebot" || t === "auftragsbestaetigung",
-                        anzahlungsrechnung: t === "angebot" || t === "auftragsbestaetigung",
+                        // Folge-AR aus AR = kumulierte Anzahlungsrechnung
+                        anzahlungsrechnung: t === "angebot" || t === "auftragsbestaetigung" || t === "anzahlungsrechnung",
                         schlussrechnung: t === "angebot" || t === "auftragsbestaetigung" || t === "anzahlungsrechnung",
                         // Gutschrift kann zu jeder rechnungs-artigen Doku angelegt
                         // werden — Kunde + Items + parent_invoice_id werden via
@@ -2710,19 +2790,62 @@ export default function InvoiceDetail() {
                             {allow.anzahlungsrechnung && (
                               <DropdownMenuItem onClick={async () => {
                                 // Bereits bestehende nicht-stornierte Anzahlungen zum selben Auftrag
-                                // laden, damit der Dialog die Rest-Basis kennt (Kumulations-Check).
+                                // laden (Kumulations-Check + kumulierte Abzugszeilen der Folge-AR).
+                                // Die Wurzel (Angebot/AB) FRISCH aus der DB ermitteln — wie beim
+                                // SR-Handler — damit auch "AR aus AR" korrekt am Auftrag hängt.
                                 if (invoiceId) {
+                                  let rootId = invoiceId;
+                                  let cursor: string | null = invoiceId;
+                                  let cursorTyp = form.typ;
+                                  for (let hops = 0; hops < 6 && cursorTyp === "anzahlungsrechnung" && cursor; hops++) {
+                                    const { data: row } = await supabase
+                                      .from("invoices")
+                                      .select("parent_invoice_id")
+                                      .eq("id", cursor)
+                                      .maybeSingle();
+                                    const parent = (row as any)?.parent_invoice_id || null;
+                                    if (!parent) break;
+                                    rootId = parent;
+                                    cursor = parent;
+                                    const { data: parentRow } = await supabase
+                                      .from("invoices")
+                                      .select("typ")
+                                      .eq("id", parent)
+                                      .maybeSingle();
+                                    cursorTyp = (parentRow as any)?.typ || "";
+                                  }
                                   const { data: existingAnz } = await supabase
                                     .from("invoices")
-                                    .select("netto_summe")
-                                    .eq("parent_invoice_id", invoiceId)
+                                    .select("id, netto_summe")
+                                    .eq("parent_invoice_id", rootId)
                                     .eq("typ", "anzahlungsrechnung")
                                     .neq("status", "storniert");
-                                  const sum = ((existingAnz as any[]) || []).reduce(
-                                    (s, r) => s + (Number(r.netto_summe) || 0), 0);
+                                  const rows = ((existingAnz as any[]) || []);
+                                  // Sicherheitsnetz: aktuelles Dokument ist selbst eine AR,
+                                  // hängt aber (noch) nicht am Root → trotzdem mitzählen.
+                                  if (form.typ === "anzahlungsrechnung" && form.status !== "storniert" && !rows.some(r => r.id === invoiceId)) {
+                                    rows.push({ id: invoiceId, netto_summe: nettoSumme });
+                                  }
+                                  const sum = rows.reduce((s, r) => s + (Number(r.netto_summe) || 0), 0);
                                   setBestehendeAnzahlungenNetto(sum);
+                                  setAnzahlungAbzugIds(rows.map(r => r.id));
+                                  setAnzahlungRootId(rootId);
+                                  // Basis = Netto des Wurzel-Auftrags (bei AR-aus-AR ≠ aktuelles Dokument)
+                                  if (rootId !== invoiceId) {
+                                    const { data: rootInv } = await supabase
+                                      .from("invoices")
+                                      .select("netto_summe")
+                                      .eq("id", rootId)
+                                      .maybeSingle();
+                                    setAnzahlungBasisNetto(Number((rootInv as any)?.netto_summe) || null);
+                                  } else {
+                                    setAnzahlungBasisNetto(null);
+                                  }
                                 } else {
                                   setBestehendeAnzahlungenNetto(0);
+                                  setAnzahlungAbzugIds([]);
+                                  setAnzahlungRootId(null);
+                                  setAnzahlungBasisNetto(null);
                                 }
                                 setAnzahlungProzentInput("30");
                                 setAnzahlungBetragInput((nettoSumme * 0.3).toFixed(2));
@@ -4376,13 +4499,26 @@ export default function InvoiceDetail() {
             <DialogHeader>
               <DialogTitle>Materialien einfügen</DialogTitle>
             </DialogHeader>
-            <div className="flex gap-3 mb-3">
+            <div className="flex gap-3 mb-3 flex-wrap">
               <Input
                 placeholder="Suchen..."
                 value={templateSearch}
                 onChange={(e) => setTemplateSearch(e.target.value)}
-                className="flex-1"
+                className="flex-1 min-w-[160px]"
               />
+              {/* Positionen (kalkulierte Leistungen) vs. Materialien (EK-Liste) */}
+              <div className="flex rounded-md border overflow-hidden">
+                {([["position", "Positionen"], ["material", "Materialien"], ["alle", "Alle"]] as const).map(([val, lbl]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => setTemplateArtFilter(val)}
+                    className={`px-3 py-1.5 text-sm transition-colors ${templateArtFilter === val ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
               <Select value={templateFilter} onValueChange={setTemplateFilter}>
                 <SelectTrigger className="w-[180px]"><SelectValue placeholder="Alle Gruppen" /></SelectTrigger>
                 <SelectContent>
@@ -4399,7 +4535,9 @@ export default function InvoiceDetail() {
                 const filtered = templates.filter(t => {
                   const matchSearch = !s || t.name.toLowerCase().includes(s) || (t.beschreibung && t.beschreibung.toLowerCase().includes(s)) || ((t as any).kurzbezeichnung && (t as any).kurzbezeichnung.toLowerCase().includes(s));
                   const matchFilter = templateFilter === "alle" || t.kategorie === templateFilter;
-                  return matchSearch && matchFilter;
+                  const tArt = (t as any).art === "material" ? "material" : "position";
+                  const matchArt = templateArtFilter === "alle" || tArt === templateArtFilter;
+                  return matchSearch && matchFilter && matchArt;
                 });
                 if (filtered.length === 0) return <p className="text-center text-muted-foreground py-8">Keine Materialien gefunden</p>;
 
@@ -4517,7 +4655,12 @@ export default function InvoiceDetail() {
                       gesamtpreis: Math.round(netto * menge * 100) / 100,
                       produktnummer: (t as any).produktnummer || "",
                       ist_kalkuliert: isKalk,
-                      kalkulation_template_id: isKalk ? t.id : null,
+                      // Katalog-Verknüpfung IMMER mitnehmen — auch Komponenten-
+                      // Positionen und Materialien folgen so "Preise aktualisieren".
+                      kalkulation_template_id: t.id,
+                      // Lohnminuten/EH für den Stundenabgleich (bei Komponenten-
+                      // Positionen aus der Komponenten-Summe im Katalog).
+                      arbeitszeit_minuten: Number((t as any).arbeitszeit_minuten) || 0,
                       ...(kalk || {}),
                     } as InvoiceItem;
                   });
@@ -4798,8 +4941,9 @@ export default function InvoiceDetail() {
               <DialogTitle>Anzahlungsrechnung erstellen</DialogTitle>
             </DialogHeader>
             {(() => {
-              const basisNetto = nettoSumme;
-              const basisBrutto = bruttoSumme;
+              // Bei "AR aus AR" ist die Basis der Wurzel-Auftrag, nicht das Delta
+              const basisNetto = anzahlungBasisNetto ?? nettoSumme;
+              const basisBrutto = basisNetto * (1 + (form.mwst_satz / 100));
               const restNetto = Math.max(0, basisNetto - bestehendeAnzahlungenNetto);
               const prozentNum = Number(anzahlungProzentInput);
               const betragNum = Number(anzahlungBetragInput);
@@ -4907,10 +5051,16 @@ export default function InvoiceDetail() {
                           return;
                         }
                         setAnzahlungDialogOpen(false);
+                        // Kumulierte Folge-AR: bisherige ARs als Abzugszeilen +
+                        // Konvertierung immer von der Auftrags-Wurzel aus.
+                        const extra = {
+                          ...(anzahlungAbzugIds.length > 0 ? { abzug_ids: anzahlungAbzugIds } : {}),
+                          ...(anzahlungRootId ? { from_doc_id: anzahlungRootId } : {}),
+                        };
                         if (anzahlungMode === "betrag") {
-                          handleConvertTo("anzahlungsrechnung", { anzahlung_betrag: Math.round(anzNetto * 100) / 100 });
+                          handleConvertTo("anzahlungsrechnung", { anzahlung_betrag: Math.round(anzNetto * 100) / 100, ...extra });
                         } else {
-                          handleConvertTo("anzahlungsrechnung", { anzahlung_prozent: Number(anzahlungProzentInput) });
+                          handleConvertTo("anzahlungsrechnung", { anzahlung_prozent: Number(anzahlungProzentInput), ...extra });
                         }
                       }}
                     >

@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/sidebar";
 import {
   Home, Clock, FolderKanban, LayoutGrid,
-  Receipt, FileText,
+  Receipt, FileText, ClipboardList,
   BookUser, Package, BarChart3, Shield, LogOut, FileDown,
 } from "lucide-react";
 import { usePermissions, type FeatureKey } from "@/hooks/usePermissions";
@@ -50,6 +50,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { title: "Rechnungen & Angebote", path: "/invoices", icon: Receipt, feature: "rechnungen" },
       { title: "Eingangsrechnungen", path: "/eingangsrechnungen", icon: FileDown, feature: "eingangsrechnungen" },
       { title: "Regieberichte", path: "/disturbances", icon: FileText, feature: "regieberichte" },
+      { title: "Bautagesberichte", path: "/bautagesberichte", icon: ClipboardList, feature: "bautagesberichte" },
     ],
   },
   {

@@ -23,3 +23,6 @@ verify_jwt = false
 
 [functions.parse-invoice-document]
 verify_jwt = false
+
+[functions.send-bautagesbericht-report]
+verify_jwt = false

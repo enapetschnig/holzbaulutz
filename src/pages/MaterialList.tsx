@@ -36,6 +36,8 @@ type MaterialSummary = {
   entnahme: number;
   rueckgabe: number;
   verbrauch: number;
+  /** Soll-Bedarf laut Angebot (typ='bedarf', automatisch generiert) */
+  bedarf: number;
 };
 
 const MaterialList = () => {
@@ -118,12 +120,14 @@ const MaterialList = () => {
           entnahme: 0,
           rueckgabe: 0,
           verbrauch: 0,
+          bedarf: 0,
         });
       }
       const s = map.get(key)!;
       const menge = parseFloat(e.menge || "0") || 0;
       if (e.typ === "entnahme") s.entnahme += menge;
       else if (e.typ === "rueckgabe") s.rueckgabe += menge;
+      else if (e.typ === "bedarf") s.bedarf += menge; // Soll — zählt NICHT als Verbrauch
       else s.verbrauch += menge;
       if (e.einzelpreis && e.einzelpreis > 0) s.einzelpreis = e.einzelpreis;
     }
@@ -176,18 +180,21 @@ const MaterialList = () => {
   const typIcon = (typ: string | null) => {
     if (typ === "entnahme") return <ArrowUp className="h-3.5 w-3.5 text-red-500" />;
     if (typ === "rueckgabe") return <ArrowDown className="h-3.5 w-3.5 text-green-500" />;
+    if (typ === "bedarf") return <Package className="h-3.5 w-3.5 text-blue-500" />;
     return <Minus className="h-3.5 w-3.5 text-muted-foreground" />;
   };
 
   const typLabel = (typ: string | null) => {
     if (typ === "entnahme") return "Entnahme";
     if (typ === "rueckgabe") return "Rückgabe";
+    if (typ === "bedarf") return "Bedarf (Soll)";
     return "Verbrauch";
   };
 
   const typColor = (typ: string | null) => {
     if (typ === "entnahme") return "bg-red-100 text-red-800";
     if (typ === "rueckgabe") return "bg-green-100 text-green-800";
+    if (typ === "bedarf") return "bg-blue-100 text-blue-800";
     return "bg-muted text-muted-foreground";
   };
 
@@ -214,24 +221,32 @@ const MaterialList = () => {
             {showSummary && (
               <CardContent>
                 <div className="space-y-2">
-                  {summary.filter(s => s.verbrauch > 0).map((s, i) => (
-                    <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border">
-                      <div>
-                        <p className="font-medium text-sm">{s.material}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {s.einzelpreis > 0 && `€ ${s.einzelpreis.toFixed(2)} / ${s.einheit}`}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-bold">{s.verbrauch.toFixed(1)} {s.einheit}</p>
-                        {s.einzelpreis > 0 && (
+                  {summary.filter(s => s.verbrauch > 0 || s.bedarf > 0).map((s, i) => {
+                    const ueber = s.bedarf > 0 && s.verbrauch > s.bedarf;
+                    return (
+                      <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border">
+                        <div>
+                          <p className="font-medium text-sm">{s.material}</p>
                           <p className="text-xs text-muted-foreground">
-                            € {(s.verbrauch * s.einzelpreis).toFixed(2)}
+                            {s.einzelpreis > 0 && `€ ${s.einzelpreis.toFixed(2)} / ${s.einheit}`}
+                            {s.bedarf > 0 && (
+                              <span className="ml-2 text-blue-600">Soll lt. Angebot: {s.bedarf.toFixed(1)} {s.einheit}</span>
+                            )}
                           </p>
-                        )}
+                        </div>
+                        <div className="text-right">
+                          <p className={`font-bold ${ueber ? "text-destructive" : ""}`}>
+                            {s.verbrauch.toFixed(1)}{s.bedarf > 0 ? ` / ${s.bedarf.toFixed(1)}` : ""} {s.einheit}
+                          </p>
+                          {s.einzelpreis > 0 && s.verbrauch > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              € {(s.verbrauch * s.einzelpreis).toFixed(2)}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </CardContent>
             )}

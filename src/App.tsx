@@ -27,6 +27,8 @@ import Notepad from "./pages/Notepad";
 import MaterialList from "./pages/MaterialList";
 import Disturbances from "./pages/Disturbances";
 import DisturbanceDetail from "./pages/DisturbanceDetail";
+import Bautagesberichte from "./pages/Bautagesberichte";
+import BautagesberichtDetail from "./pages/BautagesberichtDetail";
 import Invoices from "./pages/Invoices";
 import InvoiceDetail from "./pages/InvoiceDetail";
 import PurchaseInvoices from "./pages/PurchaseInvoices";
@@ -96,6 +98,8 @@ function AppContent() {
           <Route path="/notepad" element={<ProtectedRoute><Notepad /></ProtectedRoute>} />
           <Route path="/disturbances" element={<ProtectedRoute feature="regieberichte"><Disturbances /></ProtectedRoute>} />
           <Route path="/disturbances/:id" element={<ProtectedRoute feature="regieberichte"><DisturbanceDetail /></ProtectedRoute>} />
+          <Route path="/bautagesberichte" element={<ProtectedRoute feature="bautagesberichte"><Bautagesberichte /></ProtectedRoute>} />
+          <Route path="/bautagesberichte/:id" element={<ProtectedRoute feature="bautagesberichte"><BautagesberichtDetail /></ProtectedRoute>} />
           <Route path="/invoices" element={<ProtectedRoute feature="rechnungen"><Invoices /></ProtectedRoute>} />
           <Route path="/invoices/templates" element={<ProtectedRoute feature="rechnungen"><InvoiceTemplates /></ProtectedRoute>} />
           <Route path="/invoices/packages" element={<ProtectedRoute feature="rechnungen"><OfferPackages /></ProtectedRoute>} />

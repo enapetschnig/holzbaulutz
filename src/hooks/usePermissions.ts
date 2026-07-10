@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 export const FEATURES = [
-  'zeiterfassung','projekte','meine_stunden','regieberichte','rechnungen',
+  'zeiterfassung','projekte','meine_stunden','regieberichte','bautagesberichte','rechnungen',
   'plantafel',
   'kunden','materialien','admin','stundenauswertung','eingangsrechnungen'
 ] as const;
@@ -13,6 +13,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   projekte: "Projekte",
   meine_stunden: "Meine Stunden",
   regieberichte: "Regieberichte",
+  bautagesberichte: "Bautagesberichte",
   rechnungen: "Rechnungen & Angebote",
   plantafel: "Plantafel",
   kunden: "Kunden",
@@ -28,6 +29,7 @@ export const ROUTE_FEATURE_MAP: Record<string, FeatureKey> = {
   '/projects': 'projekte',
   '/my-hours': 'meine_stunden',
   '/disturbances': 'regieberichte',
+  '/bautagesberichte': 'bautagesberichte',
   '/invoices': 'rechnungen',
   '/schedule': 'plantafel',
   '/customers': 'kunden',
