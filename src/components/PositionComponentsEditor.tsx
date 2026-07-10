@@ -101,88 +101,133 @@ export function PositionComponentsEditor({ components, onChange, einheit, materi
       </div>
 
       {components.length > 0 && (
-        <div className="space-y-2">
-          {/* Kopfzeile */}
-          <div className="hidden md:grid grid-cols-[1fr_90px_90px_70px_70px_90px_32px] gap-1.5 px-1 text-[11px] text-muted-foreground">
-            <span>Komponente</span>
-            <span>Menge/{einheit || "EH"}</span>
-            <span>EK € / Satz</span>
-            <span>Verschn. %</span>
-            <span>Aufschl. %</span>
-            <span className="text-right">Zeile €</span>
-            <span></span>
-          </div>
-          {components.map((c, idx) => {
-            const linked = !!c.material_template_id;
-            const ek = linked ? ekLookup[c.material_template_id!] : undefined;
-            const zeile = calcComponentZeile(c, ek);
-            return (
-              <div key={idx} className="grid grid-cols-2 md:grid-cols-[1fr_90px_90px_70px_70px_90px_32px] gap-1.5 items-center bg-background rounded-md border p-1.5">
-                <div className="col-span-2 md:col-span-1 flex items-center gap-1.5 min-w-0">
-                  {c.typ === "lohn" ? (
-                    <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                  ) : c.typ === "sonstiges" ? (
-                    <PlusCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  ) : (
-                    <Package className="w-3.5 h-3.5 text-primary shrink-0" />
-                  )}
-                  {linked ? (
-                    <span className="text-sm truncate flex items-center gap-1" title={`Mit Katalog verknüpft — EK folgt dem Material (aktuell € ${fmt(ek ?? c.preis)})`}>
-                      {c.bezeichnung}
-                      <Link2 className="w-3 h-3 text-primary/60 shrink-0" />
-                    </span>
-                  ) : (
-                    <Input
-                      value={c.bezeichnung}
-                      onChange={(e) => update(idx, { bezeichnung: e.target.value })}
-                      placeholder={c.typ === "lohn" ? "Arbeitszeit" : c.typ === "sonstiges" ? "z.B. Kleinmaterial" : "Materialname"}
-                      className="h-8 text-sm"
-                    />
-                  )}
-                </div>
-                <Input
-                  type="number" step="any" inputMode="decimal"
-                  value={c.menge_pro_einheit === 0 ? "" : c.menge_pro_einheit}
-                  onChange={(e) => update(idx, { menge_pro_einheit: num(e.target.value) })}
-                  placeholder="0" className="h-8 text-sm text-right"
-                  title={c.typ === "lohn" ? `Stunden pro ${einheit || "EH"}` : `Menge pro ${einheit || "EH"}`}
-                />
-                <Input
-                  type="number" step="any" inputMode="decimal"
-                  value={linked ? (ek ?? c.preis) : (c.preis === 0 ? "" : c.preis)}
-                  onChange={(e) => update(idx, { preis: num(e.target.value) })}
-                  disabled={linked}
-                  placeholder="0" className="h-8 text-sm text-right"
-                  title={c.typ === "lohn" ? "Stundensatz €/h" : "EK € pro Einheit"}
-                />
-                {c.typ === "material" ? (
-                  <>
-                    <Input
-                      type="number" step="any" inputMode="decimal"
-                      value={c.verschnitt_prozent === 0 ? "" : c.verschnitt_prozent}
-                      onChange={(e) => update(idx, { verschnitt_prozent: num(e.target.value) })}
-                      placeholder="0" className="h-8 text-sm text-right"
-                    />
-                    <Input
-                      type="number" step="any" inputMode="decimal"
-                      value={c.aufschlag_prozent === 0 ? "" : c.aufschlag_prozent}
-                      onChange={(e) => update(idx, { aufschlag_prozent: num(e.target.value) })}
-                      placeholder="0" className="h-8 text-sm text-right"
-                    />
-                  </>
-                ) : (
-                  <>
-                    <div className="hidden md:block" />
-                    <div className="hidden md:block" />
-                  </>
-                )}
-                <span className="text-sm font-mono text-right tabular-nums">{fmt(zeile)}</span>
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => remove(idx)}>
-                  <Trash2 className="w-3.5 h-3.5 text-destructive" />
-                </Button>
-              </div>
-            );
-          })}
+        <div className="overflow-x-auto rounded-md border bg-background">
+          {/* Excel-Optik: Rasterlinien, Eingabe direkt in der Zelle, Summen unten */}
+          <table className="w-full text-sm border-collapse min-w-[640px]">
+            <thead>
+              <tr className="bg-muted/70">
+                <th className="border px-2 py-1.5 text-left font-semibold whitespace-nowrap">Komponente</th>
+                <th className="border px-2 py-1.5 text-right font-semibold whitespace-nowrap w-24">Menge/{einheit || "EH"}</th>
+                <th className="border px-2 py-1.5 text-right font-semibold whitespace-nowrap w-24">EK € / Satz</th>
+                <th className="border px-2 py-1.5 text-right font-semibold whitespace-nowrap w-20">Verschn. %</th>
+                <th className="border px-2 py-1.5 text-right font-semibold whitespace-nowrap w-20">Aufschl. %</th>
+                <th className="border px-2 py-1.5 text-right font-semibold whitespace-nowrap w-24">Betrag €</th>
+                <th className="border w-9"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {components.map((c, idx) => {
+                const linked = !!c.material_template_id;
+                const ek = linked ? ekLookup[c.material_template_id!] : undefined;
+                const zeile = calcComponentZeile(c, ek);
+                const zellInput = "h-9 w-full border-0 rounded-none bg-transparent text-right text-sm shadow-none focus-visible:ring-1 focus-visible:ring-primary px-2";
+                return (
+                  <tr key={idx} className={idx % 2 === 1 ? "bg-muted/20" : ""}>
+                    <td className="border p-0">
+                      <div className="flex items-center gap-1.5 pl-2 min-w-0">
+                        {c.typ === "lohn" ? (
+                          <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        ) : c.typ === "sonstiges" ? (
+                          <PlusCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        ) : (
+                          <Package className="w-3.5 h-3.5 text-primary shrink-0" />
+                        )}
+                        {linked ? (
+                          <span className="text-sm truncate py-2 flex items-center gap-1" title={`Mit Katalog verknüpft — EK folgt dem Material (aktuell € ${fmt(ek ?? c.preis)})`}>
+                            {c.bezeichnung}
+                            <Link2 className="w-3 h-3 text-primary/60 shrink-0" />
+                          </span>
+                        ) : (
+                          <Input
+                            value={c.bezeichnung}
+                            onChange={(e) => update(idx, { bezeichnung: e.target.value })}
+                            placeholder={c.typ === "lohn" ? "Arbeitszeit" : c.typ === "sonstiges" ? "z.B. Kleinmaterial" : "Materialname"}
+                            className={`${zellInput} text-left px-1`}
+                          />
+                        )}
+                      </div>
+                    </td>
+                    <td className="border p-0">
+                      <Input
+                        type="number" step="any" inputMode="decimal"
+                        value={c.menge_pro_einheit === 0 ? "" : c.menge_pro_einheit}
+                        onChange={(e) => update(idx, { menge_pro_einheit: num(e.target.value) })}
+                        placeholder="0" className={zellInput}
+                        title={c.typ === "lohn" ? `Stunden pro ${einheit || "EH"}` : `Menge pro ${einheit || "EH"}`}
+                      />
+                    </td>
+                    <td className={`border p-0 ${linked ? "bg-primary/5" : ""}`}>
+                      <Input
+                        type="number" step="any" inputMode="decimal"
+                        value={linked ? (ek ?? c.preis) : (c.preis === 0 ? "" : c.preis)}
+                        onChange={(e) => update(idx, { preis: num(e.target.value) })}
+                        disabled={linked}
+                        placeholder="0" className={`${zellInput} disabled:opacity-90`}
+                        title={c.typ === "lohn" ? "Stundensatz €/h" : linked ? "EK folgt dem Katalog-Material" : "EK € pro Einheit"}
+                      />
+                    </td>
+                    {c.typ === "material" ? (
+                      <>
+                        <td className="border p-0">
+                          <Input
+                            type="number" step="any" inputMode="decimal"
+                            value={c.verschnitt_prozent === 0 ? "" : c.verschnitt_prozent}
+                            onChange={(e) => update(idx, { verschnitt_prozent: num(e.target.value) })}
+                            placeholder="0" className={zellInput}
+                          />
+                        </td>
+                        <td className="border p-0">
+                          <Input
+                            type="number" step="any" inputMode="decimal"
+                            value={c.aufschlag_prozent === 0 ? "" : c.aufschlag_prozent}
+                            onChange={(e) => update(idx, { aufschlag_prozent: num(e.target.value) })}
+                            placeholder="0" className={zellInput}
+                          />
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="border bg-muted/40"></td>
+                        <td className="border bg-muted/40"></td>
+                      </>
+                    )}
+                    <td className="border px-2 text-right font-mono tabular-nums font-medium">{fmt(zeile)}</td>
+                    <td className="border p-0 text-center">
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => remove(idx)}>
+                        <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="bg-muted/30 text-xs">
+                <td className="border px-2 py-1 text-muted-foreground" colSpan={5}>Materialkosten</td>
+                <td className="border px-2 py-1 text-right font-mono tabular-nums">{fmt(summe.material)}</td>
+                <td className="border"></td>
+              </tr>
+              <tr className="bg-muted/30 text-xs">
+                <td className="border px-2 py-1 text-muted-foreground" colSpan={5}>
+                  Lohnkosten ({fmt(summe.minutenProEinheit / 60)} h/{einheit || "EH"})
+                </td>
+                <td className="border px-2 py-1 text-right font-mono tabular-nums">{fmt(summe.lohn)}</td>
+                <td className="border"></td>
+              </tr>
+              {summe.sonstiges > 0 && (
+                <tr className="bg-muted/30 text-xs">
+                  <td className="border px-2 py-1 text-muted-foreground" colSpan={5}>Sonstiges</td>
+                  <td className="border px-2 py-1 text-right font-mono tabular-nums">{fmt(summe.sonstiges)}</td>
+                  <td className="border"></td>
+                </tr>
+              )}
+              <tr className="bg-primary/10">
+                <td className="border px-2 py-2 font-bold" colSpan={5}>Einzelpreis / {einheit || "EH"}</td>
+                <td className="border px-2 py-2 text-right font-bold font-mono tabular-nums text-primary">{fmt(summe.einzelpreis)}</td>
+                <td className="border"></td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
       )}
 
@@ -199,24 +244,10 @@ export function PositionComponentsEditor({ components, onChange, einheit, materi
       </div>
 
       {components.length > 0 && (
-        <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-            <span className="text-muted-foreground">Materialkosten</span>
-            <span className="text-right tabular-nums">{fmt(summe.material)} €</span>
-            <span className="text-muted-foreground">Lohnkosten ({fmt(summe.minutenProEinheit / 60)} h/{einheit || "EH"})</span>
-            <span className="text-right tabular-nums">{fmt(summe.lohn)} €</span>
-            {summe.sonstiges > 0 && (
-              <>
-                <span className="text-muted-foreground">Sonstiges</span>
-                <span className="text-right tabular-nums">{fmt(summe.sonstiges)} €</span>
-              </>
-            )}
-            <span className="font-semibold border-t pt-1 mt-1">Einzelpreis / {einheit || "EH"}</span>
-            <span className="text-right font-semibold tabular-nums border-t pt-1 mt-1 text-primary">
-              {fmt(summe.einzelpreis)} €
-            </span>
-          </div>
-        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Rechnung wie in der Excel: Material = Menge × EK × (1+Verschnitt %) × (1+Aufschlag %) ·
+          Arbeitszeit = Std × Satz · Summe = Einzelpreis pro {einheit || "Einheit"}.
+        </p>
       )}
 
       {/* Material-Picker */}
