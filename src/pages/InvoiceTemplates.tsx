@@ -17,6 +17,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PositionComponentsEditor, type MaterialOption } from "@/components/PositionComponentsEditor";
+import { KalkulationsExcelAnsicht } from "@/components/KalkulationsExcelAnsicht";
 import { type PositionComponent, calcPositionPreis } from "@/lib/positionen";
 import { BulkPriceDialog } from "@/components/BulkPriceDialog";
 import { KalkulationFields } from "@/components/KalkulationFields";
@@ -74,6 +75,8 @@ export default function InvoiceTemplates() {
   const [filterKategorie, setFilterKategorie] = useState<string>("alle");
   // Aktiver Tab: Positionen (kalkulierte Leistungen) oder Materialien (EK-Liste)
   const [activeArt, setActiveArt] = useState<"position" | "material">("position");
+  // Positionen-Darstellung: Liste (Karten je Kategorie) oder Excel-Gesamtansicht
+  const [posAnsicht, setPosAnsicht] = useState<"liste" | "excel">("liste");
   const [form, setForm] = useState({
     name: "", beschreibung: "", einheit: "Stk.", einzelpreis: 0, kategorie: "Allgemein", artikelnummer: "",
     produktnummer: "", kurzbezeichnung: "", langbezeichnung: "", netto_preis: 0, brutto_preis: 0, ust_satz: 20,
@@ -460,18 +463,34 @@ export default function InvoiceTemplates() {
 
         {/* Zwei Ebenen nach Excel-Vorlage: Positionen (kalkulierte Leistungen)
             bestehen aus Materialien (Einkaufspreis-Liste inkl. Stundensätze). */}
-        <Tabs value={activeArt} onValueChange={(v) => { setActiveArt(v as "position" | "material"); setFilterKategorie("alle"); }} className="mb-4">
-          <TabsList className="grid w-full max-w-md grid-cols-2">
-            <TabsTrigger value="position" className="gap-1.5">
-              <Calculator className="w-4 h-4" />
-              Positionen
-            </TabsTrigger>
-            <TabsTrigger value="material" className="gap-1.5">
-              <Package className="w-4 h-4" />
-              Materialien (EK)
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <Tabs value={activeArt} onValueChange={(v) => { setActiveArt(v as "position" | "material"); setFilterKategorie("alle"); }}>
+            <TabsList className="grid w-full max-w-md grid-cols-2">
+              <TabsTrigger value="position" className="gap-1.5">
+                <Calculator className="w-4 h-4" />
+                Positionen
+              </TabsTrigger>
+              <TabsTrigger value="material" className="gap-1.5">
+                <Package className="w-4 h-4" />
+                Materialien (EK)
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+          {activeArt === "position" && (
+            <div className="flex rounded-md border overflow-hidden">
+              {([["liste", "Liste"], ["excel", "🧮 Excel-Ansicht"]] as const).map(([val, lbl]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setPosAnsicht(val)}
+                  className={`px-3 py-1.5 text-sm transition-colors ${posAnsicht === val ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
+                >
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Search & Filter Bar */}
         <div className="flex flex-wrap gap-3 mb-4 items-center">
@@ -516,6 +535,21 @@ export default function InvoiceTemplates() {
 
         {loading ? (
           <p className="text-center py-8 text-muted-foreground">Lädt...</p>
+        ) : activeArt === "position" && posAnsicht === "excel" ? (
+          <KalkulationsExcelAnsicht
+            positionen={templates.filter(t => t.art === "position").map(t => ({
+              id: t.id,
+              name: t.kurzbezeichnung || t.name,
+              einheit: t.einheit,
+              kategorie: t.kategorie,
+              vk_netto: t.vk_netto,
+              arbeitszeit_minuten: t.arbeitszeit_minuten,
+            }))}
+            onEdit={(id) => {
+              const t = templates.find(x => x.id === id);
+              if (t) openEdit(t);
+            }}
+          />
         ) : Object.keys(grouped).length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center text-muted-foreground">
