@@ -541,14 +541,17 @@ export default function InvoiceDetail() {
             .sort((a, b) => String(a.datum).localeCompare(String(b.datum)))
             .forEach((abz, i) => {
               const netto = Number(abz.netto_summe) || 0;
+              // Abzug als negative MENGE (nicht negativer Preis) — der
+              // DB-Check invoice_items_preis_nonneg erlaubt negative
+              // Einzelpreise nur für mwst_exempt-Zeilen (SR-Brutto-Abzüge).
               nextItems.push({
                 position: i + 2,
                 beschreibung: `abzüglich ${i + 1}. Anzahlungsrechnung ${abz.nummer} vom ${abz.datum} (netto)`,
                 kurztext: `Abzug ${abz.nummer}`,
                 langtext: "",
-                menge: 1,
+                menge: -1,
                 einheit: "pausch.",
-                einzelpreis: -netto,
+                einzelpreis: netto,
                 rabatt_prozent: 0,
                 gesamtpreis: -netto,
               });
