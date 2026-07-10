@@ -4188,7 +4188,8 @@ export default function InvoiceDetail() {
                                     className="w-full text-left px-3 py-1.5 text-sm hover:bg-accent flex justify-between gap-2"
                                     onMouseDown={(e) => {
                                       e.preventDefault();
-                                      const netto = Number((t as any).netto_preis) || t.einzelpreis;
+                                      // Gleicher Preis-Vorrang wie im Picker: vk_netto zuerst
+                                      const netto = Number((t as any).vk_netto ?? (t as any).netto_preis) || t.einzelpreis;
                                       updateItem(idx, "beschreibung", (t as any).kurzbezeichnung || t.name);
                                       updateItem(idx, "kurztext", (t as any).kurzbezeichnung || t.name);
                                       const lang = (t as any).langbezeichnung || "";
@@ -4198,6 +4199,19 @@ export default function InvoiceDetail() {
                                       updateItem(idx, "einheit", t.einheit);
                                       updateItem(idx, "einzelpreis", netto);
                                       updateItem(idx, "produktnummer", (t as any).produktnummer || "");
+                                      // Katalog-Verknüpfung + Lohnminuten — sonst würde diese Position
+                                      // bei "Preise aktualisieren" und im Stundenabgleich NICHT mitziehen
+                                      updateItem(idx, "kalkulation_template_id", t.id);
+                                      updateItem(idx, "arbeitszeit_minuten", Number((t as any).arbeitszeit_minuten) || 0);
+                                      if ((t as any).ist_kalkuliert) {
+                                        updateItem(idx, "ist_kalkuliert", true);
+                                        updateItem(idx, "ek_preis", Number((t as any).ek_netto) || 0);
+                                        updateItem(idx, "verschnitt_prozent", Number((t as any).verschnitt_prozent) || 0);
+                                        updateItem(idx, "aufschlag_prozent", Number((t as any).aufschlag_prozent) || 0);
+                                        updateItem(idx, "befestigung_preis", Number((t as any).befestigung_preis) || 0);
+                                        updateItem(idx, "sonstiges_preis", Number((t as any).sonstiges_preis) || 0);
+                                        updateItem(idx, "stundensatz", Number((t as any).stundensatz) || 52);
+                                      }
                                       setAutocompleteIdx(null);
                                     }}
                                   >
