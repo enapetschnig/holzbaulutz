@@ -109,8 +109,7 @@ BEGIN
          einzelpreis = v_vk,
          brutto_preis = ROUND(v_vk * (1 + COALESCE(v_ust, 20) / 100.0), 2),
          -- Lohnminuten pro Einheit für den Stundenabgleich im Angebot
-         arbeitszeit_minuten = ROUND(v_minuten, 1),
-         updated_at = now()
+         arbeitszeit_minuten = ROUND(v_minuten, 1)
    WHERE id = p_position_id;
 END;
 $$;
