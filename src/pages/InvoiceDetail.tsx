@@ -16,6 +16,7 @@ import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { KalkulationFields } from "@/components/KalkulationFields";
 import { calcEinzelpreis, type KalkulationInput } from "@/lib/kalkulation";
+import { calcComponentZeile, calcPositionPreis, componentFormula, type PositionComponent } from "@/lib/positionen";
 import { ImportMaterialsDialog } from "@/components/ImportMaterialsDialog";
 import { ImportFromProjectDialog } from "@/components/ImportFromProjectDialog";
 import { ImportDisturbanceDialog } from "@/components/ImportDisturbanceDialog";
@@ -245,6 +246,10 @@ export default function InvoiceDetail() {
   const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
   const [templateMengen, setTemplateMengen] = useState<Record<string, number>>({});
   const [addedFromDialog, setAddedFromDialog] = useState<{ name: string; menge: number; einheit: string }[]>([]);
+  // Kalkulation hinter den Positionen (für die aufklappbare Ansicht im Katalog-Picker)
+  const [catalogComponents, setCatalogComponents] = useState<Record<string, (PositionComponent & { liveEk: number | null })[]>>({});
+  const [catalogComponentsLoaded, setCatalogComponentsLoaded] = useState(false);
+  const [expandedCatalog, setExpandedCatalog] = useState<Set<string>>(new Set());
   const [storedPdfs, setStoredPdfs] = useState<StoredPdf[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewSaved, setPreviewSaved] = useState(false);
@@ -1325,6 +1330,39 @@ export default function InvoiceDetail() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.zahlungsbedingungen, form.datum, form.typ]);
+
+  // Kalkulation (Komponenten) der Positionen laden, sobald der Katalog-Picker
+  // erstmals geöffnet wird — für die aufklappbare "Kalkulation dahinter"-Ansicht.
+  useEffect(() => {
+    if (!templateDialogOpen || catalogComponentsLoaded) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await (supabase as any)
+        .from("position_components")
+        .select("position_template_id, material_template_id, typ, bezeichnung, einheit, menge_pro_einheit, preis, verschnitt_prozent, aufschlag_prozent, sort_order, material:invoice_templates!material_template_id(ek_netto)")
+        .order("sort_order")
+        .limit(10000);
+      if (cancelled) return;
+      const map: Record<string, (PositionComponent & { liveEk: number | null })[]> = {};
+      for (const c of ((data as any[]) || [])) {
+        (map[c.position_template_id] = map[c.position_template_id] || []).push({
+          material_template_id: c.material_template_id,
+          typ: c.typ,
+          bezeichnung: c.bezeichnung,
+          einheit: c.einheit,
+          menge_pro_einheit: Number(c.menge_pro_einheit) || 0,
+          preis: Number(c.preis) || 0,
+          verschnitt_prozent: Number(c.verschnitt_prozent) || 0,
+          aufschlag_prozent: Number(c.aufschlag_prozent) || 0,
+          sort_order: Number(c.sort_order) || 0,
+          liveEk: c.material ? Number(c.material.ek_netto) : null,
+        });
+      }
+      setCatalogComponents(map);
+      setCatalogComponentsLoaded(true);
+    })();
+    return () => { cancelled = true; };
+  }, [templateDialogOpen, catalogComponentsLoaded]);
 
   // Calculations with discount — round to 2 decimal places to avoid floating-point issues.
   // mwst_exempt-Zeilen enthalten bereits Brutto (z.B. Anzahlungs-Abzüge)
@@ -2571,6 +2609,21 @@ export default function InvoiceDetail() {
     (acc[t.kategorie] = acc[t.kategorie] || []).push(t);
     return acc;
   }, {});
+
+  // Stundensätze aus dem Materialkatalog (Facharbeiter, Regie, Lehrling, Kran,
+  // LKW/Hiab, Maschine …) — zum Verrechnen importierter Projektzeiten.
+  const stundensaetze = templates
+    .filter(t => (t as any).art === "material" && (
+      /^(h|std|std\.|stunde|stunden)$/i.test(t.einheit || "") ||
+      /stunde|regie|facharbeiter|lehrling|meister|kran(fahrer)?|hiab|maschine|fahrer/i.test(((t as any).kurzbezeichnung || t.name || ""))
+    ))
+    .map(t => ({
+      id: t.id,
+      name: (t as any).kurzbezeichnung || t.name,
+      satz: Number((t as any).ek_netto ?? (t as any).netto_preis ?? t.einzelpreis) || 0,
+    }))
+    .filter(s => s.satz > 0)
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   // Stornierte Rechnung: Nur Stornobeleg anzeigen
   if (form.status === "storniert" && !isNew && invoiceId) {
@@ -4258,7 +4311,7 @@ export default function InvoiceDetail() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <Input type="number" value={item.menge} onChange={(e) => updateItem(idx, "menge", Number(e.target.value))} min={0} step={0.01} className="text-right h-10 md:h-9" disabled={isExempt} />
+                          <Input type="number" value={item.menge} onChange={(e) => updateItem(idx, "menge", Number(e.target.value))} min={0} step={1} className="text-right h-10 md:h-9" disabled={isExempt} title="Pfeile zählen in ganzen Schritten; Kommawerte (z.B. 2,5) kannst du direkt eintippen." />
                         </TableCell>
                         <TableCell>
                           <Select value={item.einheit || "Stk."} onValueChange={(v) => updateItem(idx, "einheit", v)} disabled={isExempt}>
@@ -4521,6 +4574,7 @@ export default function InvoiceDetail() {
           if (!open) setSelectedTemplateIds([]);
           if (!open) setAddedFromDialog([]);
           if (!open) setTemplateMengen({});
+          if (!open) setExpandedCatalog(new Set());
         }}>
           <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
             <DialogHeader>
@@ -4580,44 +4634,90 @@ export default function InvoiceDetail() {
                   setTemplates(prev => prev.map(t => t.id === templateId ? { ...t, ist_favorit: newVal } : t));
                 };
 
+                // EK-Lookup für verknüpfte Material-Komponenten (Live-Preis)
+                const catalogEkLookup: Record<string, number> = {};
+                for (const cs of Object.values(catalogComponents))
+                  for (const c of cs)
+                    if (c.material_template_id && c.liveEk != null) catalogEkLookup[c.material_template_id] = c.liveEk;
+
                 const renderItem = (t: TemplateItem) => {
                   const isSelected = selectedTemplateIds.includes(t.id);
                   const netto = Number((t as any).netto_preis) || t.einzelpreis;
+                  const comps = catalogComponents[t.id];
+                  const hatKomp = !!comps && comps.length > 0;
+                  const expanded = expandedCatalog.has(t.id);
+                  const toggleSelect = () => {
+                    setSelectedTemplateIds(prev => isSelected ? prev.filter(id => id !== t.id) : [...prev, t.id]);
+                    if (!isSelected) setTemplateMengen(prev => ({ ...prev, [t.id]: 1 }));
+                  };
                   return (
-                    <div key={t.id} className={`flex items-center gap-2 p-2 rounded hover:bg-accent text-sm ${isSelected ? "bg-primary/10" : ""}`}>
-                      <button onClick={(e) => toggleFavorit(e, t.id)} className="shrink-0 p-0.5 hover:scale-110 transition-transform" title={t.ist_favorit ? "Favorit entfernen" : "Als Favorit markieren"}>
-                        <Star className={`w-3.5 h-3.5 ${t.ist_favorit ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground/40 hover:text-yellow-400"}`} />
-                      </button>
-                      <input type="checkbox" checked={isSelected} onChange={() => {
-                        setSelectedTemplateIds(prev => isSelected ? prev.filter(id => id !== t.id) : [...prev, t.id]);
-                        if (!isSelected) setTemplateMengen(prev => ({ ...prev, [t.id]: 1 }));
-                      }} className="rounded cursor-pointer" />
-                      <div className="flex-1 min-w-0 cursor-pointer" onClick={() => {
-                        setSelectedTemplateIds(prev => isSelected ? prev.filter(id => id !== t.id) : [...prev, t.id]);
-                        if (!isSelected) setTemplateMengen(prev => ({ ...prev, [t.id]: 1 }));
-                      }}>
-                        <p className="font-medium truncate flex items-center gap-1.5">
-                          {(t as any).kurzbezeichnung || t.name}
-                          {(t as any).ist_set && (
-                            <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 border-primary/40 text-primary shrink-0">
-                              Position
-                            </Badge>
-                          )}
-                        </p>
-                        {(t as any).langbezeichnung && <p className="text-xs text-muted-foreground truncate">{(t as any).langbezeichnung}</p>}
+                    <div key={t.id}>
+                      <div className={`flex items-center gap-2 p-2 rounded hover:bg-accent text-sm ${isSelected ? "bg-primary/10" : ""}`}>
+                        <button onClick={(e) => toggleFavorit(e, t.id)} className="shrink-0 p-0.5 hover:scale-110 transition-transform" title={t.ist_favorit ? "Favorit entfernen" : "Als Favorit markieren"}>
+                          <Star className={`w-3.5 h-3.5 ${t.ist_favorit ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground/40 hover:text-yellow-400"}`} />
+                        </button>
+                        <input type="checkbox" checked={isSelected} onChange={toggleSelect} className="rounded cursor-pointer" />
+                        <div className="flex-1 min-w-0 cursor-pointer" onClick={toggleSelect}>
+                          <p className="font-medium truncate">{(t as any).kurzbezeichnung || t.name}</p>
+                          {(t as any).langbezeichnung && <p className="text-xs text-muted-foreground truncate">{(t as any).langbezeichnung}</p>}
+                        </div>
+                        {/* Kalkulation dahinter ein-/ausklappen */}
+                        {hatKomp && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setExpandedCatalog(prev => { const n = new Set(prev); n.has(t.id) ? n.delete(t.id) : n.add(t.id); return n; });
+                            }}
+                            className={`shrink-0 flex items-center gap-0.5 rounded px-1 py-0.5 text-xs transition-colors ${expanded ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-primary hover:bg-muted"}`}
+                            title="Kalkulation dahinter anzeigen"
+                          >
+                            <Calculator className="w-3.5 h-3.5" />
+                            {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                          </button>
+                        )}
+                        {isSelected && (
+                          <Input
+                            type="number"
+                            value={templateMengen[t.id] || 1}
+                            onChange={(e) => { e.stopPropagation(); setTemplateMengen(prev => ({ ...prev, [t.id]: Number(e.target.value) || 1 })); }}
+                            onClick={(e) => e.stopPropagation()}
+                            min={0} step={1}
+                            className="w-16 text-right text-xs h-7"
+                            title="Pfeile zählen in ganzen Schritten; Kommawerte direkt eintippen."
+                          />
+                        )}
+                        <span className="text-xs text-muted-foreground shrink-0 w-12 text-center">{t.einheit}</span>
+                        <span className="text-sm font-mono shrink-0 w-20 text-right">{netto > 0 ? `€ ${netto.toFixed(2)}` : "–"}</span>
                       </div>
-                      {isSelected && (
-                        <Input
-                          type="number"
-                          value={templateMengen[t.id] || 1}
-                          onChange={(e) => { e.stopPropagation(); setTemplateMengen(prev => ({ ...prev, [t.id]: Number(e.target.value) || 1 })); }}
-                          onClick={(e) => e.stopPropagation()}
-                          min={0.01} step={0.01}
-                          className="w-16 text-right text-xs h-7"
-                        />
+                      {/* Aufgeklappte Kalkulation: Komponenten + Formel + Einzelpreis */}
+                      {expanded && hatKomp && (
+                        <div className="ml-9 mr-2 mb-1.5 rounded-md border bg-muted/20 overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <tbody>
+                              {comps!.map((c, i) => {
+                                const ek = c.material_template_id ? (c.liveEk ?? undefined) : undefined;
+                                const betrag = calcComponentZeile(c, ek);
+                                return (
+                                  <tr key={i} className="text-muted-foreground">
+                                    <td className="px-2 py-1 whitespace-nowrap">
+                                      {c.typ === "lohn" ? "⏱ " : c.typ === "sonstiges" ? "＋ " : "▪ "}{c.bezeichnung}
+                                    </td>
+                                    <td className="px-2 py-1 text-right whitespace-nowrap">{componentFormula(c, ek)}</td>
+                                    <td className="px-2 py-1 text-right font-mono text-foreground whitespace-nowrap">€ {betrag.toFixed(2)}</td>
+                                  </tr>
+                                );
+                              })}
+                              <tr className="border-t font-medium bg-background/50">
+                                <td className="px-2 py-1" colSpan={2}>Einzelpreis / {t.einheit}</td>
+                                <td className="px-2 py-1 text-right font-mono text-primary whitespace-nowrap">
+                                  € {calcPositionPreis(comps!, catalogEkLookup).einzelpreis.toFixed(2)}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
                       )}
-                      <span className="text-xs text-muted-foreground shrink-0 w-12 text-center">{t.einheit}</span>
-                      <span className="text-sm font-mono shrink-0 w-20 text-right">{netto > 0 ? `€ ${netto.toFixed(2)}` : "–"}</span>
                     </div>
                   );
                 };
@@ -5169,6 +5269,7 @@ export default function InvoiceDetail() {
           projectId={form.project_id || null}
           customerId={form.customer_id || null}
           mode="zeit"
+          stundensaetze={stundensaetze}
           onImport={(importedItems) => {
             const newItems = importedItems.map((item, idx) => ({
               position: items.length + idx + 1,

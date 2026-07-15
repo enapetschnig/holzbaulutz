@@ -17,6 +17,14 @@ interface ImportItem {
   selected: boolean;
   source: "zeit" | "material";
   detail?: string;
+  /** Gewählte Stundensatz-Art (Facharbeiter/Regie/Lehrling …) für Zeit-Zeilen */
+  satzId?: string;
+}
+
+export interface Stundensatz {
+  id: string;
+  name: string;
+  satz: number;
 }
 
 interface ImportFromProjectDialogProps {
@@ -25,11 +33,14 @@ interface ImportFromProjectDialogProps {
   projectId?: string | null;
   customerId?: string | null;
   mode?: "zeit" | "material" | "alle";
+  /** Stundensätze aus dem Katalog (Facharbeiter, Regie, Lehrling …) zum
+   *  Verrechnen der importierten Zeiten. */
+  stundensaetze?: Stundensatz[];
   onImport: (items: { beschreibung: string; menge: number; einheit: string; einzelpreis: number }[]) => void;
 }
 
 export function ImportFromProjectDialog({
-  open, onClose, projectId, customerId, mode = "alle", onImport,
+  open, onClose, projectId, customerId, mode = "alle", stundensaetze = [], onImport,
 }: ImportFromProjectDialogProps) {
   const [items, setItems] = useState<ImportItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -201,6 +212,14 @@ export function ImportFromProjectDialog({
     setItems(prev => prev.map((m, i) => i === idx ? { ...m, [field]: val } : m));
   };
 
+  /** Zeit-Zeile als Stundensatz-Art verrechnen: setzt Preis, Beschreibung und
+   *  Einheit passend zum gewählten Satz (Facharbeiter/Regie/Lehrling …). */
+  const setRate = (idx: number, s: Stundensatz) => {
+    setItems(prev => prev.map((m, i) => i === idx
+      ? { ...m, satzId: s.id, einzelpreis: s.satz, beschreibung: s.name, einheit: "Std." }
+      : m));
+  };
+
   const handleImport = () => {
     const selected = items
       .filter(m => m.selected)
@@ -232,34 +251,59 @@ export function ImportFromProjectDialog({
         </div>
       </div>
       {item.selected && (
-        <div className="flex items-center gap-2 mt-2 ml-9">
-          <div className="flex items-center gap-1">
-            <Input
-              type="number"
-              value={item.menge}
-              onChange={(e) => updateField(globalIdx, "menge", Number(e.target.value))}
-              className="w-20 h-8 text-right text-sm"
-              min={0}
-              step={0.01}
-            />
-            <span className="text-xs text-muted-foreground w-10">{item.einheit}</span>
+        <div className="mt-2 ml-9 space-y-2">
+          {/* Stundensatz-Art wählen (Facharbeiter / Regie / Lehrling …) —
+              setzt Preis + Bezeichnung passend zum Katalog. */}
+          {item.source === "zeit" && stundensaetze.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground w-24 shrink-0">Verrechnen als</span>
+              <Select
+                value={item.satzId || ""}
+                onValueChange={(id) => {
+                  const s = stundensaetze.find(x => x.id === id);
+                  if (s) setRate(globalIdx, s);
+                }}
+              >
+                <SelectTrigger className="h-8 flex-1">
+                  <SelectValue placeholder="Stundensatz wählen (Facharbeiter, Regie, Lehrling …)" />
+                </SelectTrigger>
+                <SelectContent>
+                  {stundensaetze.map(s => (
+                    <SelectItem key={s.id} value={s.id}>{s.name} — € {s.satz.toFixed(2)}/h</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
+              <Input
+                type="number"
+                value={item.menge}
+                onChange={(e) => updateField(globalIdx, "menge", Number(e.target.value))}
+                className="w-20 h-8 text-right text-sm"
+                min={0}
+                step={1}
+              />
+              <span className="text-xs text-muted-foreground w-10">{item.einheit}</span>
+            </div>
+            <span className="text-xs text-muted-foreground">×</span>
+            <div className="flex items-center gap-1">
+              <Input
+                type="number"
+                value={item.einzelpreis}
+                onChange={(e) => updateField(globalIdx, "einzelpreis", Number(e.target.value))}
+                className="w-24 h-8 text-right text-sm"
+                min={0}
+                step={0.01}
+                placeholder="0.00"
+              />
+              <span className="text-xs text-muted-foreground">€/{item.einheit}</span>
+            </div>
+            <span className="text-sm font-medium ml-auto">
+              = € {(item.menge * item.einzelpreis).toFixed(2)}
+            </span>
           </div>
-          <span className="text-xs text-muted-foreground">×</span>
-          <div className="flex items-center gap-1">
-            <Input
-              type="number"
-              value={item.einzelpreis}
-              onChange={(e) => updateField(globalIdx, "einzelpreis", Number(e.target.value))}
-              className="w-24 h-8 text-right text-sm"
-              min={0}
-              step={0.01}
-              placeholder="0.00"
-            />
-            <span className="text-xs text-muted-foreground">€/{item.einheit}</span>
-          </div>
-          <span className="text-sm font-medium ml-auto">
-            = € {(item.menge * item.einzelpreis).toFixed(2)}
-          </span>
         </div>
       )}
     </div>
@@ -309,7 +353,10 @@ export function ImportFromProjectDialog({
         )}
         {mode === "zeit" && (
           <p className="text-sm text-muted-foreground bg-blue-50 border border-blue-200 rounded-md p-2">
-            Arbeitszeiten aus den Zeitbuchungen dieses Projekts. Pro Mitarbeiter aggregiert. Beschreibung und Preis kannst du anpassen bevor du importierst.
+            Arbeitszeiten aus den Zeitbuchungen dieses Projekts, pro Mitarbeiter aggregiert.
+            Wähle je Zeile, als welche Stundensatz-Art verrechnet wird (Facharbeiter, Regie,
+            Lehrling …) — Preis und Bezeichnung werden automatisch gesetzt. Menge und Preis
+            kannst du danach noch anpassen.
           </p>
         )}
 
