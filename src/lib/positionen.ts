@@ -84,6 +84,24 @@ export function calcPositionPreis(
   };
 }
 
+const nf = (n: unknown) => num(n).toLocaleString("de-AT", { maximumFractionDigits: 3 });
+
+/**
+ * Lesbare Rechenformel einer Komponente — damit man pro Zeile sieht, WIE der
+ * Betrag entsteht (wie beim Anklicken einer Excel-Zelle). Geteilt von
+ * Komponenten-Editor und Excel-Gesamtansicht.
+ */
+export function componentFormula(c: PositionComponent, materialEk?: number | null): string {
+  const menge = num(c.menge_pro_einheit);
+  const preis = componentPreis(c, materialEk);
+  if (c.typ === "lohn") return `${nf(menge)} Std × ${nf(preis)} €`;
+  if (c.typ === "sonstiges") return `${nf(menge)} × ${nf(preis)} €`;
+  const parts = [`${nf(menge)} × ${nf(preis)} €`];
+  if (num(c.verschnitt_prozent) > 0) parts.push(`× ${nf(1 + num(c.verschnitt_prozent) / 100)} (Verschnitt)`);
+  if (num(c.aufschlag_prozent) > 0) parts.push(`× ${nf(1 + num(c.aufschlag_prozent) / 100)} (Aufschlag)`);
+  return parts.join(" ");
+}
+
 export const EMPTY_COMPONENT = (typ: ComponentTyp, sort: number): PositionComponent => ({
   material_template_id: null,
   typ,

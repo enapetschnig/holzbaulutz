@@ -212,16 +212,18 @@ export default function InvoiceTemplates() {
     return acc;
   }, {});
 
-  const openNew = () => {
+  const openNew = (kategorie?: string, art?: "position" | "material") => {
+    const neueArt = art ?? activeArt;
     setEditId(null);
     setForm({
-      name: "", beschreibung: "", einheit: activeArt === "position" ? "m2" : "Stk.", einzelpreis: 0, kategorie: "Allgemein", artikelnummer: "",
+      name: "", beschreibung: "", einheit: neueArt === "position" ? "m2" : "Stk.", einzelpreis: 0,
+      kategorie: kategorie || "Allgemein", artikelnummer: "",
       produktnummer: "", kurzbezeichnung: "", langbezeichnung: "", netto_preis: 0, brutto_preis: 0, ust_satz: 20,
-      ist_lagerartikel: false, lieferant: "", produktgruppe: "",
+      ist_lagerartikel: false, lieferant: "", produktgruppe: kategorie || "",
       foto_path: null, ist_set: false,
       ek_netto: 0, vk_netto: 0, bezugseinheit: "", aufschlag_prozent: 0, vk_preis_manuell: false,
       ist_kalkuliert: false, verschnitt_prozent: 0, befestigung_preis: 0, sonstiges_preis: 0, arbeitszeit_minuten: 0, stundensatz: 52,
-      art: activeArt,
+      art: neueArt,
     });
     setPosComponents([]);
     setOriginalComponentIds([]);
@@ -557,7 +559,7 @@ export default function InvoiceTemplates() {
               <Upload className="w-4 h-4" />
               Importieren
             </Button>
-            <Button onClick={openNew} className="gap-2">
+            <Button onClick={() => openNew()} className="gap-2">
               <Plus className="w-4 h-4" />
               {activeArt === "position" ? "Neue Position" : "Neues Material"}
             </Button>
@@ -575,11 +577,14 @@ export default function InvoiceTemplates() {
               kategorie: t.kategorie,
               vk_netto: t.vk_netto,
               arbeitszeit_minuten: t.arbeitszeit_minuten,
+              ust_satz: t.ust_satz,
             }))}
             onEdit={(id) => {
               const t = templates.find(x => x.id === id);
               if (t) openEdit(t);
             }}
+            onAddPosition={(kategorie) => openNew(kategorie, "position")}
+            onDataChanged={fetchTemplates}
           />
         ) : Object.keys(grouped).length === 0 ? (
           <Card>
@@ -589,7 +594,7 @@ export default function InvoiceTemplates() {
                 ? (activeArt === "position" ? "Keine Positionen gefunden" : "Keine Materialien gefunden")
                 : (activeArt === "position" ? "Noch keine Positionen angelegt" : "Noch keine Materialien angelegt")}</p>
               {!search && filterKategorie === "alle" && (
-                <Button className="mt-4" onClick={openNew}>
+                <Button className="mt-4" onClick={() => openNew()}>
                   {activeArt === "position" ? "Erste Position anlegen" : "Erstes Material anlegen"}
                 </Button>
               )}

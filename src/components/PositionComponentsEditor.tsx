@@ -9,6 +9,7 @@ import {
   type PositionComponent,
   calcComponentZeile,
   calcPositionPreis,
+  componentFormula,
   EMPTY_COMPONENT,
 } from "@/lib/positionen";
 
@@ -40,23 +41,6 @@ interface Props {
 }
 
 const fmt = (n: number) => n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const nf = (n: number) => n.toLocaleString("de-AT", { maximumFractionDigits: 3 });
-
-/**
- * Lesbare Rechenformel einer Komponente — damit ein Excel-Umsteiger pro Zeile
- * sieht, WIE der Betrag entsteht (wie beim Anklicken einer Excel-Zelle).
- */
-function formelText(c: PositionComponent, ek?: number): string {
-  const menge = Number(c.menge_pro_einheit) || 0;
-  if (c.typ === "lohn") return `${nf(menge)} Std × ${nf(Number(c.preis) || 0)} €`;
-  if (c.typ === "sonstiges") return `${nf(menge)} × ${nf(Number(c.preis) || 0)} €`;
-  // material
-  const preis = c.material_template_id ? (ek ?? (Number(c.preis) || 0)) : (Number(c.preis) || 0);
-  const parts = [`${nf(menge)} × ${nf(preis)} €`];
-  if (Number(c.verschnitt_prozent) > 0) parts.push(`× ${nf(1 + Number(c.verschnitt_prozent) / 100)} (Verschnitt)`);
-  if (Number(c.aufschlag_prozent) > 0) parts.push(`× ${nf(1 + Number(c.aufschlag_prozent) / 100)} (Aufschlag)`);
-  return parts.join(" ");
-}
 
 export function PositionComponentsEditor({ components, onChange, einheit, materialien }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -209,10 +193,10 @@ export function PositionComponentsEditor({ components, onChange, einheit, materi
                       </>
                     )}
                     <td className="border px-2 py-1 text-right font-mono tabular-nums font-medium"
-                        title={`${formelText(c, ek)} = ${fmt(zeile)} €`}>
+                        title={`${componentFormula(c, ek)} = ${fmt(zeile)} €`}>
                       <div>{fmt(zeile)}</div>
                       <div className="text-[9px] text-muted-foreground/70 font-normal leading-tight truncate">
-                        {formelText(c, ek)}
+                        {componentFormula(c, ek)}
                       </div>
                     </td>
                     <td className="border p-0 text-center">
