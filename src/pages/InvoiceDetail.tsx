@@ -1538,8 +1538,18 @@ export default function InvoiceDetail() {
         }
       }
 
-      // Rechnungen sind immer mindestens "offen", Angebote behalten ihren Status (auch "entwurf")
-      const saveStatus = form.typ === "rechnung" ? "offen" : (form.status || "offen");
+      // Rechnungen sind immer mindestens "offen", Angebote behalten ihren
+      // Status (auch "entwurf"). Anzahlungs- und Schlussrechnungen sind
+      // ebenfalls gestellte Belege → beim ersten Ausstellen (noch "entwurf")
+      // auf "offen" setzen, damit sie als offene Forderung zählen; einen
+      // bereits gesetzten Zahl-/Storno-Status (teilbezahlt/bezahlt/storniert)
+      // NICHT überschreiben.
+      const _invoiceLikeForStatus = new Set(["anzahlungsrechnung", "schlussrechnung"]);
+      const saveStatus = form.typ === "rechnung"
+        ? "offen"
+        : _invoiceLikeForStatus.has(form.typ) && (!form.status || form.status === "entwurf")
+          ? "offen"
+          : (form.status || "offen");
 
       // Defensive Parent-Normalisierung: für AR/SR muss parent_invoice_id
       // auf einen echten Positionsträger (Angebot oder AB) zeigen — niemals
@@ -3016,31 +3026,13 @@ export default function InvoiceDetail() {
                       </Button>
                     )}
                     {canCancel && (
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button variant="destructive" size="sm" className="gap-1.5">
-                            <Ban className="w-4 h-4" />
-                            Stornieren
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle className="flex items-center gap-2">
-                              <AlertTriangle className="w-5 h-5 text-destructive" />
-                              Rechnung stornieren?
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Die Rechnung {form.nummer} wird als storniert markiert.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                            <AlertDialogAction onClick={handleCancel} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                              Stornieren
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                      // EIN einheitlicher Storno-Weg: öffnet denselben Dialog wie
+                      // der Fußzeilen-Button (race-sichere Storno-Nummer, Pflicht-
+                      // Grund, Bezahlt-Warnung, Storno-PDF, Gutschrift-Rollback).
+                      <Button variant="destructive" size="sm" className="gap-1.5" onClick={() => setStornoDialogOpen(true)}>
+                        <Ban className="w-4 h-4" />
+                        Stornieren
+                      </Button>
                     )}
                     {canDelete && (
                       <AlertDialog>
@@ -5292,10 +5284,10 @@ export default function InvoiceDetail() {
         <Dialog open={stornoDialogOpen} onOpenChange={setStornoDialogOpen}>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>Rechnung stornieren</DialogTitle>
+              <DialogTitle>{typLabel} stornieren</DialogTitle>
             </DialogHeader>
             <p className="text-sm text-muted-foreground">
-              Die Rechnung {form.nummer} wird unwiderruflich storniert. Eine Storno-Bestätigung wird erstellt.
+              {typLabel} {form.nummer} wird unwiderruflich storniert. Eine Storno-Bestätigung wird erstellt.
             </p>
             <div>
               <Label>Storno-Grund *</Label>
@@ -5338,11 +5330,41 @@ export default function InvoiceDetail() {
 
                 const stornoDatum = new Date().toISOString().split("T")[0];
 
+                // Verrechnete Gutschrift stornieren → gebuchten Betrag auf der
+                // Ziel-Rechnung zurückrollen (sonst bleibt sie fälschlich als
+                // bezahlt markiert, obwohl die Gutschrift weg ist).
+                if (form.typ === "gutschrift" && form.status === "verrechnet" && form.verrechnet_mit_invoice_id) {
+                  try {
+                    const { data: targetInv } = await supabase
+                      .from("invoices").select("brutto_summe, bezahlt_betrag, status")
+                      .eq("id", form.verrechnet_mit_invoice_id).maybeSingle();
+                    if (targetInv) {
+                      const gutschriftBrutto = Math.abs(Number(bruttoSumme) || 0);
+                      const altBezahlt = Number((targetInv as any).bezahlt_betrag) || 0;
+                      const neuBezahlt = Math.max(0, Math.round((altBezahlt - gutschriftBrutto) * 100) / 100);
+                      const targetBrutto = Number((targetInv as any).brutto_summe) || 0;
+                      const altStatus = (targetInv as any).status;
+                      const neuStatus = altStatus === "storniert" ? "storniert"
+                        : neuBezahlt <= 0 ? "offen"
+                        : neuBezahlt >= Math.round(targetBrutto * 100) / 100 ? "bezahlt" : "teilbezahlt";
+                      await supabase.from("invoices")
+                        .update({ bezahlt_betrag: neuBezahlt, status: neuStatus })
+                        .eq("id", form.verrechnet_mit_invoice_id);
+                    }
+                  } catch (rollbackErr) {
+                    console.error("Rollback der Gutschrift-Verrechnung fehlgeschlagen:", rollbackErr);
+                    toast({ variant: "destructive", title: "Rollback-Warnung", description: "Verrechnung auf der Quell-Rechnung konnte nicht zurückgesetzt werden — bitte manuell prüfen." });
+                  }
+                }
+
                 const { error: updErr } = await supabase.from("invoices").update({
                   status: "storniert",
                   storno_nummer: stornoNummer,
                   storno_datum: stornoDatum,
                   storno_grund: stornoGrund.trim(),
+                  // Bezahlt-Betrag auf 0 — sonst verzerrt ein stehengebliebener
+                  // Teilzahlungswert die Umsatz-/Offen-Statistiken.
+                  bezahlt_betrag: 0,
                 }).eq("id", invoiceId);
 
                 if (updErr) {
@@ -5357,6 +5379,7 @@ export default function InvoiceDetail() {
                   storno_nummer: stornoNummer,
                   storno_datum: stornoDatum,
                   storno_grund: stornoGrund.trim(),
+                  bezahlt_betrag: 0,
                 }));
 
                 // Generate and download Storno-PDF
@@ -5384,11 +5407,11 @@ export default function InvoiceDetail() {
                   URL.revokeObjectURL(url);
                 } catch (e) { console.warn("Storno-PDF failed:", e); }
 
-                toast({ title: "Rechnung storniert", description: `Stornonummer: ${stornoNummer}` });
+                toast({ title: `${typLabel} storniert`, description: `Stornonummer: ${stornoNummer}` });
                 setStornoDialogOpen(false);
                 navigate("/invoices");
               }}>
-                Rechnung stornieren
+                {typLabel} stornieren
               </Button>
             </div>
           </DialogContent>
