@@ -164,14 +164,26 @@ export function MaterialFileImport({ open, onClose, onImported }: MaterialFileIm
         return;
       }
 
-      const { error } = await supabase.from("invoice_templates").insert(
-        toInsert.map(m => ({
+      // Importierte Zeilen sind Materialien (Einkaufspreisliste), keine
+      // Positionen. art='material' setzen und den geparsten Preis als EK
+      // hinterlegen — sonst landet die Preisliste als Pseudo-Positionen
+      // mit EK 0 und taucht im Materialien-Tab gar nicht auf.
+      // (as any: die generierten Supabase-Typen kennen art/ek_netto noch nicht.)
+      const rows = toInsert.map(m => {
+        const preis = Number(m.einzelpreis) || 0;
+        return {
           name: m.name.trim(),
           beschreibung: m.beschreibung?.trim() || null,
           einheit: m.einheit || "Stk.",
-          einzelpreis: m.einzelpreis || 0,
-        }))
-      );
+          art: "material",
+          ek_netto: preis,
+          vk_netto: preis,
+          netto_preis: preis,
+          einzelpreis: preis,
+          brutto_preis: Math.round(preis * 1.2 * 100) / 100,
+        };
+      });
+      const { error } = await supabase.from("invoice_templates").insert(rows as any);
       if (error) throw error;
 
       const skipMsg = skipped.length > 0

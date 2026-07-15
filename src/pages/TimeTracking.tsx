@@ -77,7 +77,7 @@ type Disturbance = {
   status: string;
 };
 
-const createDefaultBlock = (startTime = "", endTime = "", pauseStart = "", pauseEnd = ""): TimeBlock => ({
+const createDefaultBlock = (startTime = "", endTime = "", pauseStart = "", pauseEnd = "", pauseDuration = 0): TimeBlock => ({
   id: crypto.randomUUID(),
   locationType: "baustelle",
   projectId: "",
@@ -86,7 +86,10 @@ const createDefaultBlock = (startTime = "", endTime = "", pauseStart = "", pause
   endTime,
   pauseStart,
   pauseEnd,
-  pauseDuration: 0, // Keine Pause vorausgewählt
+  // Pause wird aus der Regelarbeitszeit übernommen (Std-Berechnung nutzt
+  // ausschließlich pauseDuration) — sonst zählt der vorbefüllte Mo–Do-Block
+  // 10,5h statt 10h.
+  pauseDuration,
   selectedEmployees: [],
   manualHours: "",
   disturbanceId: "",
@@ -192,7 +195,7 @@ const TimeTracking = () => {
         const dateObj = new Date(date);
         const defaults = getDefaultWorkTimes(dateObj);
         if (defaults) {
-          setTimeBlocks([createDefaultBlock(defaults.startTime, defaults.endTime, defaults.pauseStart, defaults.pauseEnd)]);
+          setTimeBlocks([createDefaultBlock(defaults.startTime, defaults.endTime, defaults.pauseStart, defaults.pauseEnd, defaults.pauseMinutes)]);
         } else {
           setTimeBlocks([createDefaultBlock()]);
         }
@@ -1334,6 +1337,14 @@ const TimeTracking = () => {
                                 startTime: defaults.startTime,
                                 endTime: defaults.endTime,
                                 pauseDuration: defaultPause,
+                              });
+                            } else {
+                              // Fr/Sa/So: keine Regelarbeitszeit — dem Nutzer
+                              // erklären, warum nichts gefüllt wurde (sonst wirkt
+                              // der Button kaputt).
+                              toast({
+                                title: "Arbeitsfreier Tag",
+                                description: "Für Freitag, Samstag und Sonntag ist keine Regelarbeitszeit hinterlegt. Bitte die Zeiten manuell eintragen.",
                               });
                             }
                           }}

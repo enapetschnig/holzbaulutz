@@ -77,7 +77,10 @@ export default function Index() {
       .order("datum", { ascending: false })
       .limit(5);
 
-    if (role === "mitarbeiter") {
+    // "Meine letzten Buchungen": jeder Nicht-Admin (auch Vorarbeiter) sieht
+    // ausschließlich die EIGENEN Einträge — sonst zeigt die Kachel fremde
+    // Buchungen unter der Überschrift "Meine".
+    if (role !== "administrator") {
       query = query.eq("user_id", userId);
     }
 

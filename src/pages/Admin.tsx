@@ -1745,10 +1745,14 @@ export default function Admin() {
                 <div className="p-4">
                   <Button
                     onClick={() => {
-                      if (selectedEmployee) {
-                        navigate(`/hours-report?employeeId=${selectedEmployee.id}`);
+                      // HoursReport liest ?employee=<user_id> (nicht employeeId,
+                      // nicht die employees.id) — sonst öffnet sich eine leere
+                      // Auswertung ohne vorausgewählten Mitarbeiter.
+                      if (selectedEmployee?.user_id) {
+                        navigate(`/hours-report?employee=${selectedEmployee.user_id}`);
                       }
                     }}
+                    disabled={!selectedEmployee?.user_id}
                     className="w-full"
                   >
                     Zur Stundenauswertung

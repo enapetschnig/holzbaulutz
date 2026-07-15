@@ -547,7 +547,10 @@ export default function HoursReport() {
     ];
 
     // Merged Cells
-    const sumRowIndex = worksheetData.length - 9; // Footer hat immer 9 Zeilen
+    // Nach der SUMME-Zeile folgen immer 9 Zeilen (3 leer + 4 Bestätigungsblock
+    // + 1 leer + Datum/Unterschrift) → die SUMME selbst liegt bei length-10.
+    // Die Merge-/Höhen-Offsets (+4/+6/+7) sind auf diese SUMME-Zeile bezogen.
+    const sumRowIndex = worksheetData.length - 10;
     ws["!merges"] = [
       // Firmendaten Header
       { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
@@ -587,7 +590,7 @@ export default function HoursReport() {
         
         const isFirmenHeader = R >= 0 && R <= 3;
         const isHeaderRow = R === 7 || R === 8;
-        const footerBaseRow = worksheetData.length - 9; // Footer hat immer 9 Zeilen
+        const footerBaseRow = worksheetData.length - 10; // SUMME-Zeile (danach 9 Footer-Zeilen)
         const isSumRow = R === footerBaseRow;
         const isFooterRow = R >= footerBaseRow + 1;
         

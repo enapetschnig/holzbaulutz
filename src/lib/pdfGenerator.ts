@@ -546,13 +546,13 @@ export async function generateInvoicePdf(
       // Netto → USt → Zwischensumme brutto → Abzug → Verbleibend
       const bruttoVorAbzug = Number(invoice.netto_summe) + Number(invoice.mwst_betrag || 0);
       tableFoot.push(footRow("Nettobetrag", fmtCurrency(Number(invoice.netto_summe))));
-      tableFoot.push(footRow(`USt. ${(Number(invoice.mwst_satz) || 20).toFixed(0)}%`, fmtCurrency(Number(invoice.mwst_betrag) || 0)));
+      tableFoot.push(footRow(`USt. ${Number(invoice.mwst_satz ?? 20).toFixed(0)}%`, fmtCurrency(Number(invoice.mwst_betrag) || 0)));
       tableFoot.push(footRow("Zwischensumme brutto", fmtCurrency(bruttoVorAbzug)));
       tableFoot.push(footRow("Anzahlungs-Abzug (brutto)", fmtCurrency(exemptBrutto)));
       tableFoot.push(footRow("Bruttobetrag", fmtCurrency(Number(invoice.brutto_summe))));
     } else {
       tableFoot.push(footRow("Nettobetrag", fmtCurrency(Number(invoice.netto_summe))));
-      tableFoot.push(footRow(`USt. ${(Number(invoice.mwst_satz) || 20).toFixed(0)}%`, fmtCurrency(Number(invoice.mwst_betrag) || 0)));
+      tableFoot.push(footRow(`USt. ${Number(invoice.mwst_satz ?? 20).toFixed(0)}%`, fmtCurrency(Number(invoice.mwst_betrag) || 0)));
       tableFoot.push(footRow("Bruttobetrag", fmtCurrency(Number(invoice.brutto_summe))));
     }
   }

@@ -410,10 +410,18 @@ export default function InvoiceTemplates() {
     // Komponenten-Diff synchronisieren (nur für Positionen).
     // Die DB rechnet den VK danach per Trigger nochmal — identische Formel.
     if (form.art === "position" && templateId) {
+      // WICHTIG: jede Komponenten-Operation auf Fehler prüfen und bei einem
+      // Fehlschlag abbrechen — sonst rechnet der recompute-Trigger aus den
+      // verbliebenen/fehlenden Komponenten einen falschen VK, während dem
+      // Nutzer fälschlich "Gespeichert" gemeldet wird.
+      const komponentenFehler = (msg: string) => {
+        toast({ variant: "destructive", title: "Komponenten nicht gespeichert", description: msg });
+      };
       const currentIds = posComponents.map(c => c.id).filter(Boolean) as string[];
       const toDelete = originalComponentIds.filter(id => !currentIds.includes(id));
       if (toDelete.length > 0) {
-        await (supabase as any).from("position_components").delete().in("id", toDelete);
+        const { error } = await (supabase as any).from("position_components").delete().in("id", toDelete);
+        if (error) { komponentenFehler(error.message); return; }
       }
       for (let i = 0; i < posComponents.length; i++) {
         const c = posComponents[i];
@@ -429,10 +437,12 @@ export default function InvoiceTemplates() {
           sort_order: i,
         };
         if (c.id) {
-          await (supabase as any).from("position_components").update(row).eq("id", c.id);
+          const { error } = await (supabase as any).from("position_components").update(row).eq("id", c.id);
+          if (error) { komponentenFehler(error.message); return; }
         } else {
-          await (supabase as any).from("position_components")
+          const { error } = await (supabase as any).from("position_components")
             .insert({ ...row, position_template_id: templateId });
+          if (error) { komponentenFehler(error.message); return; }
         }
       }
     }
@@ -455,6 +465,15 @@ export default function InvoiceTemplates() {
     toast({ title: "Gelöscht" });
     fetchTemplates();
   };
+
+  // Positionen mit Komponenten (und Legacy-Kalkulation) leiten ihren VK aus dem
+  // Modell ab — ein manuell getippter VK/Brutto oder das Preisanpassung-Panel
+  // würden beim Speichern überschrieben. Für Anzeige (VK/Brutto/Marge) daher
+  // durchgängig den Live-Komponentenpreis nutzen und die Direkteingaben sperren.
+  const istKomponentenOderKalk = (form.art === "position" && posComponents.length > 0) || form.ist_kalkuliert;
+  const anzeigeVkNetto = (form.art === "position" && posComponents.length > 0)
+    ? calcPositionPreis(posComponents, Object.fromEntries(materialOptions.map(m => [m.id, m.ek_netto]))).einzelpreis
+    : (Number(form.vk_netto) || Number(form.netto_preis) || 0);
 
   return (
     <div className="min-h-screen bg-background">
@@ -827,9 +846,7 @@ export default function InvoiceTemplates() {
                   <Label>VK netto (€)</Label>
                   <Input
                     type="number"
-                    value={(form.art === "position" && posComponents.length > 0)
-                      ? calcPositionPreis(posComponents, Object.fromEntries(materialOptions.map(m => [m.id, m.ek_netto]))).einzelpreis
-                      : (form.vk_netto || "")}
+                    value={istKomponentenOderKalk ? (anzeigeVkNetto || "") : (form.vk_netto || "")}
                     onChange={(e) => {
                       const vk = Number(e.target.value);
                       setForm(f => ({
@@ -841,7 +858,7 @@ export default function InvoiceTemplates() {
                     }}
                     min={0}
                     step={0.01}
-                    disabled={(form.art === "position" && posComponents.length > 0) || form.ist_kalkuliert}
+                    disabled={istKomponentenOderKalk}
                   />
                 </div>
                 <div>
@@ -863,7 +880,7 @@ export default function InvoiceTemplates() {
                   <Label>Brutto (€)</Label>
                   <Input
                     type="number"
-                    value={Math.round((form.vk_netto || 0) * (1 + form.ust_satz / 100) * 100) / 100 || ""}
+                    value={Math.round(anzeigeVkNetto * (1 + form.ust_satz / 100) * 100) / 100 || ""}
                     onChange={(e) => {
                       const brutto = Number(e.target.value);
                       const vk = form.ust_satz > 0 ? Math.round(brutto / (1 + form.ust_satz / 100) * 100) / 100 : brutto;
@@ -876,24 +893,26 @@ export default function InvoiceTemplates() {
                     }}
                     min={0}
                     step={0.01}
-                    disabled={(form.art === "position" && posComponents.length > 0) || form.ist_kalkuliert}
+                    disabled={istKomponentenOderKalk}
                   />
                 </div>
               </div>
-              {/* Marge-Anzeige */}
-              {form.vk_netto > 0 && (
+              {/* Marge-Anzeige — auf den effektiven (Live-)VK bezogen */}
+              {anzeigeVkNetto > 0 && (
                 <div className="text-xs text-muted-foreground -mt-2">
                   {form.ek_netto > 0 ? (
-                    <>Marge: <span className={`font-mono ${form.vk_netto >= form.ek_netto ? "text-green-600" : "text-destructive"}`}>
-                      {(((form.vk_netto - form.ek_netto) / form.ek_netto) * 100).toFixed(1)} %
-                    </span> (€ {(form.vk_netto - form.ek_netto).toFixed(2)} Aufschlag)</>
+                    <>Marge: <span className={`font-mono ${anzeigeVkNetto >= form.ek_netto ? "text-green-600" : "text-destructive"}`}>
+                      {(((anzeigeVkNetto - form.ek_netto) / form.ek_netto) * 100).toFixed(1)} %
+                    </span> (€ {(anzeigeVkNetto - form.ek_netto).toFixed(2)} Aufschlag)</>
                   ) : (
                     <>Kein EK hinterlegt — Marge nicht berechenbar.</>
                   )}
                 </div>
               )}
-              {/* Preisanpassung — nur bei bestehendem Material */}
-              {editId && (
+              {/* Preisanpassung — nur bei FREI bepreisten Materialien/Positionen.
+                  Bei Komponenten-Positionen/Legacy-Kalkulation würde ein VK-
+                  Override beim Speichern verworfen (VK kommt aus dem Modell). */}
+              {editId && !istKomponentenOderKalk && (
                 <div className="border rounded-lg p-3 bg-muted/30 space-y-2">
                   <p className="text-sm font-medium flex items-center gap-1.5">
                     <TrendingUp className="h-4 w-4" />

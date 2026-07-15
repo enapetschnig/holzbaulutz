@@ -89,6 +89,11 @@ Deno.serve(async (req: Request) => {
       // New format from Regiebericht: all entries as flat array
       const entries = body.entries as TimeEntryData[];
       const deleteDisturbanceId = body.deleteDisturbanceId as string | undefined;
+      // Bautagesberichte haben keinen FK in time_entries — die gespiegelten
+      // Einträge werden über einen Notiz-Marker identifiziert. Der Delete MUSS
+      // server-seitig (Service Role) laufen, sonst blockiert RLS das Löschen
+      // der Einträge von Kollegen und jede Bearbeitung dupliziert deren Stunden.
+      const deleteByNotizen = body.deleteByNotizen as string | undefined;
 
       // Create admin client early for delete
       const supabaseAdminEarly = createClient(supabaseUrl, supabaseServiceKey);
@@ -96,6 +101,9 @@ Deno.serve(async (req: Request) => {
       // Delete old entries for this disturbance if updating
       if (deleteDisturbanceId) {
         await supabaseAdminEarly.from("time_entries").delete().eq("disturbance_id", deleteDisturbanceId);
+      }
+      if (deleteByNotizen) {
+        await supabaseAdminEarly.from("time_entries").delete().eq("notizen", deleteByNotizen);
       }
 
       // First entry is main, rest are team

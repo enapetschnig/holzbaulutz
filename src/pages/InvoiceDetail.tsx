@@ -442,8 +442,12 @@ export default function InvoiceDetail() {
         notizen: data.notizen || "",
         betreff: data.betreff || "",
         mwst_satz: Number(data.mwst_satz) || 20,
-        rabatt_prozent: Number(data.rabatt_prozent) || 0,
-        rabatt_betrag: Number(data.rabatt_betrag) || 0,
+        // Anzahlungsrechnung: die Positionen werden unten durch EINE Pauschal-
+        // zeile (Anzahlungsbetrag = bereits der geschuldete Netto) ersetzt.
+        // Ein Global-Rabatt vom Quell-Angebot darf hier NICHT nochmals greifen,
+        // sonst wird der Rabatt auf einem Steuerbeleg doppelt abgezogen.
+        rabatt_prozent: targetTyp === "anzahlungsrechnung" ? 0 : (Number(data.rabatt_prozent) || 0),
+        rabatt_betrag: targetTyp === "anzahlungsrechnung" ? 0 : (Number(data.rabatt_betrag) || 0),
         kalkulation_aufschlag_override: (data as any).kalkulation_aufschlag_override ?? null,
         skonto_prozent: Number(data.skonto_prozent) || 0,
         skonto_tage: Number(data.skonto_tage) || 0,
@@ -495,7 +499,12 @@ export default function InvoiceDetail() {
       // entsprechen damit weiterhin exakt dem DELTA — die Summen-Logik
       // (auch für spätere SR/Folge-ARs) bleibt konsistent.
       if (targetTyp === "anzahlungsrechnung" && (opts?.anzahlungBetrag || opts?.anzahlungProzent)) {
-        const gesamtNetto = nextItems.reduce((s, it) => s + it.gesamtpreis, 0);
+        // Basis für die Prozent-Anzahlung ist der TATSÄCHLICH geschuldete Netto
+        // des Quelldokuments (nach Global-Rabatt), nicht die Summe der Roh-
+        // Positionen. Sonst würde z.B. "10% Anzahlung" auf den Betrag VOR
+        // Rabatt gerechnet und wäre zu hoch.
+        const rohNetto = nextItems.reduce((s, it) => s + it.gesamtpreis, 0);
+        const gesamtNetto = Number(data.netto_summe) || rohNetto;
         const quellNummer = data.nummer || "Auftragsbestätigung";
         let anzBetrag: number;
         let labelKurz: string;
@@ -1000,7 +1009,7 @@ export default function InvoiceDetail() {
         .order("sort_order");
       const rows = ((comps as any[]) || []);
       if (rows.length === 0) {
-        toast({ variant: "destructive", title: "Set ist leer", description: `${t.name} hat keine Komponenten.` });
+        toast({ variant: "destructive", title: "Position ist leer", description: `${t.name} hat keine Komponenten.` });
         return;
       }
       const vkNetto = Number((t as any).vk_netto ?? (t as any).netto_preis ?? t.einzelpreis) || 0;
@@ -1432,15 +1441,11 @@ export default function InvoiceDetail() {
     // automatisch auf das Rechnungsdatum (form.datum) — siehe Renderer.
     // Daher hier kein harter Pflicht-Check mehr.
 
-    // Austrian UID requirements
-    if (form.typ === "rechnung" && saveBrutto > 400) {
-      const { data: uidSetting } = await supabase.from("app_settings").select("value").eq("key", "firmen_uid").maybeSingle();
-      if (!uidSetting?.value) {
-        toast({ variant: "destructive", title: "UID-Nummer fehlt", description: "Bei Rechnungen über €400 ist die UID-Nummer des Ausstellers gesetzlich vorgeschrieben. Bitte im Admin-Bereich konfigurieren." });
-        setSaving(false);
-        return false;
-      }
-    }
+    // Firmen-UID > 400 € wird bereits oben geprüft (Warnung, aber Speichern
+    // wird NICHT blockiert — der frühere harte Block hier stand im Widerspruch
+    // zu jener Zusage und verhinderte bei noch nicht hinterlegter Firmen-UID
+    // praktisch jede reale Rechnung). Nur die Empfänger-UID > 10.000 € bleibt
+    // eine harte Pflicht.
     if (form.typ === "rechnung" && saveBrutto > 10000 && !form.kunde_uid?.trim()) {
       toast({ variant: "destructive", title: "Kunden-UID fehlt", description: "Bei Rechnungen über €10.000 ist die UID-Nummer des Empfängers gesetzlich vorgeschrieben." });
       setSaving(false);
@@ -1739,7 +1744,12 @@ export default function InvoiceDetail() {
         const sid = savedId;
         void import("@/lib/materialbedarf")
           .then(({ generateMaterialbedarfFromAngebot }) => generateMaterialbedarfFromAngebot(sid, pid))
-          .catch(() => {});
+          .catch((err) => {
+            // Best effort — blockiert das Speichern nicht, aber der Fehler wird
+            // sichtbar gemacht, damit eine stehengebliebene/leere Materialliste
+            // nicht unbemerkt bleibt.
+            toast({ variant: "destructive", title: "Materialliste nicht aktualisiert", description: err?.message || "Der Material-Soll konnte nicht neu erzeugt werden." });
+          });
       }
 
       if (isNew && !previewOpen) {
@@ -4773,6 +4783,7 @@ export default function InvoiceDetail() {
             menge: item.menge,
             einheit: item.einheit,
             einzelpreis: item.einzelpreis,
+            rabatt_prozent: Number((item as any).rabatt_prozent) || 0,
             gesamtpreis: item.gesamtpreis,
             mwst_exempt: !!(item as any).mwst_exempt,
           }))}

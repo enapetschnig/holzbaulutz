@@ -39,7 +39,11 @@ export function KalkulationsExcelAnsicht({ positionen, onEdit }: Props) {
       const { data } = await (supabase as any)
         .from("position_components")
         .select("position_template_id, material_template_id, typ, bezeichnung, einheit, menge_pro_einheit, preis, verschnitt_prozent, aufschlag_prozent, sort_order, material:invoice_templates!material_template_id(ek_netto)")
-        .order("sort_order");
+        .order("sort_order")
+        // Ohne Limit greift das PostgREST-Default von 1000 — bei wachsendem
+        // Katalog fehlten sonst Komponenten-Zeilen und Summe/Aufschlüsselung
+        // passten nicht mehr zusammen.
+        .limit(10000);
       if (cancelled) return;
       const map: Record<string, any[]> = {};
       for (const c of ((data as any[]) || [])) {

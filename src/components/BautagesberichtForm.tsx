@@ -40,6 +40,8 @@ type BautagesberichtFormProps = {
     kunde_telefon: string | null;
     beschreibung: string;
     notizen: string | null;
+    project_id?: string | null;
+    customer_id?: string | null;
   } | null;
   /** Wenn gesetzt: Projekt beim Öffnen des Formulars vorselektieren (Quick-Action aus ProjectOverview) */
   prefillProjectId?: string | null;
@@ -130,6 +132,10 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
         beschreibung: editData.beschreibung,
         notizen: editData.notizen || "",
       });
+      // Projekt-/Kundenverknüpfung aus dem Bericht übernehmen — sonst würde
+      // jede Bearbeitung project_id/customer_id auf null zurücksetzen.
+      setSelectedProjectId(editData.project_id ?? null);
+      setSelectedCustomerId(editData.customer_id ?? null);
       // Load existing workers and materials when editing
       loadExistingWorkers(editData.id);
       loadExistingMaterials(editData.id);
@@ -224,7 +230,10 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
       stunden,
       taetigkeit: `Bautagesbericht: ${formData.beschreibung.trim().substring(0, 100)}`,
       location_type: "baustelle",
-      project_id: null,
+      // Projektbezug übernehmen, damit die gespiegelten Stunden in der
+      // Projekt-Zeitauswertung auftauchen (Baustellen-Zeit ohne Projekt fällt
+      // dort heraus).
+      project_id: selectedProjectId || null,
       disturbance_id: null,
       notizen: `Bautagesbericht-Zuordnung: ${bautagesberichtId}`,
     }));
@@ -302,18 +311,27 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
       // Update materials
       await updateMaterials(editData.id, user.id);
 
-      // Zeiteinträge für alle Mitarbeiter synchronisieren:
-      // Alte gespiegelte Einträge über den Notiz-Marker löschen (best effort,
-      // RLS erlaubt eigene Einträge bzw. Admin alle), danach neu anlegen.
-      await supabase
-        .from("time_entries")
-        .delete()
-        .eq("notizen", `Bautagesbericht-Zuordnung: ${editData.id}`);
-
+      // Zeiteinträge für alle Mitarbeiter synchronisieren: das Löschen der
+      // alten gespiegelten Einträge läuft SERVER-seitig in der Edge-Function
+      // (Service Role) über den Notiz-Marker — ein client-seitiger Delete würde
+      // die Einträge von Kollegen wegen RLS NICHT löschen und ihre Stunden bei
+      // jeder Bearbeitung duplizieren.
       const timeEntries = buildTimeEntries(editData.id, user.id, stunden);
-      await supabase.functions.invoke("create-team-time-entries", {
-        body: { entries: timeEntries },
+      const { data: syncData, error: syncError } = await supabase.functions.invoke("create-team-time-entries", {
+        body: {
+          entries: timeEntries,
+          deleteByNotizen: `Bautagesbericht-Zuordnung: ${editData.id}`,
+        },
       });
+      if (syncError || (syncData as any)?.success === false) {
+        toast({
+          variant: "destructive",
+          title: "Zeiten nicht vollständig gespeichert",
+          description: (syncData as any)?.error || syncError?.message || "Die gespiegelten Zeiteinträge konnten nicht aktualisiert werden.",
+        });
+        setSaving(false);
+        return;
+      }
 
       toast({ title: "Erfolg", description: "Bautagesbericht wurde aktualisiert" });
     } else {
@@ -363,9 +381,22 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
       // Automatisch Zeiteinträge für alle beteiligten Mitarbeiter anlegen
       // Nutzt Edge Function (Service Role) damit auch für andere User inserted werden kann
       const timeEntries = buildTimeEntries(newBericht.id, user.id, stunden);
-      await supabase.functions.invoke("create-team-time-entries", {
+      const { data: syncData, error: syncError } = await supabase.functions.invoke("create-team-time-entries", {
         body: { entries: timeEntries },
       });
+      if (syncError || (syncData as any)?.success === false) {
+        // Bericht ist angelegt, aber die Zeiten fehlen (z.B. inaktiver
+        // Mitarbeiter) — nicht stillschweigend Erfolg melden.
+        toast({
+          variant: "destructive",
+          title: "Bericht erstellt, Zeiten fehlen",
+          description: (syncData as any)?.error || syncError?.message || "Die gespiegelten Zeiteinträge konnten nicht angelegt werden.",
+        });
+        setSaving(false);
+        onOpenChange(false);
+        navigate(`/bautagesberichte/${newBericht.id}?openSignature=true`);
+        return;
+      }
 
       toast({ title: "Erfolg", description: "Bautagesbericht wurde erfasst" });
 

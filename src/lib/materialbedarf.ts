@@ -1,6 +1,39 @@
 import { supabase } from "@/integrations/supabase/client";
 
 /**
+ * Sammelt alle Beleg-IDs derselben Dokumentkette (Angebot → AB → Rechnung …),
+ * ausgehend von einem beliebigen Knoten: erst per parent_invoice_id zur Wurzel
+ * hochwandern, dann alle Nachfahren einsammeln. So kann der Material-Soll für
+ * die GANZE Kette ersetzt werden — sonst hinterlässt jeder Beleg (z.B. Angebot
+ * UND die daraus erzeugte Auftragsbestätigung) eigene Bedarf-Zeilen und der
+ * Soll wird doppelt gezählt.
+ */
+async function collectChainIds(invoiceId: string): Promise<string[]> {
+  // Zur Wurzel hoch (max. 6 Hops als Safety-Net gegen Datenfehler)
+  let root = invoiceId;
+  let cursor: string | null = invoiceId;
+  for (let i = 0; i < 6 && cursor; i++) {
+    const { data } = await supabase
+      .from("invoices").select("id, parent_invoice_id").eq("id", cursor).maybeSingle();
+    if (!data) break;
+    root = (data as any).id;
+    cursor = (data as any).parent_invoice_id || null;
+  }
+  // Von der Wurzel alle Nachfahren einsammeln (breitensuche, bounded)
+  const ids = new Set<string>([root]);
+  let frontier = [root];
+  for (let depth = 0; depth < 6 && frontier.length > 0; depth++) {
+    const { data } = await supabase
+      .from("invoices").select("id").in("parent_invoice_id", frontier);
+    const next = ((data as any[]) || []).map(r => r.id).filter((id: string) => !ids.has(id));
+    next.forEach((id: string) => ids.add(id));
+    frontier = next;
+  }
+  ids.add(invoiceId);
+  return Array.from(ids);
+}
+
+/**
  * Erzeugt die Projekt-Materialliste (Soll-Bedarf) aus einem Angebot.
  *
  * Logik nach dem Excel-Modell: Angebots-Positionen sind kalkulierte
@@ -9,9 +42,10 @@ import { supabase } from "@/integrations/supabase/client";
  * (inkl. Verschnitt). Positionen ohne Komponenten (Legacy/frei) landen
  * als eigene Zeile. Reine Lohn-/Sonstiges-Anteile erscheinen nicht.
  *
- * Idempotent: bestehende Bedarf-Zeilen dieses Angebots werden ersetzt
- * (source_invoice_id). Läuft best effort — Fehler blockieren das
- * Speichern des Angebots nicht.
+ * Idempotent über die GANZE Dokumentkette: bestehende Bedarf-Zeilen aller
+ * Belege derselben Kette (Angebot/AB/…) werden ersetzt, damit der Soll nie
+ * doppelt gezählt wird. Läuft best effort — Fehler blockieren das Speichern
+ * des Angebots nicht, werden aber sichtbar geloggt.
  */
 export async function generateMaterialbedarfFromAngebot(invoiceId: string, projectId: string): Promise<number> {
   const { data: { user } } = await supabase.auth.getUser();
@@ -33,7 +67,8 @@ export async function generateMaterialbedarfFromAngebot(invoiceId: string, proje
     const { data: comps } = await (supabase as any)
       .from("position_components")
       .select("position_template_id, material_template_id, typ, bezeichnung, einheit, menge_pro_einheit, preis, verschnitt_prozent, material:invoice_templates!material_template_id(ek_netto)")
-      .in("position_template_id", templateIds);
+      .in("position_template_id", templateIds)
+      .limit(10000);
     for (const c of ((comps as any[]) || [])) {
       (componentsByTemplate[c.position_template_id] = componentsByTemplate[c.position_template_id] || []).push(c);
     }
@@ -66,10 +101,17 @@ export async function generateMaterialbedarfFromAngebot(invoiceId: string, proje
       }
     } else {
       // Legacy-Kalkulation oder freie Position: als Sammelzeile aufnehmen —
-      // aber reine Lohn-Positionen (kein Material-EK) überspringen.
-      const istNurLohn = !!(it as any).ist_kalkuliert
-        && (Number((it as any).ek_preis) || 0) === 0
-        && (Number((it as any).arbeitszeit_minuten) || 0) > 0;
+      // aber reine Lohn-/Leistungspositionen überspringen (kein Material).
+      // Erkennung unabhängig von ist_kalkuliert: eine Positions-Einheit in
+      // Stunden (Std/h) ODER hinterlegte Arbeitszeit ohne Material-EK ist Lohn
+      // (Montage, Anfahrt/Regie, Baustelleneinrichtung, Entsorgung …) und
+      // gehört nicht in den Material-Soll.
+      const einheitLower = String(it.einheit || "").toLowerCase().trim();
+      const istLohnEinheit = /^(std|std\.|h|stunde|stunden|std\/h)$/.test(einheitLower);
+      const hatKeinMaterialEk = (Number((it as any).ek_preis) || 0) === 0;
+      const hatArbeitszeit = (Number((it as any).arbeitszeit_minuten) || 0) > 0;
+      const istNurLohn = (istLohnEinheit && hatKeinMaterialEk)
+        || (hatKeinMaterialEk && hatArbeitszeit);
       if (istNurLohn) continue;
       rows.push({
         project_id: projectId,
@@ -86,13 +128,19 @@ export async function generateMaterialbedarfFromAngebot(invoiceId: string, proje
     }
   }
 
-  // Idempotent ersetzen
-  await (supabase as any).from("material_entries").delete().eq("source_invoice_id", invoiceId);
+  // Idempotent über die GANZE Dokumentkette ersetzen: Bedarf-Zeilen ALLER
+  // Belege derselben Kette (Angebot, daraus erzeugte Auftragsbestätigung, …)
+  // entfernen, sonst zählt der Material-Soll doppelt. Danach nur die Zeilen
+  // dieses Belegs neu schreiben — der zuletzt gespeicherte Beleg der Kette
+  // ist die einzige aktive Soll-Quelle.
+  const chainIds = await collectChainIds(invoiceId);
+  await (supabase as any).from("material_entries")
+    .delete().eq("typ", "bedarf").in("source_invoice_id", chainIds);
   if (rows.length > 0) {
     const { error } = await (supabase as any).from("material_entries").insert(rows);
     if (error) {
-      console.warn("Materialbedarf konnte nicht gespeichert werden:", error.message);
-      return 0;
+      console.error("Materialbedarf konnte nicht gespeichert werden:", error.message);
+      throw new Error(`Materialbedarf: ${error.message}`);
     }
   }
   return rows.length;

@@ -92,9 +92,16 @@ export function BulkPriceDialog({
 
   const loadRows = async () => {
     setLoading(true);
-    const { data, error } = await supabase
+    // Nur Materialien: der VK kalkulierter Positionen wird aus ihren
+    // Komponenten abgeleitet (DB-Trigger) — eine direkte Bulk-Manipulation
+    // würde ihn überschreiben und sofort von der Komponentensumme abweichen.
+    // Material-EK-Änderungen rechnen betroffene Positionen automatisch nach.
+    // (as any: art ist in den generierten Typen nicht enthalten; der lange
+    //  typisierte Chain löst sonst TS2589 aus.)
+    const { data, error } = await (supabase as any)
       .from("invoice_templates")
       .select("id, name, kurzbezeichnung, kategorie, lieferant, ist_set, ek_netto, vk_netto, einzelpreis, netto_preis, aufschlag_prozent, vk_preis_manuell, ust_satz")
+      .eq("art", "material")
       .limit(10000);
     if (error) {
       toast({ variant: "destructive", title: "Laden fehlgeschlagen", description: error.message });
@@ -327,18 +334,6 @@ export function BulkPriceDialog({
               <Label className="text-sm font-medium">Filter</Label>
 
               <div>
-                <Label className="text-xs text-muted-foreground">Typ</Label>
-                <Select value={filterTyp} onValueChange={(v) => setFilterTyp(v as TypFilter)}>
-                  <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="alle">Alle (Materialien + Sets)</SelectItem>
-                    <SelectItem value="materialien">Nur Materialien</SelectItem>
-                    <SelectItem value="sets">Nur Sets</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
                 <Label className="text-xs text-muted-foreground">
                   Kategorie {filterKategorien.size > 0 && <span>({filterKategorien.size} gewählt)</span>}
                 </Label>
@@ -400,7 +395,7 @@ export function BulkPriceDialog({
                       <div key={r.id} className="flex items-center justify-between gap-2 px-2 py-1 text-xs">
                         <span className="truncate flex items-center gap-1">
                           {r.kurzbezeichnung || r.name}
-                          {r.ist_set && <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5">Set</Badge>}
+                          {r.ist_set && <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5">Position</Badge>}
                         </span>
                         <span className="font-mono text-muted-foreground shrink-0">
                           EK €{r.ek_netto.toFixed(2)} · VK €{r.vk_netto.toFixed(2)}
@@ -493,7 +488,7 @@ export function BulkPriceDialog({
                       <div key={p.id} className="grid grid-cols-[1fr_auto_auto] gap-3 py-0.5 border-b last:border-b-0">
                         <span className="font-sans truncate" title={p.name}>
                           {p.kurzbezeichnung || p.name}
-                          {p.ist_set && <Badge variant="outline" className="ml-1 text-[9px] px-1 py-0 h-3.5">Set</Badge>}
+                          {p.ist_set && <Badge variant="outline" className="ml-1 text-[9px] px-1 py-0 h-3.5">Position</Badge>}
                         </span>
                         {(target === "ek" || target === "beide") && (
                           <span className="text-muted-foreground">

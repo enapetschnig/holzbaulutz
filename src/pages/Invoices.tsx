@@ -290,7 +290,8 @@ export default function Invoices() {
           position: it.position, beschreibung: it.beschreibung,
           kurztext: it.kurztext || it.beschreibung, langtext: it.langtext || "",
           menge: Number(it.menge), einheit: it.einheit || "Stk.",
-          einzelpreis: Number(it.einzelpreis), gesamtpreis: Number(it.gesamtpreis),
+          einzelpreis: Number(it.einzelpreis), rabatt_prozent: Number((it as any).rabatt_prozent) || 0,
+          gesamtpreis: Number(it.gesamtpreis),
           mwst_exempt: !!(it as any).mwst_exempt,
         })),
         bank, logoUri, qrUri, firmenUid, invoiceLayout
@@ -369,7 +370,8 @@ export default function Invoices() {
           position: it.position, beschreibung: it.beschreibung,
           kurztext: it.kurztext || it.beschreibung, langtext: it.langtext || "",
           menge: Number(it.menge), einheit: it.einheit || "Stk.",
-          einzelpreis: Number(it.einzelpreis), gesamtpreis: Number(it.gesamtpreis),
+          einzelpreis: Number(it.einzelpreis), rabatt_prozent: Number((it as any).rabatt_prozent) || 0,
+          gesamtpreis: Number(it.gesamtpreis),
           mwst_exempt: !!(it as any).mwst_exempt,
         })),
         bank, logoUri, qrUri, firmenUid, invoiceLayout
