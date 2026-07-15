@@ -511,6 +511,18 @@ export default function InvoiceTemplates() {
           )}
         </div>
 
+        {/* Orientierung für Excel-Umsteiger: die zwei Tabs sind exakt die zwei
+            Arbeitsmappen der Kalkulations-Excel. */}
+        <div className="mb-4 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span>📊 <b>Aufgebaut wie deine Kalkulations-Excel:</b></span>
+          <span><b className="text-foreground">Materialien</b> = Blatt „MATERIALIEN" (Einkaufspreise + Stundensätze)</span>
+          <span className="opacity-50">·</span>
+          <span><b className="text-foreground">Positionen</b> = Blatt „POSITIONEN" (fertige Leistungen aus Material + Arbeitszeit)</span>
+          {activeArt === "position" && (
+            <span className="opacity-50">· Tipp: <b className="text-foreground">🧮 Excel-Ansicht</b> zeigt alle Positionen samt Komponenten als ein Blatt.</span>
+          )}
+        </div>
+
         {/* Search & Filter Bar */}
         <div className="flex flex-wrap gap-3 mb-4 items-center">
           <div className="relative flex-1 min-w-[200px]">
