@@ -4105,7 +4105,7 @@ export default function InvoiceDetail() {
                   </Button>
                   <Button onClick={() => setTemplateDialogOpen(true)} variant="outline" size="sm" className="gap-1">
                     <Package className="w-4 h-4" />
-                    Materialien
+                    Aus Katalog
                   </Button>
                   {items.some(it => it.ist_kalkuliert && it.kalkulation_template_id) && (
                     <Button onClick={refreshKalkulationFromCatalog} disabled={kalkRefreshing} variant="outline" size="sm"
@@ -4524,7 +4524,7 @@ export default function InvoiceDetail() {
         }}>
           <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
             <DialogHeader>
-              <DialogTitle>Materialien einfügen</DialogTitle>
+              <DialogTitle>Positionen & Materialien aus dem Katalog einfügen</DialogTitle>
             </DialogHeader>
             <div className="flex gap-3 mb-3 flex-wrap">
               <Input
@@ -4566,7 +4566,7 @@ export default function InvoiceDetail() {
                   const matchArt = templateArtFilter === "alle" || tArt === templateArtFilter;
                   return matchSearch && matchFilter && matchArt;
                 });
-                if (filtered.length === 0) return <p className="text-center text-muted-foreground py-8">Keine Materialien gefunden</p>;
+                if (filtered.length === 0) return <p className="text-center text-muted-foreground py-8">Keine Einträge gefunden</p>;
 
                 const favoriten = filtered.filter(t => t.ist_favorit);
                 const restliche = filtered.filter(t => !t.ist_favorit);
@@ -4600,7 +4600,7 @@ export default function InvoiceDetail() {
                           {(t as any).kurzbezeichnung || t.name}
                           {(t as any).ist_set && (
                             <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 border-primary/40 text-primary shrink-0">
-                              Set
+                              Position
                             </Badge>
                           )}
                         </p>
@@ -4622,6 +4622,14 @@ export default function InvoiceDetail() {
                   );
                 };
 
+                // Übersichtlich wie in der Excel: nach Kategorie gruppiert, mit
+                // Überschriften. Favoriten stehen zuoberst.
+                const byKat: Record<string, TemplateItem[]> = {};
+                for (const t of restliche) {
+                  const k = t.kategorie || "Allgemein";
+                  (byKat[k] = byKat[k] || []).push(t);
+                }
+                const katGruppen = Object.entries(byKat).sort(([a], [b]) => a.localeCompare(b));
                 return (
                   <>
                     {favoriten.length > 0 && (
@@ -4631,7 +4639,14 @@ export default function InvoiceDetail() {
                         {restliche.length > 0 && <hr className="my-2 border-border" />}
                       </>
                     )}
-                    {restliche.map(renderItem)}
+                    {katGruppen.map(([kat, items]) => (
+                      <div key={kat}>
+                        <p className="text-xs font-semibold text-foreground bg-muted/70 rounded px-2 py-1 mt-1 sticky top-0 z-10 backdrop-blur">
+                          {kat} <span className="text-muted-foreground font-normal">({items.length})</span>
+                        </p>
+                        {items.map(renderItem)}
+                      </div>
+                    ))}
                   </>
                 );
               })()}
