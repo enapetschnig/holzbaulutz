@@ -72,19 +72,31 @@ export function DictateButton({ value, onResult, compact, label = "Diktieren", d
 
           const form = new FormData();
           form.append("audio", blob, "dictation.webm");
-          form.append("existingText", value || "");
-          form.append("mode", value.trim() ? "append" : "polish");
+          form.append("mode", "polish");
 
           const { data, error } = await supabase.functions.invoke("polish-text", {
             body: form,
           });
 
-          if (error) throw new Error(error.message);
+          if (error) {
+            // Echte Fehlermeldung aus dem Function-Body ziehen (statt "non-2xx")
+            const body = await (error as any).context?.json?.().catch(() => null);
+            throw new Error(body?.error || error.message);
+          }
           if (data?.error) throw new Error(data.error);
           if (!data?.text) throw new Error("Keine Antwort");
 
-          onResult(data.text);
-          toast({ title: "Text übernommen", description: value.trim() ? "Ergänzt und geschliffen." : "Diktat wurde geschliffen." });
+          // Anhängen macht der CLIENT — der bestehende Text bleibt garantiert
+          // unverändert, das Diktat kommt als neuer Absatz dazu.
+          const neu = String(data.text).trim();
+          const ergebnis = value.trim() ? `${value.replace(/\s+$/, "")}\n${neu}` : neu;
+          onResult(ergebnis);
+          // Dem Nutzer ZEIGEN, was verstanden wurde — so fällt eine falsche
+          // Erkennung sofort auf.
+          toast({
+            title: "Diktat übernommen",
+            description: `„${neu.length > 120 ? neu.slice(0, 120) + "…" : neu}"`,
+          });
         } catch (err: any) {
           toast({ variant: "destructive", title: "Diktier-Fehler", description: err.message });
         } finally {

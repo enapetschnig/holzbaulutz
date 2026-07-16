@@ -33,29 +33,43 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     console.log(`Processing voice input for ${typ}, audio size: ${audioBase64.length} chars`);
 
-    // Step 1: Whisper Transcription
+    // Step 1: Transkription — gpt-4o-mini-transcribe (genauer für Deutsch),
+    // Fallback whisper-1. Fach-Kontext-Prompt verbessert Material-Begriffe.
     const audioBytes = Uint8Array.from(atob(audioBase64), c => c.charCodeAt(0));
-    const formData = new FormData();
-    formData.append("file", new Blob([audioBytes], { type: "audio/webm" }), "audio.webm");
-    formData.append("model", "whisper-1");
-    formData.append("language", "de");
+    const audioBlob = new Blob([audioBytes], { type: "audio/webm" });
+    const kontextPrompt = "Materialliste einer Zimmerei/Baustelle: KVH, Konstruktionsvollholz, OSB-Platte, Lattung, Dachlatten, Schrauben, Dämmung, Mineralwolle, laufmeter, Quadratmeter, Kubikmeter, Stück, Paket.";
 
-    const whisperResponse = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
-      body: formData,
-    });
+    const transkribiere = async (model: string) => {
+      const formData = new FormData();
+      formData.append("file", audioBlob, "audio.webm");
+      formData.append("model", model);
+      formData.append("language", "de");
+      formData.append("prompt", kontextPrompt);
+      const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+        body: formData,
+      });
+      if (!res.ok) throw new Error(`${model}: ${res.status} ${await res.text()}`);
+      const j = await res.json();
+      return String(j.text || "").trim();
+    };
 
-    if (!whisperResponse.ok) {
-      const err = await whisperResponse.text();
-      console.error("Whisper error:", err);
-      return new Response(
-        JSON.stringify({ error: "Transkription fehlgeschlagen", details: err }),
-        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
-      );
+    let transcript = "";
+    try {
+      transcript = await transkribiere("gpt-4o-mini-transcribe");
+    } catch (e) {
+      console.warn("gpt-4o-mini-transcribe fehlgeschlagen, Fallback whisper-1:", (e as Error).message);
+      try {
+        transcript = await transkribiere("whisper-1");
+      } catch (e2) {
+        console.error("Whisper error:", (e2 as Error).message);
+        return new Response(
+          JSON.stringify({ error: "Transkription fehlgeschlagen", details: (e2 as Error).message }),
+          { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
+        );
+      }
     }
-
-    const { text: transcript } = await whisperResponse.json();
     console.log("Transcript:", transcript);
 
     if (!transcript || transcript.trim().length === 0) {

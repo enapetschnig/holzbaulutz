@@ -1,8 +1,15 @@
-// Polish/transcribe user text via OpenAI
-// Modes:
-//  - "transcribe": audio blob → text (Whisper)
-//  - "polish": raw text → geschliffener Text (GPT-4o-mini)
-//  - "append": existierender Text + neuer Input → zusammengefügter geschliffener Text
+// Diktat → Text für Formularfelder.
+// VERLÄSSLICHKEIT VOR SCHÖNHEIT: Der Nutzer muss im Feld wiederfinden, was er
+// gesagt hat. Deshalb:
+//  1. Transkription mit gpt-4o-mini-transcribe (deutlich genauer für Deutsch),
+//     Fallback whisper-1 — beide mit Fach-Kontext-Prompt (Zimmerei/Baustelle).
+//  2. "Polish" korrigiert NUR Rechtschreibung/Zeichensetzung/Füllwörter —
+//     KEIN Umformulieren, KEINE Ergänzungen. Weicht das Ergebnis zu stark vom
+//     Transkript ab, gewinnt das Transkript.
+//  3. Anhängen an bestehenden Text macht der CLIENT — die KI bekommt den
+//     Bestandstext gar nicht erst zu sehen (kann ihn also nicht verändern).
+//  4. Whisper-Halluzinations-Artefakte (Stille → "Vielen Dank." etc.) werden
+//     erkannt und als "Keine Sprache erkannt" abgelehnt.
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,32 +18,43 @@ const corsHeaders = {
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
 
-const POLISH_SYSTEM_PROMPT = `Du bist ein Assistent für österreichische Handwerker, der diktierte Notizen in einen sauberen, professionellen Text umwandelt.
+// Fach-Kontext verbessert die Erkennung von Handwerks-Begriffen deutlich.
+const TRANSCRIBE_PROMPT =
+  "Diktat eines österreichischen Zimmerers auf der Baustelle. Fachbegriffe: " +
+  "Zimmerei, Holzbau, Dachstuhl, Sparren, Pfette, First, Traufe, Gaube, KVH, " +
+  "Konstruktionsvollholz, OSB-Platte, Lattung, Konterlattung, Dampfbremse, " +
+  "Unterspannbahn, Aufmaß, Verschnitt, Gewerk, Dämmung, Fassade, Riegelwand, " +
+  "Montage, Regiearbeit, Baustelleneinrichtung.";
 
-Regeln:
-- Verwende korrektes Deutsch mit korrekter Grammatik und Rechtschreibung
-- Behalte den Wortschatz und Stil des Diktanten bei (nicht zu formell, aber professionell)
-- Korrigiere Füllwörter ("ähm", "also", "ich meine")
-- Baue logische Sätze, setze Satzzeichen
-- Wenn es eine Liste/Aufzählung ist, nutze Bullet Points
-- Fachbegriffe aus dem Handwerk richtig schreiben (Fliese, Gewerk, Dämmung, Aufmaß, etc.)
-- Keine Erklärungen oder Meta-Kommentare, nur der geschliffene Text
-- Kürze nicht den Inhalt, erweitere nur leicht wenn sinnvoll für Verständlichkeit
-- Gib KEIN Markdown zurück (keine Sterne, keine Headings)`;
+// Bekannte Whisper-Halluzinationen bei Stille/Rauschen — wenn das Transkript
+// NUR daraus besteht, wurde real nichts (Verwertbares) gesagt.
+const HALLUCINATION_PATTERNS = [
+  /^vielen dank( für.?s zuschauen| fürs zuschauen)?[.!]?$/i,
+  /untertitel (im auftrag des zdf|der amara\.org|von)/i,
+  /^copyright/i,
+  /^das war.?s[.!]?$/i,
+  /^bis zum nächsten mal[.!]?$/i,
+  /^musik$/i,
+  /^\[.*\]$/,
+];
 
-const APPEND_SYSTEM_PROMPT = `Du bist ein Assistent für österreichische Handwerker. Du erhältst:
-1. Einen bestehenden Text
-2. Eine neue Ergänzung (diktiert)
+const POLISH_SYSTEM_PROMPT = `Du bist ein Diktat-Korrektor für österreichische Handwerker.
 
-Deine Aufgabe: Füge die Ergänzung sinnvoll und flüssig an den bestehenden Text an.
+Deine EINZIGE Aufgabe: das Transkript minimal bereinigen, OHNE den Inhalt oder die Formulierung zu verändern.
 
-Regeln:
-- Bestehenden Text NICHT ändern
-- Neue Ergänzung als neuen Satz oder Absatz anhängen
-- Absatz-Trennung wenn inhaltlich anderes Thema
-- Gleicher Schreibstil wie bestehender Text
-- Korrigiere Grammatik/Rechtschreibung der Ergänzung
-- Nur das Endergebnis ausgeben, keine Erklärung`;
+ERLAUBT:
+- Rechtschreibung und Zeichensetzung korrigieren
+- Reine Füllwörter streichen ("ähm", "äh", "sozusagen")
+- Offensichtliche Erkennungsfehler bei Fachbegriffen korrigieren (z.B. "Ozeanplatte" → "OSB-Platte")
+
+VERBOTEN:
+- Umformulieren oder Sätze umstellen
+- Inhalte ergänzen, ausschmücken oder zusammenfassen
+- Wörter durch Synonyme ersetzen
+- Meta-Kommentare oder Erklärungen
+- Markdown
+
+Gib NUR den bereinigten Text zurück. Im Zweifel: unverändert lassen.`;
 
 async function callChatCompletion(systemPrompt: string, userMessage: string): Promise<string> {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -51,7 +69,7 @@ async function callChatCompletion(systemPrompt: string, userMessage: string): Pr
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
       ],
-      temperature: 0.3,
+      temperature: 0,
       max_tokens: 1500,
     }),
   });
@@ -60,20 +78,61 @@ async function callChatCompletion(systemPrompt: string, userMessage: string): Pr
   return (data.choices?.[0]?.message?.content || "").trim();
 }
 
-async function transcribeAudio(audioBlob: Blob): Promise<string> {
+async function transcribeWith(model: string, audioBlob: Blob): Promise<string> {
   const form = new FormData();
   form.append("file", audioBlob, "audio.webm");
-  form.append("model", "whisper-1");
+  form.append("model", model);
   form.append("language", "de");
-  form.append("response_format", "text");
+  form.append("prompt", TRANSCRIBE_PROMPT);
+  form.append("response_format", model === "whisper-1" ? "text" : "json");
 
   const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
     body: form,
   });
-  if (!res.ok) throw new Error(`Whisper: ${res.status} ${await res.text()}`);
-  return (await res.text()).trim();
+  if (!res.ok) throw new Error(`${model}: ${res.status} ${await res.text()}`);
+  if (model === "whisper-1") return (await res.text()).trim();
+  const data = await res.json();
+  return String(data.text || "").trim();
+}
+
+async function transcribeAudio(audioBlob: Blob): Promise<string> {
+  // gpt-4o-mini-transcribe ist für Deutsch spürbar genauer als whisper-1;
+  // whisper-1 bleibt als Fallback (z.B. falls das Modell nicht verfügbar ist).
+  try {
+    return await transcribeWith("gpt-4o-mini-transcribe", audioBlob);
+  } catch (e) {
+    console.warn("gpt-4o-mini-transcribe fehlgeschlagen, Fallback whisper-1:", (e as Error).message);
+    return await transcribeWith("whisper-1", audioBlob);
+  }
+}
+
+function istHalluzination(transcript: string): boolean {
+  const t = transcript.trim();
+  if (!t) return true;
+  return HALLUCINATION_PATTERNS.some((re) => re.test(t));
+}
+
+/**
+ * Konservatives Schleifen: GPT darf nur minimal korrigieren. Sicherheitsnetz:
+ * weicht die Länge des Ergebnisses stark vom Transkript ab (Indiz für
+ * Umformulieren/Ausschmücken/Kürzen), gewinnt das ORIGINAL-Transkript.
+ */
+async function polishConservative(transcript: string): Promise<string> {
+  try {
+    const polished = await callChatCompletion(POLISH_SYSTEM_PROMPT, transcript);
+    if (!polished) return transcript;
+    const ratio = polished.length / Math.max(transcript.length, 1);
+    if (ratio < 0.6 || ratio > 1.4) {
+      console.warn(`Polish verworfen (Längen-Ratio ${ratio.toFixed(2)}) — Transkript beibehalten.`);
+      return transcript;
+    }
+    return polished;
+  } catch (e) {
+    console.warn("Polish fehlgeschlagen — Transkript unverändert:", (e as Error).message);
+    return transcript;
+  }
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -98,12 +157,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
   try {
     const contentType = req.headers.get("content-type") || "";
 
-    // --- Multipart: Audio-Datei (Transkription + optional Polish/Append) ---
+    // --- Multipart: Audio-Datei → Transkript (+ konservatives Schleifen) ---
     if (contentType.includes("multipart/form-data")) {
       const form = await req.formData();
       const audio = form.get("audio") as File | null;
-      const existingText = (form.get("existingText") as string | null) || "";
-      const mode = (form.get("mode") as string | null) || "polish"; // "polish" | "append" | "raw"
+      const mode = (form.get("mode") as string | null) || "polish"; // "polish" | "raw" ("append" = Alt-Alias für polish)
 
       if (!audio) {
         return new Response(JSON.stringify({ error: "audio fehlt" }), {
@@ -112,55 +170,31 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
 
       const transcript = await transcribeAudio(audio);
-      if (!transcript) {
-        return new Response(JSON.stringify({ error: "Keine Sprache erkannt" }), {
+      if (istHalluzination(transcript)) {
+        return new Response(JSON.stringify({ error: "Keine Sprache erkannt — bitte näher ans Mikrofon und erneut versuchen." }), {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      if (mode === "raw") {
-        return new Response(JSON.stringify({ success: true, text: transcript, transcript }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      // WICHTIG: Das Anhängen an bestehenden Text macht der Client — hier wird
+      // IMMER nur das (bereinigte) neue Diktat zurückgegeben. So kann die KI
+      // den Bestandstext prinzipbedingt nicht verändern.
+      const text = mode === "raw" ? transcript : await polishConservative(transcript);
 
-      let polished: string;
-      if (mode === "append" && existingText.trim()) {
-        polished = await callChatCompletion(
-          APPEND_SYSTEM_PROMPT,
-          `Bestehender Text:\n${existingText}\n\nErgänzung (diktiert):\n${transcript}`
-        );
-      } else {
-        polished = await callChatCompletion(POLISH_SYSTEM_PROMPT, transcript);
-      }
-
-      return new Response(JSON.stringify({ success: true, text: polished, transcript }), {
+      return new Response(JSON.stringify({ success: true, text, transcript }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // --- JSON: nur Text-Polish/Append ---
+    // --- JSON: nur Text konservativ bereinigen ---
     const body = await req.json();
-    const mode = body.mode || "polish";
     const text = body.text || "";
-    const existingText = body.existingText || "";
-
     if (!text.trim()) {
       return new Response(JSON.stringify({ error: "text fehlt" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    let polished: string;
-    if (mode === "append" && existingText.trim()) {
-      polished = await callChatCompletion(
-        APPEND_SYSTEM_PROMPT,
-        `Bestehender Text:\n${existingText}\n\nErgänzung:\n${text}`
-      );
-    } else {
-      polished = await callChatCompletion(POLISH_SYSTEM_PROMPT, text);
-    }
-
+    const polished = await polishConservative(text);
     return new Response(JSON.stringify({ success: true, text: polished }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
