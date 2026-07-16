@@ -912,6 +912,11 @@ export default function Invoices() {
                                 );
                               })()}
                               <span>{inv.nummer}</span>
+                              {inv.archiviert && (
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-muted-foreground border-muted-foreground/40">
+                                  Archiviert
+                                </Badge>
+                              )}
                             </div>
                           </TableCell>
                           <TableCell>{inv.kunde_name}</TableCell>
@@ -1001,6 +1006,15 @@ export default function Invoices() {
                                 <DropdownMenuItem onClick={(e) => handlePrintPdf(inv.id, e as any)}>
                                   <Printer className="h-4 w-4 mr-2" /> Drucken
                                 </DropdownMenuItem>
+                                {inv.archiviert ? (
+                                  <DropdownMenuItem onClick={(e) => handleArchive(inv.id, false, e as any)}>
+                                    <ArchiveRestore className="h-4 w-4 mr-2" /> Wiederherstellen
+                                  </DropdownMenuItem>
+                                ) : (
+                                  <DropdownMenuItem onClick={(e) => handleArchive(inv.id, true, e as any)}>
+                                    <Archive className="h-4 w-4 mr-2" /> Archivieren
+                                  </DropdownMenuItem>
+                                )}
                                 {PAYABLE_INVOICE_TYPES.has(inv.typ) && isOverdue(inv) && (
                                   <DropdownMenuItem
                                     className="text-red-600 focus:text-red-700"

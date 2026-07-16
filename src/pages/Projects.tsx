@@ -37,6 +37,10 @@ const Projects = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [projects, setProjects] = useState<Project[]>([]);
+  // Deckungsbeitrag je Projekt (Admin): gebündelt berechnet, gleiche Formel
+  // wie die Nachkalkulations-Karte (ProjektNachkalkulation) — Quervergleich
+  // "welche Baustelle verdient Geld?" direkt in der Liste.
+  const [dbByProject, setDbByProject] = useState<Record<string, { db: number; prozent: number | null }>>({});
   const [loading, setLoading] = useState(true);
   const [showNewDialog, setShowNewDialog] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -63,6 +67,58 @@ const Projects = () => {
   type SortKey = "created_desc" | "start_asc" | "start_desc" | "name_asc";
   const [sortKey, setSortKey] = useState<SortKey>("created_desc");
   const { statuses: projectStatuses, findByName } = useProjectStatuses();
+
+  // Deckungsbeitrag je Projekt gebündelt laden (nur Admin, nur sichtbare
+  // Projekte) — identische Formel wie die Nachkalkulations-Karte.
+  useEffect(() => {
+    if (!isAdmin || projects.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const ids = projects.map(p => p.id);
+      const [invRes, teRes, matRes, purRes, factRes] = await Promise.all([
+        supabase.from("invoices").select("project_id, typ, status, netto_summe").in("project_id", ids),
+        supabase.from("time_entries").select("project_id, user_id, stunden, taetigkeit").in("project_id", ids),
+        (supabase as any).from("material_entries").select("project_id, typ, menge, einzelpreis").in("project_id", ids),
+        supabase.from("purchase_invoices").select("project_id, betrag_netto, betrag_brutto").in("project_id", ids),
+        supabase.from("app_settings").select("value").eq("key", "lohnnebenkosten_faktor").maybeSingle(),
+      ]);
+      if (cancelled) return;
+      const faktor = Number(factRes.data?.value) || 1.8;
+      const SONDER = new Set(["Urlaub", "Krankenstand", "Feiertag", "Zeitausgleich", "Weiterbildung"]);
+      const RTYP = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung"]);
+      // Stundenlöhne aller beteiligten Mitarbeiter in einem Rutsch
+      const userIds = [...new Set(((teRes.data as any[]) || []).map(e => e.user_id))];
+      const lohnByUser: Record<string, number> = {};
+      if (userIds.length > 0) {
+        const { data: emps } = await supabase.from("employees").select("user_id, stundenlohn").in("user_id", userIds);
+        for (const e of ((emps as any[]) || [])) lohnByUser[e.user_id] = Number(e.stundenlohn) || 0;
+      }
+      if (cancelled) return;
+      const out: Record<string, { db: number; prozent: number | null }> = {};
+      for (const pid of ids) {
+        const invs = ((invRes.data as any[]) || []).filter(i => i.project_id === pid && RTYP.has(i.typ) && i.status !== "storniert");
+        const hatSR = invs.some(i => i.typ === "schlussrechnung");
+        const erloes = invs.filter(i => (hatSR ? i.typ !== "anzahlungsrechnung" : true)).reduce((s, i) => s + (Number(i.netto_summe) || 0), 0);
+        let lohn = 0;
+        for (const e of ((teRes.data as any[]) || []).filter(e => e.project_id === pid && !SONDER.has(e.taetigkeit)))
+          lohn += (Number(e.stunden) || 0) * (lohnByUser[e.user_id] || 0) * faktor;
+        let material = 0;
+        for (const m of ((matRes.data as any[]) || []).filter(m => m.project_id === pid)) {
+          const menge = parseFloat(String(m.menge || "0")) || 0;
+          if (m.typ === "entnahme" || m.typ === "verbrauch") material += menge * (Number(m.einzelpreis) || 0);
+          else if (m.typ === "rueckgabe") material -= menge * (Number(m.einzelpreis) || 0);
+        }
+        const fremd = ((purRes.data as any[]) || []).filter(p => p.project_id === pid)
+          .reduce((s, p) => s + (Number(p.betrag_netto) || (Number(p.betrag_brutto) || 0) / 1.2), 0);
+        const kosten = lohn + material + fremd;
+        if (erloes < 0.005 && kosten < 0.005) continue; // nichts zu zeigen
+        const db = Math.round((erloes - kosten) * 100) / 100;
+        out[pid] = { db, prozent: erloes > 0 ? Math.round((db / erloes) * 100) : null };
+      }
+      setDbByProject(out);
+    })();
+    return () => { cancelled = true; };
+  }, [isAdmin, projects]);
 
   useEffect(() => {
     checkAdminStatus();
@@ -525,6 +581,17 @@ const Projects = () => {
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-1.5 self-start sm:self-center">
+                        {/* Deckungsbeitrag-Badge (Admin): verdient die Baustelle Geld? */}
+                        {isAdmin && dbByProject[project.id] && (
+                          <Badge
+                            variant="outline"
+                            className={`whitespace-nowrap font-mono tabular-nums ${dbByProject[project.id].db >= 0 ? "border-green-500/50 text-green-700 bg-green-50" : "border-destructive/50 text-destructive bg-destructive/5"}`}
+                            title="Deckungsbeitrag (Nachkalkulation) — Details in der Projekt-Übersicht"
+                          >
+                            DB € {dbByProject[project.id].db.toLocaleString("de-AT", { maximumFractionDigits: 0 })}
+                            {dbByProject[project.id].prozent !== null ? ` (${dbByProject[project.id].prozent}%)` : ""}
+                          </Badge>
+                        )}
                         <Badge
                           className="whitespace-nowrap border-0"
                           style={

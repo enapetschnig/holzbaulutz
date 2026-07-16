@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, Lock } from "lucide-react";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { KalkulationFields } from "@/components/KalkulationFields";
@@ -274,6 +274,10 @@ export default function InvoiceDetail() {
   const [verrechnungZielOptions, setVerrechnungZielOptions] = useState<Array<{ id: string; nummer: string; brutto_summe: number; bezahlt_betrag: number; status: string }>>([]);
   const [verrechnungSaving, setVerrechnungSaving] = useState(false);
   const [fromAngebotId, setFromAngebotId] = useState<string | null>(null);
+  // Nummer des Quellbelegs (für den Entwurf-Hinweis nach "Umwandeln in…")
+  const [convertSourceNummer, setConvertSourceNummer] = useState<string>("");
+  // Revisions-Verknüpfung: Vorgänger (Original) bzw. Nachfolger (neuere Fassung)
+  const [revisionInfo, setRevisionInfo] = useState<{ revision: number; vorgaenger?: { id: string; nummer: string } | null; nachfolger?: { id: string; nummer: string } | null }>({ revision: 1 });
   const [importOfferOpen, setImportOfferOpen] = useState(false);
   const [importTimeOpen, setImportTimeOpen] = useState(false);
   const [createProjectDialogOpen, setCreateProjectDialogOpen] = useState(false);
@@ -367,9 +371,13 @@ export default function InvoiceDetail() {
   });
 
   // Locked = already saved (not draft) — can only view, download, storno/delete
-  // Rechnungen: komplett locked nach Speichern. Angebote: Positionen + Kundendaten editierbar
-  const isLocked = !isNew && id !== "new" && !!invoiceId && form.typ === "rechnung";
-  const isKundeLocked = !isNew && id !== "new" && !!invoiceId && form.typ === "rechnung";
+  // ALLE ausgestellten Rechnungstypen (Rechnung, Anzahlungs-, Schlussrechnung)
+  // sind nach dem Ausstellen gesperrt — einheitliches Modell "ausgestellt =
+  // unveränderbar (nur Zahlung/Mahnung/Gutschrift/Storno)". Angebote bleiben
+  // editierbar.
+  const LOCKED_TYPES = ["rechnung", "anzahlungsrechnung", "schlussrechnung"];
+  const isLocked = !isNew && id !== "new" && !!invoiceId && LOCKED_TYPES.includes(form.typ);
+  const isKundeLocked = isLocked;
 
   // Angebot→Rechnung Vergleichs-Dialog
   const [convertDialogOpen, setConvertDialogOpen] = useState(false);
@@ -619,6 +627,7 @@ export default function InvoiceDetail() {
       // Duplikat: Original NICHT als Quelle merken (würde es beim Speichern
       // sonst fälschlich auf "verrechnet" setzen)
       setFromAngebotId(opts?.duplicate ? null : fromDocId);
+      setConvertSourceNummer(opts?.duplicate ? "" : (data.nummer || ""));
       return true;
     } catch (err) {
       console.error("Konversion fehlgeschlagen:", err);
@@ -825,6 +834,21 @@ export default function InvoiceDetail() {
       toast({ variant: "destructive", title: "Fehler", description: "Rechnung nicht gefunden" });
       navigate("/invoices");
       return;
+    }
+
+    // Revisions-Nachbarn laden (Angebots-Preisstände): Vorgänger = Original,
+    // Nachfolger = neuere Fassung, die dieses Angebot ersetzt hat.
+    {
+      const revision = Number((data as any).revision) || 1;
+      let vorgaenger: { id: string; nummer: string } | null = null;
+      let nachfolger: { id: string; nummer: string } | null = null;
+      if ((data as any).vorgaenger_id) {
+        const { data: v } = await supabase.from("invoices").select("id, nummer").eq("id", (data as any).vorgaenger_id).maybeSingle();
+        if (v) vorgaenger = v as any;
+      }
+      const { data: n } = await (supabase as any).from("invoices").select("id, nummer").eq("vorgaenger_id", invoiceId).maybeSingle();
+      if (n) nachfolger = n as any;
+      setRevisionInfo({ revision, vorgaenger, nachfolger });
     }
 
     setForm({
@@ -1358,6 +1382,19 @@ export default function InvoiceDetail() {
       return false;
     }
 
+    // AUSSTELLUNGS-BESTÄTIGUNG: Das erste Speichern einer Rechnung/AR/SR ist
+    // kein "Zwischenspeichern" — es vergibt die fortlaufende Nummer und sperrt
+    // den Beleg. Das muss dem Nutzer bewusst sein, BEVOR es passiert.
+    if ((isNew || !invoiceId) && LOCKED_TYPES.includes(form.typ)) {
+      const _label = getDocConfig(form.typ).label;
+      const ok = window.confirm(
+        `${_label} jetzt ausstellen?\n\n` +
+        `Es wird eine fortlaufende Belegnummer vergeben. Danach ist der Beleg nicht mehr bearbeitbar — ` +
+        `möglich bleiben: Zahlung erfassen, Mahnung, Gutschrift und Storno.`
+      );
+      if (!ok) return false;
+    }
+
     // Rechnungsbetrag muss > 0 sein (außer bei Entwürfen).
     // bruttoSumme ist die korrekt berechnete Anzeige-Summe: mwst_exempt-Zeilen
     // (z.B. Anzahlungs-Abzüge) bekommen KEINE MwSt und der Global-Rabatt ist
@@ -1775,7 +1812,14 @@ export default function InvoiceDetail() {
         });
       } else {
         setKalkRefreshApplied(false);
-        toast({ title: "Gespeichert", description: `${form.typ === "rechnung" ? "Rechnung" : "Angebot"} wurde gespeichert` });
+        const _lbl = getDocConfig(form.typ).label;
+        const _quelle = convertSourceNummer && LOCKED_TYPES.includes(form.typ)
+          ? ` Angebot ${convertSourceNummer} wurde als „verrechnet" (in Rechnung überführt) markiert.`
+          : "";
+        toast({
+          title: LOCKED_TYPES.includes(form.typ) && isNew ? `${_lbl} ausgestellt` : "Gespeichert",
+          description: `${_lbl} ${form.nummer ? form.nummer + " " : ""}wurde gespeichert.${_quelle}`,
+        });
       }
 
       // Wenn Projekt zugeordnet → PDF zusätzlich in den Projektordner ablegen
@@ -2681,6 +2725,58 @@ export default function InvoiceDetail() {
             </Card>
           )}
 
+          {/* Entwurf-Hinweis: aus einem Angebot umgewandelt, aber noch NICHT
+              ausgestellt — verhindert das Missverständnis "Umwandeln = fertig". */}
+          {isNew && fromAngebotId && LOCKED_TYPES.includes(form.typ) && (
+            <div className="flex items-start gap-2 rounded-md border border-blue-300 bg-blue-50 px-3 py-2.5 text-sm text-blue-900">
+              <FileText className="h-4 w-4 shrink-0 mt-0.5 text-blue-600" />
+              <span>
+                <b>Entwurf</b> aus {convertSourceNummer ? `Angebot ${convertSourceNummer}` : "dem Quellbeleg"} —
+                die {getDocConfig(form.typ).label} wird erst mit <b>„Speichern"</b> ausgestellt
+                (Nummer wird dabei vergeben, das Angebot als „verrechnet" markiert).
+              </span>
+            </div>
+          )}
+
+          {/* Revisions-Verknüpfung: neuere Fassung ↔ Original sichtbar machen */}
+          {!isNew && revisionInfo.nachfolger && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
+              <span>
+                <b>Alter Preisstand:</b> Dieses Angebot wurde durch{" "}
+                <button type="button" className="underline font-semibold" onClick={() => navigate(`/invoices/${revisionInfo.nachfolger!.id}`)}>
+                  {revisionInfo.nachfolger.nummer}
+                </button>{" "}
+                ersetzt (Preise aktualisiert). Es bleibt als Original erhalten — zum Weiterarbeiten bitte die neue Fassung verwenden.
+              </span>
+            </div>
+          )}
+          {!isNew && revisionInfo.vorgaenger && (
+            <div className="flex items-start gap-2 rounded-md border border-blue-300 bg-blue-50 px-3 py-2.5 text-sm text-blue-900">
+              <FileText className="h-4 w-4 shrink-0 mt-0.5 text-blue-600" />
+              <span>
+                <b>Revision {revisionInfo.revision}:</b> Aktualisierter Preisstand — ersetzt{" "}
+                <button type="button" className="underline font-semibold" onClick={() => navigate(`/invoices/${revisionInfo.vorgaenger!.id}`)}>
+                  {revisionInfo.vorgaenger.nummer}
+                </button>{" "}
+                (Original bleibt im Archiv erhalten).
+              </span>
+            </div>
+          )}
+
+          {/* Gesperrt-Erklärung: ausgestellter Beleg — sagen WARUM gesperrt
+              und was noch möglich ist (sonst wirken die toten Felder kaputt). */}
+          {isLocked && form.status !== "storniert" && (
+            <div className="flex items-start gap-2 rounded-md border border-slate-300 bg-slate-50 px-3 py-2.5 text-sm text-slate-800">
+              <Lock className="h-4 w-4 shrink-0 mt-0.5 text-slate-500" />
+              <span>
+                Diese {getDocConfig(form.typ).label} wurde <b>ausgestellt</b> und ist nicht mehr bearbeitbar
+                (gesetzliche Belegsicherheit). Weiterhin möglich: <b>Zahlung erfassen</b> (unten),
+                <b> Mahnung</b>, <b>Gutschrift</b> (Umwandeln-Menü), <b>Storno</b> und <b>Duplizieren</b> als Entwurf.
+              </span>
+            </div>
+          )}
+
           {/* Status & Actions */}
           {!isNew && (
             <Card>
@@ -2691,6 +2787,36 @@ export default function InvoiceDetail() {
                     <Badge className={statusColors[form.status] || ""}>
                       {statusLabels[form.status] || form.status}
                     </Badge>
+                    {/* Status direkt HIER wechselbar — der nächste Schritt nach dem
+                        Versenden ("Kunde hat angenommen") darf nicht nur im
+                        unscheinbaren Listen-Dropdown versteckt sein. */}
+                    {form.typ === "angebot" && !["verrechnet", "storniert"].includes(form.status) && !revisionInfo.nachfolger && (
+                      <Select
+                        value={form.status}
+                        onValueChange={async (neu) => {
+                          if (neu === form.status || !invoiceId) return;
+                          const { error } = await supabase.from("invoices").update({ status: neu }).eq("id", invoiceId);
+                          if (error) { toast({ variant: "destructive", title: "Fehler", description: error.message }); return; }
+                          updateField("status", neu);
+                          if (neu === "angenommen") {
+                            toast({ title: "Angebot angenommen 🎉", description: form.project_id ? "Projekt ist bereits verknüpft." : "Lege jetzt das Projekt zur Baustelle an." });
+                            if (!form.project_id) setCreateProjectDialogOpen(true);
+                          } else {
+                            toast({ title: "Status geändert", description: statusLabels[neu] || neu });
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="h-8 w-[170px] text-sm">
+                          <SelectValue placeholder="Status ändern…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="entwurf">Entwurf</SelectItem>
+                          <SelectItem value="offen">Offen (versendet)</SelectItem>
+                          <SelectItem value="angenommen">✓ Angenommen</SelectItem>
+                          <SelectItem value="abgelehnt">✗ Abgelehnt</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
                     {form.mahnstufe > 0 && (
                       <Badge variant="destructive">
                         {form.mahnstufe === 1 ? "Zahlungserinnerung" : `${form.mahnstufe}. Mahnung`}
@@ -2698,7 +2824,7 @@ export default function InvoiceDetail() {
                     )}
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {form.typ === "rechnung" && (form.status === "offen" || form.status === "teilbezahlt") && bruttoSumme > 0 && (
+                    {["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ) && (form.status === "offen" || form.status === "teilbezahlt") && bruttoSumme > 0 && (
                       <Select onValueChange={async (stufe) => {
                         const mahnstufe = parseInt(stufe);
                         // Warnung bei teilbezahlten Rechnungen — offener Restbetrag wird gemahnt
@@ -2755,14 +2881,18 @@ export default function InvoiceDetail() {
                         </SelectContent>
                       </Select>
                     )}
-                    {/* Umwandeln-Menü: zeigt basierend auf aktuellem typ die erlaubten Ziele */}
-                    {!isNew && form.status !== "verrechnet" && form.status !== "abgelehnt" && form.status !== "storniert" && (() => {
+                    {/* Umwandeln-Menü: zeigt basierend auf aktuellem typ die erlaubten Ziele.
+                        Auch bei "verrechnet" sichtbar (nur Folge-AR/SR) — sonst gäbe es nach
+                        der 1. Anzahlungsrechnung am Auftrag keinen Weg zur Schlussrechnung.
+                        Ersetzte Original-Angebote (alte Revision) bieten KEIN Umwandeln an. */}
+                    {!isNew && form.status !== "abgelehnt" && form.status !== "storniert" && !revisionInfo.nachfolger && (() => {
                       const t = form.typ;
+                      const istVerrechnet = form.status === "verrechnet";
                       // Vom Angebot aus darf man direkt in jeden Rechnungstyp
                       // umwandeln — der Umweg über AB ist optional, nicht Pflicht.
                       const allow = {
-                        auftragsbestaetigung: t === "angebot",
-                        rechnung: t === "angebot" || t === "auftragsbestaetigung",
+                        auftragsbestaetigung: t === "angebot" && !istVerrechnet,
+                        rechnung: (t === "angebot" || t === "auftragsbestaetigung") && !istVerrechnet,
                         // Folge-AR aus AR = kumulierte Anzahlungsrechnung
                         anzahlungsrechnung: t === "angebot" || t === "auftragsbestaetigung" || t === "anzahlungsrechnung",
                         schlussrechnung: t === "angebot" || t === "auftragsbestaetigung" || t === "anzahlungsrechnung",
@@ -3073,7 +3203,7 @@ export default function InvoiceDetail() {
           )}
 
           {/* Zahlungsverlauf */}
-          {!isNew && form.typ === "rechnung" && form.status !== "storniert" && (
+          {!isNew && ["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ) && form.status !== "storniert" && (
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex justify-between items-center">
@@ -3148,7 +3278,7 @@ export default function InvoiceDetail() {
           )}
 
           {/* Mahnungs-Übersicht */}
-          {!isNew && form.typ === "rechnung" && mahnungen.length > 0 && (
+          {!isNew && ["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ) && mahnungen.length > 0 && (
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Mahnungen</CardTitle>
@@ -5360,6 +5490,18 @@ export default function InvoiceDetail() {
           onClose={() => setCreateProjectDialogOpen(false)}
           onCreated={async (newProject) => {
             updateField("project_id", newProject.id);
+            // Verknüpfung + Material-Soll SOFORT persistieren (nicht erst beim
+            // nächsten Speichern) — Parität zum Annehmen-Flow in der Belegliste.
+            if (invoiceId) {
+              await supabase.from("invoices").update({ project_id: newProject.id }).eq("id", invoiceId);
+              try {
+                const { generateMaterialbedarfFromAngebot } = await import("@/lib/materialbedarf");
+                const n = await generateMaterialbedarfFromAngebot(invoiceId, newProject.id);
+                if (n > 0) toast({ title: "Projekt verknüpft", description: `${n} Material-Position(en) als Soll ins Projekt übernommen.` });
+              } catch (e: any) {
+                console.warn("Materialbedarf fehlgeschlagen:", e?.message);
+              }
+            }
             const { data: projectsData } = await supabase
               .from("projects")
               .select("id, name")
