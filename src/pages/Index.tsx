@@ -19,6 +19,7 @@ import ChangePasswordDialog from "@/components/ChangePasswordDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { MeineEinteilung } from "@/components/MeineEinteilung";
 import { StundenabgleichWidget } from "@/components/dashboard/StundenabgleichWidget";
+import { OffenePostenWidget } from "@/components/dashboard/OffenePostenWidget";
 
 type Project = {
   id: string;
@@ -498,6 +499,13 @@ export default function Index() {
             </Card>
           )}
         </div>
+
+        {/* Offene Posten: Wo steht Geld aus? (Admin) */}
+        {isAdmin && (
+          <div className="mt-6">
+            <OffenePostenWidget />
+          </div>
+        )}
 
         {/* Stundenabgleich: Angebot vs. gebucht (Admin) */}
         {isAdmin && (

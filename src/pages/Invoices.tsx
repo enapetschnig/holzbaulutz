@@ -6,8 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { useNavigate } from "react-router-dom";
-import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, Undo2 } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, Undo2, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { matchesSearch } from "@/lib/searchUtils";
 import { loadInvoiceLogo } from "@/lib/logoLoader";
@@ -82,9 +82,17 @@ const INVOICE_LIKE_TYPES = new Set(["rechnung", "anzahlungsrechnung", "schlussre
 const ANGEBOT_LIKE_TYPES = new Set(["angebot", "auftragsbestaetigung"]);
 
 export default function Invoices() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Projekt-Filter aus der URL (?project=…) — z.B. Klick auf "Alle Belege"
+  // in der Projekt-Übersicht. Name für den Chip wird aus den geladenen Belegen
+  // abgeleitet.
+  const projectFilter = searchParams.get("project");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filterTyp, setFilterTyp] = useState<string>("rechnung");
+  // Start-Tab aus der URL (?typ=angebot) — z.B. vom Dashboard-Widget.
+  const [filterTyp, setFilterTyp] = useState<string>(
+    ["rechnung", "angebot", "lieferschein", "storno"].includes(searchParams.get("typ") || "")
+      ? (searchParams.get("typ") as string) : "rechnung");
   const [filterStatus, setFilterStatus] = useState<string>("alle");
   // Sub-Typ-Filter innerhalb der Rechnungen- bzw. Angebote-Tabs.
   //   "alle" = keine weitere Einschränkung
@@ -452,6 +460,9 @@ export default function Invoices() {
       String(i.brutto_summe).includes(searchQuery) ||
       i.brutto_summe.toFixed(2).includes(searchQuery);
     const matchArchive = showArchive ? true : !i.archiviert;
+    // Projekt-Filter (?project=…) über alle Tabs hinweg
+    const matchProject = !projectFilter || i.project_id === projectFilter;
+    if (!matchProject) return false;
 
     // Tab "storno" → NUR stornierte Rechnungen
     if (filterTyp === "storno") {
@@ -490,6 +501,21 @@ export default function Invoices() {
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8 max-w-[1600px]">
         <PageHeader title="Rechnungen & Angebote" backPath="/" />
+
+        {/* Projekt-Filter-Chip (aus ?project=…) */}
+        {projectFilter && (
+          <div className="mb-3">
+            <button
+              type="button"
+              onClick={() => { const sp = new URLSearchParams(searchParams); sp.delete("project"); setSearchParams(sp); }}
+              className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-sm text-primary hover:bg-primary/20"
+              title="Projekt-Filter aufheben"
+            >
+              <span>📁 Nur Belege dieses Projekts</span>
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Kompakte Stats — kontextuell gefiltert */}
         {(() => {
@@ -1068,6 +1094,16 @@ export default function Invoices() {
             if (createProjectForInvoiceId) {
               await supabase.from("invoices").update({ project_id: newProject.id }).eq("id", createProjectForInvoiceId);
               setInvoices(prev => prev.map(i => i.id === createProjectForInvoiceId ? { ...i, project_id: newProject.id } : i));
+              // Material-Soll direkt erzeugen — sonst bleibt die Soll/Ist-
+              // Materialliste des frisch angelegten Projekts leer, bis das
+              // Angebot zufällig nochmal gespeichert wird.
+              try {
+                const { generateMaterialbedarfFromAngebot } = await import("@/lib/materialbedarf");
+                const n = await generateMaterialbedarfFromAngebot(createProjectForInvoiceId, newProject.id);
+                if (n > 0) toast({ title: "Projekt angelegt", description: `${n} Material-Position(en) als Soll ins Projekt übernommen.` });
+              } catch (e: any) {
+                console.warn("Materialbedarf beim Projektanlegen fehlgeschlagen:", e?.message);
+              }
             }
             setCreateProjectDialogOpen(false);
             setCreateProjectForInvoiceId(null);
