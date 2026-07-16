@@ -111,6 +111,8 @@ const ProjectOverview = () => {
     const { data: angebote } = await supabase.from("invoices")
       .select("id, status, datum").eq("project_id", projectId).eq("typ", "angebot")
       .not("status", "in", '("storniert","abgelehnt")')
+      // Archivierte Vorgänger-Revisionen (Original nach Preis-Update) ausschließen
+      .or("archiviert.is.null,archiviert.eq.false")
       .order("datum", { ascending: false });
     const statusRang: Record<string, number> = { angenommen: 0, verrechnet: 1, offen: 2, entwurf: 3 };
     const referenz = ((angebote as any[]) || []).slice().sort((a, b) => {

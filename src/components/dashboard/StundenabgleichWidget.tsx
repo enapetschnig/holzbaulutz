@@ -59,6 +59,8 @@ export function StundenabgleichWidget() {
           .in("project_id", ids)
           .eq("typ", "angebot")
           .not("status", "in", '("storniert","abgelehnt")')
+          // Archivierte Vorgänger-Revisionen ausschließen
+          .or("archiviert.is.null,archiviert.eq.false")
           .order("datum", { ascending: false });
         const statusRang: Record<string, number> = { angenommen: 0, verrechnet: 1, offen: 2, entwurf: 3 };
         const angebotByProject: Record<string, { id: string; rang: number }> = {};

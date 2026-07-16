@@ -1122,6 +1122,11 @@ export default function InvoiceDetail() {
   // zieht dieser Knopf die AKTUELLE Material-Kalkulation je verknüpfter Position
   // (kalkulation_template_id) neu — explizit und nachvollziehbar (alt→neu).
   const [kalkRefreshing, setKalkRefreshing] = useState(false);
+  // Wurden in dieser Sitzung Preise per "Preise aktualisieren" auf den
+  // aktuellen Katalogstand gezogen? Dann speichert das nächste Speichern ein
+  // GESPEICHERTES Angebot automatisch als neue Revision (AN…-R2) und lässt
+  // das Original unangetastet (archiviert, Vorgänger-Verweis).
+  const [kalkRefreshApplied, setKalkRefreshApplied] = useState(false);
   const [staleKalkCount, setStaleKalkCount] = useState(0);
 
   const fetchCatalogKalk = useCallback(async (): Promise<Record<string, any>> => {
@@ -1191,9 +1196,11 @@ export default function InvoiceDetail() {
       if (changed === 0) {
         toast({ title: "Preise sind aktuell", description: "Alle kalkulierten Positionen entsprechen bereits dem Materialkatalog." });
       } else {
+        setKalkRefreshApplied(true);
+        const istGespeichertesAngebot = form.typ === "angebot" && !isNew && !!invoiceId;
         toast({
           title: `${changed} Position(en) aktualisiert`,
-          description: `Einzelpreise gesamt: € ${oldTotal.toFixed(2)} → € ${newTotal.toFixed(2)}. Zum Übernehmen speichern.`,
+          description: `Einzelpreise gesamt: € ${oldTotal.toFixed(2)} → € ${newTotal.toFixed(2)}. ${istGespeichertesAngebot ? "Beim Speichern entsteht automatisch eine neue Version — das ursprüngliche Angebot bleibt erhalten." : "Zum Übernehmen speichern."}`,
         });
       }
     } finally {
@@ -1447,6 +1454,15 @@ export default function InvoiceDetail() {
       let savedId = invoiceId;
       let customerId = form.customer_id;
 
+      // AUTOMATISCHE ANGEBOTS-REVISION: Wurden auf einem GESPEICHERTEN Angebot
+      // die Preise per "Preise aktualisieren" auf den Katalogstand gezogen,
+      // wird NICHT das Original überschrieben. Stattdessen: neues Angebot
+      // "Basis-Nr-R<n>" mit Vorgänger-Verweis; das Original bleibt archiviert
+      // und unverändert erhalten (Baubetriebs-Praxis: alter und neuer
+      // Preisstand müssen beide nachvollziehbar bleiben).
+      const revisionVonId = (kalkRefreshApplied && form.typ === "angebot" && savedId && !isNew) ? savedId : null;
+      if (revisionVonId) savedId = null; // → unten den Insert-Pfad nehmen
+
       // Auto-create customer if no customer_id is set (never overwrite existing customer master data)
       if (form.kunde_name.trim()) {
         if (customerId) {
@@ -1619,18 +1635,37 @@ export default function InvoiceDetail() {
       };
 
       if (isNew || !savedId) {
-        const { data: numData, error: numError } = await supabase.rpc("next_document_number" as never, {
-          p_typ: form.typ,
-          p_jahr: form.jahr,
-        } as never);
+        let nummer: string;
+        let laufnummer: number;
+        let revisionExtras: any = {};
+        if (revisionVonId) {
+          // Revision: KEINE neue Belegnummer ziehen — Basis-Nummer + "-R<n>",
+          // damit Kunde und Buchhaltung den Zusammenhang sofort sehen.
+          const { data: alt } = await supabase
+            .from("invoices")
+            .select("nummer, laufnummer, revision" as any)
+            .eq("id", revisionVonId)
+            .maybeSingle();
+          const altNummer = String((alt as any)?.nummer || form.nummer || "");
+          const basis = altNummer.replace(/-R\d+$/, "");
+          const neueRevision = (Number((alt as any)?.revision) || 1) + 1;
+          nummer = `${basis}-R${neueRevision}`;
+          laufnummer = Number((alt as any)?.laufnummer) || 1;
+          revisionExtras = { revision: neueRevision, vorgaenger_id: revisionVonId };
+        } else {
+          const { data: numData, error: numError } = await supabase.rpc("next_document_number" as never, {
+            p_typ: form.typ,
+            p_jahr: form.jahr,
+          } as never);
 
-        if (numError) throw numError;
-        const nummer = numData as string;
-        const laufnummer = parseInt((nummer.match(/(\d+)$/) || ["", "1"])[1]) || 1;
+          if (numError) throw numError;
+          nummer = numData as string;
+          laufnummer = parseInt((nummer.match(/(\d+)$/) || ["", "1"])[1]) || 1;
+        }
 
         const insertOnce = async (payload: any) => supabase
           .from("invoices")
-          .insert({ user_id: user.id, typ: form.typ, nummer, laufnummer, jahr: form.jahr, ...payload })
+          .insert({ user_id: user.id, typ: form.typ, nummer, laufnummer, jahr: form.jahr, ...revisionExtras, ...payload, ...(revisionVonId ? { status: "offen" } : {}) })
           .select("id, nummer")
           .single();
 
@@ -1725,7 +1760,23 @@ export default function InvoiceDetail() {
       }
 
       setIsDirty(false);
-      toast({ title: "Gespeichert", description: `${form.typ === "rechnung" ? "Rechnung" : "Angebot"} wurde gespeichert` });
+
+      if (revisionVonId && savedId) {
+        // Revision-Nacharbeiten: Original archivieren (bleibt unverändert
+        // abrufbar) und dessen Material-Soll entfernen — die neue Revision
+        // erzeugt ihren eigenen Soll gleich unten.
+        await supabase.from("invoices").update({ archiviert: true }).eq("id", revisionVonId);
+        await (supabase as any).from("material_entries")
+          .delete().eq("typ", "bedarf").eq("source_invoice_id", revisionVonId);
+        setKalkRefreshApplied(false);
+        toast({
+          title: "Neue Version erstellt",
+          description: `Angebot ${form.nummer || ""} bleibt als Original erhalten (Archiv) — die aktualisierte Fassung wurde als eigenes Angebot gespeichert.`,
+        });
+      } else {
+        setKalkRefreshApplied(false);
+        toast({ title: "Gespeichert", description: `${form.typ === "rechnung" ? "Rechnung" : "Angebot"} wurde gespeichert` });
+      }
 
       // Wenn Projekt zugeordnet → PDF zusätzlich in den Projektordner ablegen
       if (savedId && form.project_id) {
@@ -1746,9 +1797,9 @@ export default function InvoiceDetail() {
           });
       }
 
-      if (isNew && !previewOpen) {
+      if ((isNew || revisionVonId) && !previewOpen) {
         navigate(`/invoices/${savedId}`, { replace: true });
-      } else if (isNew) {
+      } else if (isNew || revisionVonId) {
         // Preview is open — don't navigate (would lose state), just update URL silently
         window.history.replaceState(null, "", `/invoices/${savedId}`);
       }
