@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Users, MapPin, Calendar, Clock } from "lucide-react";
+import { Users, MapPin, Calendar, Clock, ClipboardList } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { format, startOfISOWeek, addDays, isWithinInterval, parseISO, isSameDay } from "date-fns";
 import { de } from "date-fns/locale";
@@ -25,7 +25,14 @@ type TeamInfo = {
   team_name: string;
 };
 
-export function MeineEinteilung({ userId }: { userId: string }) {
+export function MeineEinteilung({
+  userId,
+  nurMitEinsaetzen = false,
+}: {
+  userId: string;
+  /** true: Karte nur anzeigen, wenn tatsächlich Einsätze vorliegen (z.B. für Admins) */
+  nurMitEinsaetzen?: boolean;
+}) {
   const navigate = useNavigate();
   const [einsaetze, setEinsaetze] = useState<EinsatzInfo[]>([]);
   const [team, setTeam] = useState<TeamInfo | null>(null);
@@ -91,12 +98,17 @@ export function MeineEinteilung({ userId }: { userId: string }) {
   };
 
   if (loading) return null;
-  if (einsaetze.length === 0 && !team) return null;
+  if (einsaetze.length === 0 && (nurMitEinsaetzen || !team)) return null;
 
   const today = new Date();
   const todayStr = format(today, "yyyy-MM-dd");
   const weekStart = startOfISOWeek(today);
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+
+  // Heutige Einsätze für das Banner "Deine heutige Einteilung"
+  const heutigeEinsaetze = einsaetze.filter(
+    e => e.start_date <= todayStr && todayStr <= e.end_date
+  );
 
   // Zur Zeiterfassung springen — Projekt und Datum werden dort nur
   // VORAUSGEWÄHLT, gebucht wird nichts automatisch.
@@ -121,6 +133,28 @@ export function MeineEinteilung({ userId }: { userId: string }) {
         </CardTitle>
       </CardHeader>
       <CardContent>
+        {/* Banner: Heutige Einteilung prominent hervorheben */}
+        {heutigeEinsaetze.length > 0 && (
+          <div className="mb-3 rounded-lg bg-orange-600 text-white p-3 flex items-start gap-3">
+            <ClipboardList className="h-5 w-5 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <div className="text-xs font-medium uppercase tracking-wide text-orange-100">
+                Deine heutige Einteilung
+              </div>
+              {heutigeEinsaetze.map(e => (
+                <div key={e.id} className="text-sm font-semibold leading-snug">
+                  {e.project_name}
+                  {!e.ganztaegig && e.start_time && (
+                    <span className="ml-2 font-normal text-orange-100">
+                      {e.start_time} – {e.end_time}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {einsaetze.length === 0 ? (
           <p className="text-sm text-muted-foreground">Keine Einsätze diese Woche</p>
         ) : (

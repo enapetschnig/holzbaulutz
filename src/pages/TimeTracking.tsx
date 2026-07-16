@@ -147,6 +147,10 @@ const TimeTracking = () => {
       ? datumParam
       : new Date().toISOString().split('T')[0];
   });
+  // Heutige Plantafel-Zuordnung des eingeloggten Users (aus `einsaetze`).
+  // Dient nur der Vorauswahl + einem dezenten Hinweis — gebucht wird nichts.
+  const [plantafelHeute, setPlantafelHeute] = useState<{ projectId: string; projectName: string }[]>([]);
+  const [plantafelHeuteApplied, setPlantafelHeuteApplied] = useState(false);
   const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([createDefaultBlock()]);
   // Hat der Nutzer die Blöcke bereits verändert? Dann beim Datumswechsel
   // nicht überschreiben (nur die Tagesliste neu laden).
@@ -269,6 +273,40 @@ const TimeTracking = () => {
     }
   }, [loading, loadingDayEntries, plantafelProjectId, projects, existingDayEntries, searchParams]);
 
+  // Heutige Plantafel-Zuordnung als Vorauswahl übernehmen — NUR wenn genau
+  // ein Projekt zugeordnet ist, der erste Block noch kein Projekt hat und
+  // der Nutzer nichts verändert hat. Nutzereingaben werden nie überschrieben.
+  // URL-Parameter aus der Plantafel (Effekt oben) haben Vorrang.
+  useEffect(() => {
+    if (loading || loadingDayEntries || plantafelHeuteApplied) return;
+    if (plantafelHeute.length !== 1) return;
+    if (plantafelProjectId || searchParams.has("project") || searchParams.has("datum")) return;
+    if (blocksTouched) return;
+
+    // Nur für den heutigen Tag vorauswählen
+    const heute = new Date().toISOString().split('T')[0];
+    if (selectedDate !== heute) return;
+
+    const projektId = plantafelHeute[0].projectId;
+    if (!projects.some(p => p.id === projektId)) return;
+
+    const dayBlocked = existingDayEntries.some(e =>
+      ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit)
+    );
+    const firstBlock = timeBlocks[0];
+    if (dayBlocked || !firstBlock || firstBlock.projectId) return;
+
+    // Bewusst NICHT updateBlock(): das würde blocksTouched setzen und den
+    // Reset-Schutz beim Datumswechsel fälschlich aktivieren.
+    const firstBlockId = firstBlock.id;
+    setTimeBlocks(prev => prev.map(block =>
+      block.id === firstBlockId
+        ? { ...block, projectId: projektId, locationType: "baustelle" as const }
+        : block
+    ));
+    setPlantafelHeuteApplied(true);
+  }, [loading, loadingDayEntries, plantafelHeuteApplied, plantafelHeute, plantafelProjectId, searchParams, blocksTouched, selectedDate, projects, existingDayEntries, timeBlocks]);
+
   useEffect(() => {
     fetchProjects();
     fetchDisturbances();
@@ -288,6 +326,33 @@ const TimeTracking = () => {
       ]);
       if (vehData) setVehicles(vehData as any);
       if (taetData) setTaetigkeitOptions(((taetData as any[]) || []).map(o => o.label));
+    })();
+
+    // Heutige Plantafel-Zuordnung des Users laden (eigene Einsätze,
+    // RLS erlaubt Mitarbeitern das Lesen via user_id = auth.uid())
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const heute = new Date().toISOString().split('T')[0];
+      const { data: einsatzData } = await supabase
+        .from("einsaetze")
+        .select("project_id")
+        .eq("user_id", user.id)
+        .lte("start_date", heute)
+        .gte("end_date", heute);
+
+      const projektIds = [...new Set((einsatzData || []).map(e => e.project_id))];
+      if (projektIds.length === 0) return;
+
+      const { data: projektData } = await supabase
+        .from("projects")
+        .select("id, name")
+        .in("id", projektIds);
+      const nameMap = new Map((projektData || []).map(p => [p.id, p.name]));
+      setPlantafelHeute(projektIds.map(id => ({
+        projectId: id,
+        projectName: nameMap.get(id) || "Projekt",
+      })));
     })();
 
     const channel = supabase
@@ -1161,6 +1226,14 @@ const TimeTracking = () => {
                                 </SelectItem>
                               </SelectContent>
                             </Select>
+                            {/* Dezenter Hinweis auf die heutige Plantafel-Zuordnung */}
+                            {index === 0 && plantafelHeute.length > 0 &&
+                              selectedDate === new Date().toISOString().split('T')[0] && (
+                              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                                <Calendar className="w-3 h-3" />
+                                Laut Plantafel: {plantafelHeute.map(p => p.projectName).join(", ")}
+                              </p>
+                            )}
                           </div>
                         )}
 

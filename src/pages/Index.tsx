@@ -354,8 +354,8 @@ export default function Index() {
           </p>
         </div>
 
-        {/* Meine Einteilung — für Mitarbeiter und Vorarbeiter */}
-        {user && !isAdmin && <MeineEinteilung userId={user.id} />}
+        {/* Meine Einteilung — für alle; Admins nur, wenn sie in der Plantafel eingeteilt sind */}
+        {user && <MeineEinteilung userId={user.id} nurMitEinsaetzen={isAdmin} />}
 
         {/* Main Actions Grid — Admin: R&A, Projekte, Material, Materialien, Kunden, Admin, Zeit, Stunden */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">

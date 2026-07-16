@@ -19,6 +19,9 @@ interface ImportItem {
   detail?: string;
   /** Gewählte Stundensatz-Art (Facharbeiter/Regie/Lehrling …) für Zeit-Zeilen */
   satzId?: string;
+  /** Zeit-Zeilen: die einzelnen Zeitbuchungen dahinter — jede einzeln
+   *  an-/abwählbar; die Menge der Position folgt der Auswahl. */
+  buchungen?: { id: string; datum: string; stunden: number; taetigkeit: string; selected: boolean }[];
 }
 
 export interface Stundensatz {
@@ -89,8 +92,9 @@ export function ImportFromProjectDialog({
   const fetchTimeEntries = async (pid: string): Promise<ImportItem[]> => {
     const { data } = await supabase
       .from("time_entries")
-      .select("user_id, stunden, taetigkeit")
-      .eq("project_id", pid);
+      .select("id, user_id, stunden, taetigkeit, datum")
+      .eq("project_id", pid)
+      .order("datum", { ascending: true });
 
     if (!data || data.length === 0) return [];
 
@@ -116,16 +120,22 @@ export function ImportFromProjectDialog({
       })
     );
 
-    // Group by user (hidden User werden ausgefiltert)
+    // Group by user (hidden User werden ausgefiltert) — inkl. der einzelnen
+    // Zeitbuchungen, damit man gezielt an-/abwählen kann, WELCHE Arbeitszeiten
+    // verrechnet werden.
     const visibleIds = new Set(visibleProfiles.map((p: any) => p.id));
-    const groups = new Map<string, { stunden: number; taetigkeiten: Set<string> }>();
-    data.forEach(e => {
+    const groups = new Map<string, { stunden: number; taetigkeiten: Set<string>; buchungen: { id: string; datum: string; stunden: number; taetigkeit: string; selected: boolean }[] }>();
+    data.forEach((e: any) => {
       const uid = e.user_id;
       if (!visibleIds.has(uid)) return; // hidden User überspringen
-      if (!groups.has(uid)) groups.set(uid, { stunden: 0, taetigkeiten: new Set() });
+      if (!groups.has(uid)) groups.set(uid, { stunden: 0, taetigkeiten: new Set(), buchungen: [] });
       const g = groups.get(uid)!;
       g.stunden += Number(e.stunden);
       if (e.taetigkeit) g.taetigkeiten.add(e.taetigkeit);
+      g.buchungen.push({
+        id: e.id, datum: e.datum || "", stunden: Number(e.stunden) || 0,
+        taetigkeit: e.taetigkeit || "", selected: true,
+      });
     });
 
     return Array.from(groups.entries()).map(([uid, g]) => {
@@ -139,6 +149,7 @@ export function ImportFromProjectDialog({
         selected: g.stunden > 0,
         source: "zeit" as const,
         detail: `${p.rolle} · ${g.stunden.toFixed(1)} Std.${p.satz > 0 ? "" : " · Kein Stundenlohn hinterlegt — bitte Stundensatz wählen"}`,
+        buchungen: g.buchungen,
       };
     });
   };
@@ -265,6 +276,22 @@ export function ImportFromProjectDialog({
     setItems(prev => prev.map((m, i) => i === idx ? { ...m, selected: !m.selected } : m));
   };
 
+  /** Einzelne Zeitbuchung an-/abwählen — die Positions-Menge (Std.) folgt
+   *  automatisch der Summe der angehakten Buchungen. */
+  const toggleBuchung = (idx: number, buchungId: string) => {
+    setItems(prev => prev.map((m, i) => {
+      if (i !== idx || !m.buchungen) return m;
+      const buchungen = m.buchungen.map(b => b.id === buchungId ? { ...b, selected: !b.selected } : b);
+      const stunden = buchungen.filter(b => b.selected).reduce((s, b) => s + b.stunden, 0);
+      return {
+        ...m,
+        buchungen,
+        menge: Math.round(stunden * 100) / 100,
+        selected: stunden > 0 ? m.selected : false,
+      };
+    }));
+  };
+
   const updateField = (idx: number, field: "menge" | "einzelpreis" | "einheit" | "beschreibung", val: any) => {
     setItems(prev => prev.map((m, i) => i === idx ? { ...m, [field]: val } : m));
   };
@@ -309,6 +336,22 @@ export function ImportFromProjectDialog({
       </div>
       {item.selected && (
         <div className="mt-2 ml-9 space-y-2">
+          {/* Einzelne Zeitbuchungen an-/abwählen — so bestimmst du genau,
+              WELCHE Arbeitszeiten verrechnet werden; die Std.-Menge folgt. */}
+          {item.source === "zeit" && item.buchungen && item.buchungen.length > 0 && (
+            <div className="rounded-md border bg-background/60 divide-y">
+              {item.buchungen.map(b => (
+                <label key={b.id} className="flex items-center gap-2 px-2 py-1 text-xs cursor-pointer hover:bg-muted/40">
+                  <Checkbox checked={b.selected} onCheckedChange={() => toggleBuchung(globalIdx, b.id)} />
+                  <span className="w-16 shrink-0 text-muted-foreground">
+                    {b.datum ? new Date(b.datum).toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit" }) : "–"}
+                  </span>
+                  <span className="flex-1 truncate">{b.taetigkeit || "Arbeitszeit"}</span>
+                  <span className="font-mono tabular-nums shrink-0">{b.stunden.toFixed(1)} h</span>
+                </label>
+              ))}
+            </div>
+          )}
           {/* Stundensatz-Art wählen (Facharbeiter / Regie / Lehrling …) —
               setzt Preis + Bezeichnung passend zum Katalog. */}
           {item.source === "zeit" && stundensaetze.length > 0 && (
@@ -410,11 +453,25 @@ export function ImportFromProjectDialog({
         )}
         {mode === "zeit" && (
           <p className="text-sm text-muted-foreground bg-blue-50 border border-blue-200 rounded-md p-2">
-            Arbeitszeiten aus den Zeitbuchungen dieses Projekts, pro Mitarbeiter aggregiert.
-            Wähle je Zeile, als welche Stundensatz-Art verrechnet wird (Facharbeiter, Regie,
-            Lehrling …) — Preis und Bezeichnung werden automatisch gesetzt. Menge und Preis
-            kannst du danach noch anpassen.
+            Hake an, <b>welche Zeitbuchungen</b> verrechnet werden — die Stunden-Menge folgt der
+            Auswahl. Je Mitarbeiter wählst du die Stundensatz-Art (Facharbeiter, Regie, Lehrling …);
+            Menge und Preis bleiben danach anpassbar.
           </p>
+        )}
+
+        {/* Laufende Gesamtsumme OBEN — auf einen Blick prüfen, ob es passt */}
+        {localProjectId && items.length > 0 && (
+          <div className="sticky top-0 z-10 flex items-center justify-between rounded-md border bg-background shadow-sm px-3 py-2">
+            <span className="text-sm text-muted-foreground">
+              Ausgewählt: <b className="text-foreground">{selected.length}</b> Position{selected.length === 1 ? "" : "en"}
+              {selected.some(i => i.source === "zeit") && (
+                <> · <b className="text-foreground tabular-nums">
+                  {selected.filter(i => i.source === "zeit").reduce((s, i) => s + i.menge, 0).toFixed(1)} Std.
+                </b></>
+              )}
+            </span>
+            <span className="font-bold tabular-nums">€ {total.toFixed(2)}</span>
+          </div>
         )}
 
         {!localProjectId ? (

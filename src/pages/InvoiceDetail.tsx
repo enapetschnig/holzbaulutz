@@ -11,8 +11,10 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, Lock, Link2 } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, Lock, Link2, Clock3 } from "lucide-react";
 import { KatalogKalkulationPopover } from "@/components/KatalogKalkulationPopover";
+import { StundenlohnAnpassenDialog, neuerEinzelpreis, type StundenlohnUpdate } from "@/components/StundenlohnAnpassenDialog";
+import { istArbeitszeitZeile, istStundensatzName } from "@/lib/stunden";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { KalkulationFields } from "@/components/KalkulationFields";
@@ -285,6 +287,7 @@ export default function InvoiceDetail() {
   const [revisionInfo, setRevisionInfo] = useState<{ revision: number; vorgaenger?: { id: string; nummer: string } | null; nachfolger?: { id: string; nummer: string } | null }>({ revision: 1 });
   const [importOfferOpen, setImportOfferOpen] = useState(false);
   const [importTimeOpen, setImportTimeOpen] = useState(false);
+  const [stundenlohnOpen, setStundenlohnOpen] = useState(false);
   const [createProjectDialogOpen, setCreateProjectDialogOpen] = useState(false);
   const [stornoDialogOpen, setStornoDialogOpen] = useState(false);
   const [stornoGrund, setStornoGrund] = useState("");
@@ -1045,6 +1048,68 @@ export default function InvoiceDetail() {
       gesamtpreis: 0,
     }]);
     if (!loading) setIsDirty(true);
+  };
+
+  // Neue Arbeitszeit-Position: Stunden-Zeile, vorbelegt mit der
+  // Facharbeiterstunde aus dem Katalog (inkl. Katalog-Verknüpfung) —
+  // Satz-Art und Menge danach direkt in der Zeile anpassbar.
+  const addArbeitszeit = () => {
+    const bevorzugt = stundensaetze.find(s => /facharbeiter/i.test(s.name)) || stundensaetze[0];
+    setItems(prev => [...prev, {
+      position: prev.length + 1,
+      beschreibung: bevorzugt?.name || "Facharbeiterstunde",
+      kurztext: bevorzugt?.name || "Facharbeiterstunde",
+      langtext: "",
+      menge: 1,
+      einheit: "Std.",
+      einzelpreis: bevorzugt?.satz || 0,
+      rabatt_prozent: 0,
+      gesamtpreis: bevorzugt?.satz || 0,
+      katalog_vk: bevorzugt?.satz || undefined,
+      kalkulation_template_id: bevorzugt?.id || null,
+    } as InvoiceItem]);
+    if (!loading) setIsDirty(true);
+  };
+
+  // "Stundenlohn anpassen" (nur dieses Dokument): Dialog liefert die
+  // Satz-Änderungen, hier werden die Zeilenpreise nachgerechnet.
+  const handleStundenlohnApply = (updates: StundenlohnUpdate[]) => {
+    if (updates.length === 0) { setStundenlohnOpen(false); return; }
+    setItems(prev => {
+      const arr = [...prev];
+      for (const u of updates) {
+        const it = arr[u.itemIndex];
+        if (!it) continue;
+        if (u.quelle === "kalkuliert") {
+          // Legacy-Kalkulation: Satz setzen + Einzelpreis über die Formel
+          const eff = docAufschlagOverride ?? (Number(it.aufschlag_prozent) || 0);
+          const ep = calcEinzelpreis({
+            ek_preis: Number(it.ek_preis) || 0,
+            verschnitt_prozent: Number(it.verschnitt_prozent) || 0,
+            aufschlag_prozent: eff,
+            befestigung_preis: Number(it.befestigung_preis) || 0,
+            sonstiges_preis: Number(it.sonstiges_preis) || 0,
+            arbeitszeit_minuten: Number(it.arbeitszeit_minuten) || 0,
+            stundensatz: u.neuerSatz,
+          });
+          arr[u.itemIndex] = { ...it, stundensatz: u.neuerSatz, einzelpreis: ep };
+        } else {
+          const ep = neuerEinzelpreis(it as any, { itemIndex: u.itemIndex, quelle: u.quelle, stundenProEinheit: u.stundenProEinheit }, u.alterSatz, u.neuerSatz);
+          arr[u.itemIndex] = { ...it, einzelpreis: ep };
+        }
+        const m = Number(arr[u.itemIndex].menge) || 0;
+        const r = Number(arr[u.itemIndex].rabatt_prozent) || 0;
+        arr[u.itemIndex].gesamtpreis = Math.round(m * arr[u.itemIndex].einzelpreis * (1 - r / 100) * 100) / 100;
+      }
+      return arr;
+    });
+    if (!loading) setIsDirty(true);
+    setStundenlohnOpen(false);
+    const positionen = [...new Set(updates.map(u => u.itemIndex))].length;
+    toast({
+      title: "Stundenlohn angepasst",
+      description: `${positionen} Position${positionen === 1 ? "" : "en"} in diesem Dokument aktualisiert — der Katalog bleibt unverändert.`,
+    });
   };
 
 
@@ -2667,12 +2732,10 @@ export default function InvoiceDetail() {
   // Stundensätze aus dem Materialkatalog (Facharbeiter, Regie, Lehrling, Kran,
   // LKW/Hiab, Maschine …) — zum Verrechnen importierter Projektzeiten.
   const stundensaetze = templates
-    .filter(t => (t as any).art === "material" && (
-      // Primär über die Stunden-EINHEIT; Namens-Match nur mit Wortgrenzen,
-      // damit z.B. ein Material "Maschinenschrauben" nicht als Satz auftaucht.
-      /^(h|std|std\.|stunde|stunden)$/i.test(t.einheit || "") ||
-      /\b(stunde|regiestunde|facharbeiter|lehrling|baumeister|kranfahrer|hiab|maschinenstunde)\b/i.test(((t as any).kurzbezeichnung || t.name || ""))
-    ))
+    // Gemeinsame Regel (lib/stunden): nur echte eigene Lohn-/Gerätesätze —
+    // Fremdleistungen mit Std-Einheit (Fassadengerüst-Regie, Zellulose
+    // Helfer …) sind KEINE Stundensätze.
+    .filter(t => (t as any).art === "material" && istStundensatzName((t as any).kurzbezeichnung || t.name))
     .map(t => ({
       id: t.id,
       name: (t as any).kurzbezeichnung || t.name,
@@ -4266,6 +4329,11 @@ export default function InvoiceDetail() {
                 <CardTitle>Positionen</CardTitle>
                 {!isLocked && (
                 <div className="flex gap-2 flex-wrap">
+                  <Button onClick={() => setStundenlohnOpen(true)} variant="outline" size="sm" className="gap-1"
+                    title="Stundensätze NUR in diesem Dokument ändern — überall, wo sie verwendet werden">
+                    <Clock3 className="w-4 h-4" />
+                    Stundenlohn anpassen
+                  </Button>
                   {form.typ === "rechnung" && (
                     <>
                       <Button onClick={() => setImportOfferOpen(true)} variant="outline" size="sm" className="gap-1">
@@ -4296,6 +4364,11 @@ export default function InvoiceDetail() {
                       Preise aktualisieren
                     </Button>
                   )}
+                  <Button onClick={addArbeitszeit} variant="outline" size="sm" className="gap-1"
+                    title="Neue Arbeitszeit-Position (Stunden-Zeile mit Stundensatz aus dem Katalog)">
+                    <Clock3 className="w-4 h-4" />
+                    Arbeitszeit
+                  </Button>
                   <Button onClick={addItem} variant="outline" size="sm" className="gap-1">
                     <Plus className="w-4 h-4" />
                     Position
@@ -4447,9 +4520,15 @@ export default function InvoiceDetail() {
                               </div>
                             )}
                           </div>
-                          {(item.produktnummer || item.kalkulation_template_id) && (
+                          {(item.produktnummer || item.kalkulation_template_id || istArbeitszeitZeile(item.kurztext || item.beschreibung, item.einheit)) && (
                             <span className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-2">
                               {item.produktnummer && <span>Prod.-Nr: {item.produktnummer}</span>}
+                              {istArbeitszeitZeile(item.kurztext || item.beschreibung, item.einheit) && (
+                                <span className="inline-flex items-center gap-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 px-1"
+                                  title="Arbeitszeit-Position — zählt im Stundenabgleich">
+                                  <Clock3 className="w-3 h-3" /> Arbeitszeit
+                                </span>
+                              )}
                               {item.kalkulation_template_id && (
                                 <span className="inline-flex items-center gap-0.5 text-primary/80"
                                   title="Aus dem internen Katalog übernommen — hinterlegte Kalkulation über das Rechner-Symbol einsehbar">
@@ -5430,6 +5509,14 @@ export default function InvoiceDetail() {
             setImportOfferOpen(false);
             toast({ title: "Aus Angebot importiert", description: `${newItems.length} Positionen hinzugefügt` });
           }}
+        />
+
+        {/* Stundenlohn nur für dieses Dokument anpassen */}
+        <StundenlohnAnpassenDialog
+          open={stundenlohnOpen}
+          onClose={() => setStundenlohnOpen(false)}
+          items={items as any}
+          onApply={handleStundenlohnApply}
         />
 
         {/* Import Arbeitszeiten aus Projekt */}

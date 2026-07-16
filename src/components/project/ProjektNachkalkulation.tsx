@@ -38,11 +38,16 @@ export function ProjektNachkalkulation({ projectId }: Props) {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [invRes, teRes, matRes, purRes, distRes, factRes] = await Promise.all([
+      const [invRes, teRes, matRes, purRes, allocRes, distRes, factRes] = await Promise.all([
         supabase.from("invoices").select("typ, status, netto_summe").eq("project_id", projectId),
         supabase.from("time_entries").select("user_id, stunden, taetigkeit").eq("project_id", projectId),
         (supabase as any).from("material_entries").select("typ, menge, einzelpreis").eq("project_id", projectId),
-        supabase.from("purchase_invoices").select("betrag_netto, betrag_brutto, verrechnet_in_invoice_id").eq("project_id", projectId),
+        supabase.from("purchase_invoices").select("id, betrag_netto, betrag_brutto, verrechnet_in_invoice_id").eq("project_id", projectId),
+        // Teilbeträge (Positions-Aufteilung) fremder Rechnungen, die DIESEM
+        // Projekt zugeordnet sind — inkl. Verrechnet-Status der Mutter-Rechnung.
+        (supabase as any).from("purchase_invoice_allocations")
+          .select("betrag_netto, purchase_invoice_id, purchase_invoices(verrechnet_in_invoice_id)")
+          .eq("project_id", projectId),
         (supabase as any).from("disturbances").select("id, is_verrechnet").eq("project_id", projectId),
         supabase.from("app_settings").select("value").eq("key", "lohnnebenkosten_faktor").maybeSingle(),
       ]);
@@ -82,15 +87,37 @@ export function ProjektNachkalkulation({ projectId }: Props) {
         else if (m.typ === "rueckgabe") material -= menge * ek;
       }
 
-      // --- Fremdkosten (Eingangsrechnungen netto) ---
+      // --- Fremdkosten (Eingangsrechnungen netto, inkl. Projekt-Aufteilung) ---
+      // Regel: Teilbeträge (purchase_invoice_allocations) zählen immer zu ihrem
+      // Projekt. Der Kopf-Betrag einer Rechnung (project_id) zählt nur, wenn
+      // die Rechnung KEINE Teilbeträge hat — sonst würde doppelt gezählt.
       const purchases = (purRes.data as any[]) || [];
-      const fremd = purchases.reduce((s, p) => s + (Number(p.betrag_netto) || (Number(p.betrag_brutto) || 0) / 1.2), 0);
+      const allocRows = (allocRes.data as any[]) || [];
+      const headerIds = purchases.map(p => p.id);
+      let idsMitAufteilung = new Set<string>();
+      if (headerIds.length > 0) {
+        const { data: allocAny } = await (supabase as any)
+          .from("purchase_invoice_allocations")
+          .select("purchase_invoice_id")
+          .in("purchase_invoice_id", headerIds);
+        idsMitAufteilung = new Set(((allocAny as any[]) || []).map(r => r.purchase_invoice_id));
+      }
+      if (cancelled) return;
+      const headerNetto = (p: any) => Number(p.betrag_netto) || (Number(p.betrag_brutto) || 0) / 1.2;
+      const purchasesOhneAufteilung = purchases.filter(p => !idsMitAufteilung.has(p.id));
+      const fremd =
+        purchasesOhneAufteilung.reduce((s, p) => s + headerNetto(p), 0) +
+        allocRows.reduce((s, a) => s + (Number(a.betrag_netto) || 0), 0);
 
       // --- Unverrechnet-Radar ---
       const unverrechnetRegie = ((distRes.data as any[]) || []).filter(x => !x.is_verrechnet).length;
-      const unverrechnetFremd = purchases
-        .filter(p => !p.verrechnet_in_invoice_id)
-        .reduce((s, p) => s + (Number(p.betrag_netto) || (Number(p.betrag_brutto) || 0) / 1.2), 0);
+      const unverrechnetFremd =
+        purchasesOhneAufteilung
+          .filter(p => !p.verrechnet_in_invoice_id)
+          .reduce((s, p) => s + headerNetto(p), 0) +
+        allocRows
+          .filter(a => !a.purchase_invoices?.verrechnet_in_invoice_id)
+          .reduce((s, a) => s + (Number(a.betrag_netto) || 0), 0);
 
       setD({ erloes, lohn: Math.round(lohn * 100) / 100, material: Math.round(material * 100) / 100, fremd: Math.round(fremd * 100) / 100, faktor, stundenIst: Math.round(stundenIst * 10) / 10, unverrechnetRegie, unverrechnetFremd });
       setLoading(false);
