@@ -18,6 +18,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { countProjectFiles } from "@/lib/projectFiles";
 import { useProjectStatuses } from "@/hooks/useProjectStatuses";
 import { Badge } from "@/components/ui/badge";
+import { ProjektNachkalkulation } from "@/components/project/ProjektNachkalkulation";
 
 type DocumentCategory = {
   type: "plans" | "reports" | "photos" | "chef";
@@ -557,6 +558,13 @@ const ProjectOverview = () => {
               )}
             </CardContent>
           </Card>
+        )}
+
+        {/* Nachkalkulation: Deckungsbeitrag der Baustelle (Admin only) */}
+        {isAdmin && projectId && (
+          <div className="mb-4">
+            <ProjektNachkalkulation projectId={projectId} />
+          </div>
         )}
 
         {/* Projektstunden + Stundenabgleich (Admin only) */}

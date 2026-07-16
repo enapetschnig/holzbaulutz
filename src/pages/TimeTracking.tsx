@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/PageHeader";
@@ -136,7 +137,16 @@ const TimeTracking = () => {
     absencePauseMinutes: "30",
   });
   
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  // Von der Plantafel übergebene Parameter (?project=…&datum=…) —
+  // nur beim ersten Rendern lesen, danach werden sie aus der URL entfernt
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [plantafelProjectId, setPlantafelProjectId] = useState<string | null>(() => searchParams.get("project"));
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const datumParam = searchParams.get("datum");
+    return datumParam && /^\d{4}-\d{2}-\d{2}$/.test(datumParam)
+      ? datumParam
+      : new Date().toISOString().split('T')[0];
+  });
   const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([createDefaultBlock()]);
   // Hat der Nutzer die Blöcke bereits verändert? Dann beim Datumswechsel
   // nicht überschreiben (nur die Tagesliste neu laden).
@@ -220,6 +230,44 @@ const TimeTracking = () => {
     // dann nur die bestehenden Tageseinträge neu laden
     fetchExistingDayEntries(selectedDate, !blocksTouched);
   }, [selectedDate]);
+
+  // Projekt aus der Plantafel im ersten Zeitblock vorauswählen.
+  // Erst NACH dem Laden von Projektliste und Tageseinträgen anwenden,
+  // weil fetchExistingDayEntries die Blöcke zurücksetzt. Es wird NUR
+  // vorausgewählt — keine Zeiten, kein automatisches Speichern.
+  useEffect(() => {
+    if (loading || loadingDayEntries) return;
+    const hasParams = searchParams.has("project") || searchParams.has("datum");
+    if (!plantafelProjectId && !hasParams) return;
+
+    const dayBlocked = existingDayEntries.some(e =>
+      ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit)
+    );
+    const projectExists = plantafelProjectId ? projects.some(p => p.id === plantafelProjectId) : false;
+    const firstBlock = timeBlocks[0];
+
+    if (projectExists && !dayBlocked && firstBlock && !firstBlock.projectId) {
+      // Bewusst NICHT updateBlock(): das würde blocksTouched setzen und den
+      // Reset-Schutz beim Datumswechsel fälschlich aktivieren.
+      const firstBlockId = firstBlock.id;
+      setTimeBlocks(prev => prev.map(block =>
+        block.id === firstBlockId
+          ? { ...block, projectId: plantafelProjectId!, locationType: "baustelle" as const }
+          : block
+      ));
+      sonnerToast.info("Projekt aus Plantafel übernommen");
+    }
+
+    // Parameter nach Anwendung aus der URL entfernen, damit ein manueller
+    // Datumswechsel sie nicht erneut anwendet
+    setPlantafelProjectId(null);
+    if (hasParams) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("project");
+      next.delete("datum");
+      setSearchParams(next, { replace: true });
+    }
+  }, [loading, loadingDayEntries, plantafelProjectId, projects, existingDayEntries, searchParams]);
 
   useEffect(() => {
     fetchProjects();

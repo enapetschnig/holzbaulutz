@@ -19,7 +19,6 @@ import { calcEinzelpreis, type KalkulationInput } from "@/lib/kalkulation";
 import { calcComponentZeile, calcPositionPreis, componentFormula, type PositionComponent } from "@/lib/positionen";
 import { ImportMaterialsDialog } from "@/components/ImportMaterialsDialog";
 import { ImportFromProjectDialog } from "@/components/ImportFromProjectDialog";
-import { ImportDisturbanceDialog } from "@/components/ImportDisturbanceDialog";
 import { ImportFromOfferDialog } from "@/components/ImportFromOfferDialog";
 import { useEinheiten } from "@/hooks/useEinheiten";
 import { ImportDisturbanceToInvoiceDialog } from "@/components/ImportDisturbanceToInvoiceDialog";
@@ -258,7 +257,6 @@ export default function InvoiceDetail() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewSaved, setPreviewSaved] = useState(false);
   const [importMaterialsOpen, setImportMaterialsOpen] = useState(false);
-  const [importDisturbanceOpen, setImportDisturbanceOpen] = useState(false);
   const [importRegieOpen, setImportRegieOpen] = useState(false);
   const [customerEditOpen, setCustomerEditOpen] = useState(false);
   // Bezugs-Picker bei Standalone-Gutschrift: Liste der bestehenden
@@ -4881,33 +4879,6 @@ export default function InvoiceDetail() {
         />
 
         {/* Import Disturbance Dialog */}
-        <ImportDisturbanceDialog
-          open={importDisturbanceOpen}
-          onClose={() => setImportDisturbanceOpen(false)}
-          onImport={(importedItems, kundeData) => {
-            const newItems = importedItems.map((item, idx) => ({
-              position: items.length + idx + 1,
-              beschreibung: item.beschreibung,
-              menge: item.menge,
-              einheit: item.einheit,
-              einzelpreis: item.einzelpreis,
-              gesamtpreis: item.menge * item.einzelpreis,
-            }));
-            setItems(prev => mergeItems(prev, newItems));
-            // Fill customer data if empty
-            if (kundeData && !form.kunde_name) {
-              setForm(prev => ({
-                ...prev,
-                kunde_name: kundeData.kunde_name || prev.kunde_name,
-                kunde_adresse: kundeData.kunde_adresse || prev.kunde_adresse,
-                kunde_telefon: kundeData.kunde_telefon || prev.kunde_telefon,
-                kunde_email: kundeData.kunde_email || prev.kunde_email,
-              }));
-            }
-            setImportDisturbanceOpen(false);
-            toast({ title: "Regiebericht importiert", description: `${newItems.length} Positionen hinzugefügt` });
-          }}
-        />
 
         {/* Import Time Dialog */}
         {/* Arbeitszeit-Import läuft ausschließlich über <ImportFromProjectDialog
@@ -4943,7 +4914,7 @@ export default function InvoiceDetail() {
           open={importRegieOpen}
           onClose={() => setImportRegieOpen(false)}
           preselectedId={searchParams.get("disturbance_id")}
-          onImport={(importedItems, kundeData) => {
+          onImport={(importedItems, kundeData, disturbanceId) => {
             const newItems = importedItems.map((item, idx) => ({
               position: items.length + idx + 1,
               beschreibung: item.beschreibung,
@@ -4953,6 +4924,12 @@ export default function InvoiceDetail() {
               gesamtpreis: item.menge * item.einzelpreis,
             }));
             setItems(prev => mergeItems(prev, newItems));
+            // Regiebericht als verrechnet markieren — verhindert, dass dieselben
+            // Regiestunden versehentlich ein zweites Mal auf eine Rechnung wandern.
+            if (disturbanceId) {
+              supabase.from("disturbances").update({ is_verrechnet: true } as any).eq("id", disturbanceId)
+                .then(({ error }) => { if (error) console.warn("is_verrechnet setzen fehlgeschlagen:", error.message); });
+            }
             if (kundeData && !form.kunde_name) {
               setForm(prev => ({
                 ...prev,

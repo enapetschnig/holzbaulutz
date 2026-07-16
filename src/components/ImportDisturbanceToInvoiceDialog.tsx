@@ -38,7 +38,7 @@ interface ImportItem {
 interface ImportDisturbanceToInvoiceDialogProps {
   open: boolean;
   onClose: () => void;
-  onImport: (items: { beschreibung: string; menge: number; einheit: string; einzelpreis: number }[], kundeData?: { kunde_name: string; kunde_adresse?: string; kunde_telefon?: string; kunde_email?: string }) => void;
+  onImport: (items: { beschreibung: string; menge: number; einheit: string; einzelpreis: number }[], kundeData?: { kunde_name: string; kunde_adresse?: string; kunde_telefon?: string; kunde_email?: string }, disturbanceId?: string) => void;
   preselectedId?: string | null;
 }
 
@@ -166,6 +166,7 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
     onImport(
       selected.map(i => ({ beschreibung: i.beschreibung, menge: i.menge, einheit: i.einheit, einzelpreis: i.einzelpreis })),
       kundeData,
+      selectedId || undefined,
     );
   };
 

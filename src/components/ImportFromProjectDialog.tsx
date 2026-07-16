@@ -144,22 +144,45 @@ export function ImportFromProjectDialog({
   };
 
   const fetchMaterialEntries = async (pid: string): Promise<ImportItem[]> => {
-    // 1. Load Lieferschein entries
+    // 1a. Lieferschein-Einträge (bisheriger Weg): Lieferscheine des Projekts →
+    // material_entries über lieferschein_id (project_id kann dort NULL sein).
     const { data: lsData } = await supabase
       .from("lieferscheine")
       .select("id, name")
       .eq("project_id", pid);
 
-    if (!lsData || lsData.length === 0) return [];
+    const lsIds = ((lsData as any[]) || []).map(l => l.id);
 
-    const lsIds = lsData.map(l => l.id);
+    const [lsEntries, direktEntries] = await Promise.all([
+      lsIds.length > 0
+        ? supabase
+            .from("material_entries")
+            .select("id, material, menge, einheit, typ, lieferschein_id, einzelpreis")
+            .in("lieferschein_id", lsIds)
+            .then(({ data }) => ((data as any[]) || []))
+        : Promise.resolve([] as any[]),
+      // 1b. Direkt am Projekt erfasster Ist-Verbrauch (ohne Lieferschein).
+      // 'bedarf' ist der SOLL aus dem Angebot und darf NICHT als Ist
+      // fakturiert werden — deshalb nur entnahme/rueckgabe/verbrauch.
+      supabase
+        .from("material_entries")
+        .select("id, material, menge, einheit, typ, lieferschein_id, einzelpreis")
+        .eq("project_id", pid)
+        .in("typ", ["entnahme", "rueckgabe", "verbrauch"])
+        .then(({ data }) => ((data as any[]) || [])),
+    ]);
 
-    const { data: entries } = await supabase
-      .from("material_entries")
-      .select("material, menge, einheit, typ, lieferschein_id, einzelpreis")
-      .in("lieferschein_id", lsIds);
+    // Beide Quellen zusammenführen — eine Zeile kann project_id UND
+    // lieferschein_id gesetzt haben und darf nur einmal zählen (Dedupe per id).
+    const seenIds = new Set<string>();
+    const entries: any[] = [];
+    for (const e of [...lsEntries, ...direktEntries]) {
+      if (seenIds.has(e.id)) continue;
+      seenIds.add(e.id);
+      entries.push(e);
+    }
 
-    if (!entries || entries.length === 0) return [];
+    if (entries.length === 0) return [];
 
     // 2. Load Angebot prices for this project — Referenz-Angebot nach Status
     // priorisiert (angenommen > verrechnet > offen > entwurf), innerhalb
@@ -187,17 +210,27 @@ export function ImportFromProjectDialog({
       }
     }
 
-    // 3. Aggregate material entries (across all Lieferscheine)
-    const map = new Map<string, { material: string; einheit: string; entnommen: number; zurueck: number }>();
+    // 3. Aggregate material entries (Lieferscheine + direkt erfasste Buchungen)
+    const map = new Map<string, {
+      material: string; einheit: string; entnommen: number; zurueck: number;
+      storedPreis: number; ausLieferschein: boolean; direktErfasst: boolean;
+    }>();
     entries.forEach(e => {
       const key = e.material.toLowerCase().trim();
       if (!map.has(key)) {
-        map.set(key, { material: e.material, einheit: e.einheit || "Stk.", entnommen: 0, zurueck: 0, storedPreis: 0 });
+        map.set(key, {
+          material: e.material, einheit: e.einheit || "Stk.", entnommen: 0, zurueck: 0,
+          storedPreis: 0, ausLieferschein: false, direktErfasst: false,
+        });
       }
       const s = map.get(key)!;
       const menge = parseFloat(e.menge || "0") || 0;
-      if (e.typ === "entnahme") s.entnommen += menge;
+      // 'verbrauch' zählt wie 'entnahme'; 'bedarf' (Soll) zählt nie als Ist
+      if (e.typ === "entnahme" || e.typ === "verbrauch") s.entnommen += menge;
       else if (e.typ === "rueckgabe") s.zurueck += menge;
+      // Quelle merken für den detail-Text
+      if (e.lieferschein_id) s.ausLieferschein = true;
+      else s.direktErfasst = true;
       // Track best stored price (from catalog or Angebot)
       const ep = Number((e as any).einzelpreis) || 0;
       if (ep > 0 && s.storedPreis === 0) s.storedPreis = ep;
@@ -208,6 +241,9 @@ export function ImportFromProjectDialog({
       .map(s => {
         const verbraucht = Math.round((s.entnommen - s.zurueck) * 100) / 100;
         const angebot = angebotMap.get(s.material.toLowerCase().trim());
+        const quelle = s.ausLieferschein && s.direktErfasst
+          ? "aus Lieferscheinen + direkt erfasst"
+          : s.ausLieferschein ? "aus Lieferscheinen" : "direkt erfasst";
         return {
           beschreibung: s.material,
           menge: verbraucht,
@@ -216,8 +252,8 @@ export function ImportFromProjectDialog({
           selected: true,
           source: "material" as const,
           detail: angebot
-            ? `Angebot: ${angebot.menge} ${angebot.einheit} · Verbraucht: ${verbraucht} ${s.einheit} · Preis aus Angebot`
-            : `Verbraucht: ${verbraucht} ${s.einheit} · Kein Angebotspreis`,
+            ? `Angebot: ${angebot.menge} ${angebot.einheit} · Verbraucht: ${verbraucht} ${s.einheit} (${quelle}) · Preis aus Angebot`
+            : `Verbraucht: ${verbraucht} ${s.einheit} (${quelle}) · Kein Angebotspreis`,
         };
       })
       .sort((a, b) => a.beschreibung.localeCompare(b.beschreibung));
@@ -367,7 +403,7 @@ export function ImportFromProjectDialog({
 
         {mode !== "zeit" && (
           <p className="text-sm text-muted-foreground bg-blue-50 border border-blue-200 rounded-md p-2">
-            Materialien aus dem Verbrauch (Lieferscheine) — Mengen aus Lieferscheinen ersetzen die Angebotspositionen, Preise werden aus dem Angebot übernommen.
+            Materialien aus dem Ist-Verbrauch (Lieferscheine und direkt am Projekt erfasste Buchungen) — die Verbrauchsmengen ersetzen die Angebotspositionen, Preise werden aus dem Angebot übernommen.
           </p>
         )}
         {mode === "zeit" && (
@@ -390,8 +426,8 @@ export function ImportFromProjectDialog({
             {mode === "zeit"
               ? "Keine Arbeitszeiten auf diesem Projekt gebucht."
               : mode === "material"
-                ? "Keine Lieferscheine für dieses Projekt gefunden."
-                : "Keine Arbeitszeiten oder Lieferscheine für dieses Projekt gefunden."}
+                ? "Kein Materialverbrauch für dieses Projekt erfasst."
+                : "Keine Arbeitszeiten oder kein Materialverbrauch für dieses Projekt gefunden."}
           </p>
         ) : (
           <>
@@ -421,7 +457,7 @@ export function ImportFromProjectDialog({
 
                 <TabsContent value="material" className="space-y-2 mt-3">
                   {matItems.length === 0 ? (
-                    <p className="text-center py-6 text-muted-foreground text-sm">Keine Lieferscheine gefunden</p>
+                    <p className="text-center py-6 text-muted-foreground text-sm">Kein Materialverbrauch erfasst</p>
                   ) : (
                     matItems.map((item) => {
                       const globalIdx = items.indexOf(item);

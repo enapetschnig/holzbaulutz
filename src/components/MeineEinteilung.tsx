@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Users, MapPin, Calendar, Clock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { format, startOfISOWeek, addDays, isWithinInterval, parseISO, isSameDay } from "date-fns";
@@ -8,6 +10,7 @@ import { de } from "date-fns/locale";
 
 type EinsatzInfo = {
   id: string;
+  project_id: string;
   project_name: string;
   start_date: string;
   end_date: string;
@@ -23,6 +26,7 @@ type TeamInfo = {
 };
 
 export function MeineEinteilung({ userId }: { userId: string }) {
+  const navigate = useNavigate();
   const [einsaetze, setEinsaetze] = useState<EinsatzInfo[]>([]);
   const [team, setTeam] = useState<TeamInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -90,8 +94,17 @@ export function MeineEinteilung({ userId }: { userId: string }) {
   if (einsaetze.length === 0 && !team) return null;
 
   const today = new Date();
+  const todayStr = format(today, "yyyy-MM-dd");
   const weekStart = startOfISOWeek(today);
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+
+  // Zur Zeiterfassung springen — Projekt und Datum werden dort nur
+  // VORAUSGEWÄHLT, gebucht wird nichts automatisch.
+  // Datum: heute, wenn heute im Einsatzzeitraum liegt, sonst der Starttag.
+  const zeitBuchen = (e: EinsatzInfo) => {
+    const datum = e.start_date <= todayStr && todayStr <= e.end_date ? todayStr : e.start_date;
+    navigate(`/time-tracking?project=${e.project_id}&datum=${datum}`);
+  };
 
   return (
     <Card className="mb-4 border-orange-200 bg-orange-50/30">
@@ -147,9 +160,21 @@ export function MeineEinteilung({ userId }: { userId: string }) {
                       )}
                     </div>
                   </div>
-                  {isToday && (
-                    <Badge className="bg-orange-600 text-white shrink-0">Heute</Badge>
-                  )}
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    {isToday && (
+                      <Badge className="bg-orange-600 text-white">Heute</Badge>
+                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-xs border-orange-300 text-orange-700 hover:bg-orange-100 hover:text-orange-800"
+                      onClick={() => zeitBuchen(e)}
+                    >
+                      <Clock className="h-3 w-3 mr-1" />
+                      Zeit buchen
+                    </Button>
+                  </div>
                 </div>
               );
             })}
