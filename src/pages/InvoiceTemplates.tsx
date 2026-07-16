@@ -22,6 +22,7 @@ import { type PositionComponent, calcPositionPreis } from "@/lib/positionen";
 import { BulkPriceDialog } from "@/components/BulkPriceDialog";
 import { KalkulationFields } from "@/components/KalkulationFields";
 import { calcEinzelpreis } from "@/lib/kalkulation";
+import { istStundensatzName } from "@/lib/stunden";
 import {
   Dialog,
   DialogContent,
@@ -76,13 +77,13 @@ interface Template {
   art: "material" | "position";
 }
 
-// Stundensatz-Artikel: Materialien mit Stunden-Einheit oder typischem
-// Satz-Namen (Facharbeiter, Regie, Lehrling, Kran, Maschine, LKW/Hiab …)
+// Stundensatz-Artikel: NUR klassische eigene Lohn-/Gerätesätze (Facharbeiter-,
+// Regie-, Lehrling-, Baumeisterstunde, Kranfahrer, LKW mit Hiab, Maschinen-
+// stunde). Bewusst NICHT über die Std-Einheit — Fremdleistungen wie
+// „Fassadengerüst An-und Abtransport in Regie" oder „Zellulose Helfer" tragen
+// zwar Std, sind aber keine eigenen Stundensätze.
 const istStundensatz = (t: { art: string; einheit: string; name: string; kurzbezeichnung?: string | null }) =>
-  t.art === "material" && (
-    /^(h|std|std\.|stunde|stunden)$/i.test(t.einheit || "") ||
-    /\b(stunde|regiestunde|facharbeiter|lehrling|baumeister|kranfahrer|hiab|maschinenstunde)\b/i.test((t.kurzbezeichnung || t.name || ""))
-  );
+  t.art === "material" && istStundensatzName(t.kurzbezeichnung || t.name);
 
 export default function InvoiceTemplates() {
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -241,6 +242,7 @@ export default function InvoiceTemplates() {
       einheit: t.einheit,
       ek_netto: t.ek_netto,
       kategorie: t.kategorie,
+      produktnummer: t.produktnummer || undefined,
     }));
 
   const grouped = filtered.reduce<Record<string, Template[]>>((acc, t) => {
@@ -853,6 +855,56 @@ export default function InvoiceTemplates() {
                 <Label>Kurzbezeichnung *</Label>
                 <Input value={form.kurzbezeichnung} onChange={(e) => setForm(f => ({ ...f, kurzbezeichnung: e.target.value }))} placeholder="Kurzname des Materials" />
               </div>
+              {/* Kalkulation mit Komponenten (Positionen) — nach Excel-Vorlage:
+                  Position = Materialien + Arbeitszeit + Sonstiges */}
+              {form.art === "position" && (
+                <PositionComponentsEditor
+                  components={posComponents}
+                  onChange={setPosComponents}
+                  einheit={form.einheit}
+                  materialien={materialOptions}
+                />
+              )}
+              {/* Legacy: alte Einzel-Kalkulation (EK+Verschnitt+Aufschlag+Lohn in einem)
+                  — nur noch für bestehende Positionen OHNE Komponenten */}
+              {form.art === "position" && posComponents.length === 0 && form.ist_kalkuliert && (
+                <div className="border rounded-lg p-3 space-y-3 bg-muted/20">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <Label className="font-medium">Einfache Kalkulation (alt)</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Diese Position nutzt noch die einfache Ein-Material-Kalkulation.
+                        Füge oben Komponenten hinzu, um auf das neue Modell umzustellen.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={form.ist_kalkuliert}
+                      onCheckedChange={(c) => setForm(f => ({ ...f, ist_kalkuliert: !!c }))}
+                    />
+                  </div>
+                  <KalkulationFields
+                    einheit={form.einheit}
+                    value={{
+                      ek_preis: form.ek_netto, verschnitt_prozent: form.verschnitt_prozent,
+                      aufschlag_prozent: form.aufschlag_prozent, befestigung_preis: form.befestigung_preis,
+                      sonstiges_preis: form.sonstiges_preis, arbeitszeit_minuten: form.arbeitszeit_minuten,
+                      stundensatz: form.stundensatz || 52,
+                    }}
+                    onChange={(v) => setForm(f => {
+                      const vk = calcEinzelpreis(v);
+                      return {
+                        ...f,
+                        ek_netto: v.ek_preis, verschnitt_prozent: v.verschnitt_prozent,
+                        aufschlag_prozent: v.aufschlag_prozent, befestigung_preis: v.befestigung_preis,
+                        sonstiges_preis: v.sonstiges_preis, arbeitszeit_minuten: v.arbeitszeit_minuten,
+                        stundensatz: v.stundensatz,
+                        vk_netto: vk, netto_preis: vk,
+                        brutto_preis: Math.round(vk * (1 + f.ust_satz / 100) * 100) / 100,
+                      };
+                    })}
+                  />
+                </div>
+              )}
               <div>
                 <Label>Langbezeichnung</Label>
                 <Textarea
@@ -910,56 +962,6 @@ export default function InvoiceTemplates() {
                   </div>
                 </div>
               </div>
-              {/* Kalkulation mit Komponenten (Positionen) — nach Excel-Vorlage:
-                  Position = Materialien + Arbeitszeit + Sonstiges */}
-              {form.art === "position" && (
-                <PositionComponentsEditor
-                  components={posComponents}
-                  onChange={setPosComponents}
-                  einheit={form.einheit}
-                  materialien={materialOptions}
-                />
-              )}
-              {/* Legacy: alte Einzel-Kalkulation (EK+Verschnitt+Aufschlag+Lohn in einem)
-                  — nur noch für bestehende Positionen OHNE Komponenten */}
-              {form.art === "position" && posComponents.length === 0 && form.ist_kalkuliert && (
-                <div className="border rounded-lg p-3 space-y-3 bg-muted/20">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <Label className="font-medium">Einfache Kalkulation (alt)</Label>
-                      <p className="text-xs text-muted-foreground">
-                        Diese Position nutzt noch die einfache Ein-Material-Kalkulation.
-                        Füge oben Komponenten hinzu, um auf das neue Modell umzustellen.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={form.ist_kalkuliert}
-                      onCheckedChange={(c) => setForm(f => ({ ...f, ist_kalkuliert: !!c }))}
-                    />
-                  </div>
-                  <KalkulationFields
-                    einheit={form.einheit}
-                    value={{
-                      ek_preis: form.ek_netto, verschnitt_prozent: form.verschnitt_prozent,
-                      aufschlag_prozent: form.aufschlag_prozent, befestigung_preis: form.befestigung_preis,
-                      sonstiges_preis: form.sonstiges_preis, arbeitszeit_minuten: form.arbeitszeit_minuten,
-                      stundensatz: form.stundensatz || 52,
-                    }}
-                    onChange={(v) => setForm(f => {
-                      const vk = calcEinzelpreis(v);
-                      return {
-                        ...f,
-                        ek_netto: v.ek_preis, verschnitt_prozent: v.verschnitt_prozent,
-                        aufschlag_prozent: v.aufschlag_prozent, befestigung_preis: v.befestigung_preis,
-                        sonstiges_preis: v.sonstiges_preis, arbeitszeit_minuten: v.arbeitszeit_minuten,
-                        stundensatz: v.stundensatz,
-                        vk_netto: vk, netto_preis: vk,
-                        brutto_preis: Math.round(vk * (1 + f.ust_satz / 100) * 100) / 100,
-                      };
-                    })}
-                  />
-                </div>
-              )}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                 <div>
                   <Label>Einheit</Label>

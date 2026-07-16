@@ -11,7 +11,8 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, Lock } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, Lock, Link2 } from "lucide-react";
+import { KatalogKalkulationPopover } from "@/components/KatalogKalkulationPopover";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { KalkulationFields } from "@/components/KalkulationFields";
@@ -83,6 +84,10 @@ interface InvoiceItem {
   // Angebot pro Position anpassbar (zusätzlich greift der Dokument-Override).
   ist_kalkuliert?: boolean;
   kalkulation_template_id?: string | null;
+  /** Eingefrorene Katalog-Kalkulation bei Übernahme (Komponenten + VK) —
+   *  macht nachvollziehbar, was intern aus dem Katalog kam, und erlaubt
+   *  das Wiederherstellen des ursprünglichen Stands. */
+  kalkulation_snapshot?: any;
   ek_preis?: number;
   verschnitt_prozent?: number;
   aufschlag_prozent?: number;
@@ -502,6 +507,7 @@ export default function InvoiceDetail() {
         // "Preise aktualisieren"-Funktion auch nach Angebot→Rechnung greift.
         ist_kalkuliert: !!(it as any).ist_kalkuliert,
         kalkulation_template_id: (it as any).kalkulation_template_id || null,
+        kalkulation_snapshot: (it as any).kalkulation_snapshot || null,
         katalog_vk: Number((it as any).katalog_vk) || undefined,
         ek_preis: Number((it as any).ek_preis) || 0,
         verschnitt_prozent: Number((it as any).verschnitt_prozent) || 0,
@@ -950,6 +956,7 @@ export default function InvoiceDetail() {
         set_snapshot: (it as any).set_snapshot || null,
         ist_kalkuliert: !!(it as any).ist_kalkuliert,
         kalkulation_template_id: (it as any).kalkulation_template_id || null,
+        kalkulation_snapshot: (it as any).kalkulation_snapshot || null,
         katalog_vk: Number((it as any).katalog_vk) || undefined,
         ek_preis: Number((it as any).ek_preis) || 0,
         verschnitt_prozent: Number((it as any).verschnitt_prozent) || 0,
@@ -1275,6 +1282,60 @@ export default function InvoiceDetail() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkedTemplateKey, docAufschlagOverride, isLocked]);
+
+  // Fehlende Kalkulations-Snapshots nachziehen: Jede Katalog-Position friert
+  // beim Einfügen ihre Kalkulation (Komponenten + VK + Arbeitszeit) ein —
+  // so bleibt nachvollziehbar, was intern aus dem Katalog kam, und der
+  // ursprüngliche Stand ist wiederherstellbar. Läuft zentral über die Items
+  // (deckt Autocomplete, Katalog-Picker und Alt-Zeilen gleichermaßen ab).
+  const fehlendeSnapshotKey = useMemo(() => [...new Set(
+    items.filter(it => it.kalkulation_template_id && !it.kalkulation_snapshot)
+      .map(it => it.kalkulation_template_id as string),
+  )].sort().join(","), [items]);
+
+  useEffect(() => {
+    if (!fehlendeSnapshotKey) return;
+    let cancelled = false;
+    (async () => {
+      const ids = fehlendeSnapshotKey.split(",");
+      const [tRes, cRes] = await Promise.all([
+        (supabase as any).from("invoice_templates")
+          .select("id, kurzbezeichnung, name, vk_netto, arbeitszeit_minuten")
+          .in("id", ids),
+        (supabase as any).from("position_components")
+          .select("position_template_id, typ, bezeichnung, einheit, menge_pro_einheit, preis, verschnitt_prozent, aufschlag_prozent, sort_order")
+          .in("position_template_id", ids)
+          .order("sort_order"),
+      ]);
+      if (cancelled) return;
+      const comps: Record<string, any[]> = {};
+      for (const c of ((cRes.data as any[]) || [])) {
+        (comps[c.position_template_id] = comps[c.position_template_id] || []).push({
+          typ: c.typ, bezeichnung: c.bezeichnung, einheit: c.einheit,
+          menge_pro_einheit: Number(c.menge_pro_einheit) || 0, preis: Number(c.preis) || 0,
+          verschnitt_prozent: Number(c.verschnitt_prozent) || 0, aufschlag_prozent: Number(c.aufschlag_prozent) || 0,
+        });
+      }
+      const snapByTemplate: Record<string, any> = {};
+      for (const t of ((tRes.data as any[]) || [])) {
+        snapByTemplate[t.id] = {
+          template_id: t.id,
+          name: t.kurzbezeichnung || t.name,
+          vk_netto: Number(t.vk_netto) || 0,
+          arbeitszeit_minuten: Number(t.arbeitszeit_minuten) || 0,
+          stand: new Date().toISOString(),
+          komponenten: comps[t.id] || [],
+        };
+      }
+      // Kein setIsDirty: das ist eine interne Anreicherung, keine User-Änderung.
+      setItems(prev => prev.map(it =>
+        it.kalkulation_template_id && !it.kalkulation_snapshot && snapByTemplate[it.kalkulation_template_id]
+          ? { ...it, kalkulation_snapshot: snapByTemplate[it.kalkulation_template_id] }
+          : it,
+      ));
+    })();
+    return () => { cancelled = true; };
+  }, [fehlendeSnapshotKey]);
 
   // Auto-Sync zahlungsbedingungen → faellig_am. Immer wenn der User die
   // Zahlungsfrist (Dropdown) oder das Rechnungsdatum ändert, rechnen wir
@@ -1762,6 +1823,7 @@ export default function InvoiceDetail() {
         set_snapshot: item.set_snapshot || null,
         ist_kalkuliert: item.ist_kalkuliert || false,
         kalkulation_template_id: item.kalkulation_template_id || null,
+        kalkulation_snapshot: item.kalkulation_snapshot || null,
         katalog_vk: (item as any).katalog_vk ?? null,
         ek_preis: item.ek_preis || 0,
         verschnitt_prozent: item.verschnitt_prozent || 0,
@@ -4385,8 +4447,16 @@ export default function InvoiceDetail() {
                               </div>
                             )}
                           </div>
-                          {item.produktnummer && (
-                            <span className="text-[10px] text-muted-foreground mt-0.5 block">Prod.-Nr: {item.produktnummer}</span>
+                          {(item.produktnummer || item.kalkulation_template_id) && (
+                            <span className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-2">
+                              {item.produktnummer && <span>Prod.-Nr: {item.produktnummer}</span>}
+                              {item.kalkulation_template_id && (
+                                <span className="inline-flex items-center gap-0.5 text-primary/80"
+                                  title="Aus dem internen Katalog übernommen — hinterlegte Kalkulation über das Rechner-Symbol einsehbar">
+                                  <Link2 className="w-3 h-3" /> Katalog
+                                </span>
+                              )}
+                            </span>
                           )}
                           {(item.langtext || !isLocked) && (
                             <textarea
@@ -4434,6 +4504,22 @@ export default function InvoiceDetail() {
                                 und Komponenten-Positionen aus dem Katalog (deren
                                 Preis kommt aus den Komponenten, nicht aus der
                                 Legacy-Formel). */}
+                            {/* Katalog-Positionen: Kalkulation DAHINTER anzeigen
+                                (z.B. Baukran = 30 h Facharbeiter + 6 h LKW Hiab) —
+                                lesend, mit Wiederherstellen des Snapshot-Preises. */}
+                            {item.kalkulation_template_id && !item.ist_kalkuliert && !item.mwst_exempt && (
+                              <KatalogKalkulationPopover
+                                templateId={item.kalkulation_template_id}
+                                snapshot={item.kalkulation_snapshot}
+                                position={item.position}
+                                currentEp={item.einzelpreis}
+                                canRestore={!isLocked && !zeileGesperrt}
+                                onRestore={(preis) => {
+                                  updateItem(idx, "einzelpreis", preis);
+                                  updateItem(idx, "katalog_vk", preis);
+                                }}
+                              />
+                            )}
                             {!isLocked && !zeileGesperrt && (item.ist_kalkuliert || !item.kalkulation_template_id) && (
                               <Popover>
                                 <PopoverTrigger asChild>

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Clock } from "lucide-react";
+import { istArbeitszeitZeile } from "@/lib/stunden";
 
 /**
  * Stundenabgleich auf der Startseite (Admin): pro aktivem Projekt die im
@@ -76,19 +77,26 @@ export function StundenabgleichWidget() {
         if (angebotIds.length > 0) {
           const { data: items } = await supabase
             .from("invoice_items")
-            .select("invoice_id, menge, einheit, arbeitszeit_minuten")
+            .select("invoice_id, menge, einheit, arbeitszeit_minuten, kurztext, beschreibung")
             .in("invoice_id", angebotIds);
-          const minutenByInvoice: Record<string, number> = {};
-          for (const it of (items || [])) {
-            // Stunden-Zeilen (Einheit Std/h) zählen als 60 Min/Einheit —
-            // sonst fehlen explizit angebotene Stunden im Soll.
-            let mpe = Number((it as any).arbeitszeit_minuten) || 0;
-            if (mpe <= 0 && /^(std|std\.|h|stunde|stunden)$/i.test(String((it as any).einheit || "").trim())) mpe = 60;
-            minutenByInvoice[it.invoice_id] = (minutenByInvoice[it.invoice_id] || 0)
-              + mpe * (Number(it.menge) || 0);
+          // Zwei Stufen (wie in der Projekt-Ansicht): explizite Stunden-Posten
+          // (z.B. "Facharbeiterstunde × 25 Std") zählen als Soll; nur wenn es
+          // keine gibt, fällt das Soll auf die kalkulierte Arbeitszeit der
+          // Positionen zurück (interne Preisbasis).
+          const explizitByInvoice: Record<string, number> = {};
+          const kalkMinByInvoice: Record<string, number> = {};
+          for (const it of ((items || []) as any[])) {
+            const menge = Number(it.menge) || 0;
+            if (istArbeitszeitZeile(it.kurztext || it.beschreibung, it.einheit)) {
+              explizitByInvoice[it.invoice_id] = (explizitByInvoice[it.invoice_id] || 0) + menge;
+            }
+            kalkMinByInvoice[it.invoice_id] = (kalkMinByInvoice[it.invoice_id] || 0)
+              + (Number(it.arbeitszeit_minuten) || 0) * menge;
           }
           for (const [pid, ref] of Object.entries(angebotByProject)) {
-            angebotenMap[pid] = Math.round(((minutenByInvoice[ref.id] || 0) / 60) * 10) / 10;
+            const explizit = explizitByInvoice[ref.id] || 0;
+            const kalk = (kalkMinByInvoice[ref.id] || 0) / 60;
+            angebotenMap[pid] = Math.round((explizit > 0 ? explizit : kalk) * 10) / 10;
           }
         }
 

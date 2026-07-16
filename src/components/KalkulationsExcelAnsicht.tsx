@@ -151,13 +151,6 @@ export function KalkulationsExcelAnsicht({ positionen, onEdit, onDataChanged, on
     setDirtyVk(prev => new Set(prev).add(posId));
   }, []);
 
-  /** Live-VK einer Position: aus Komponenten oder manuell. */
-  const livePreis = useCallback((pos: PositionRow): number => {
-    const comps = componentsByPos[pos.id];
-    if (comps && comps.length > 0) return calcPositionPreis(comps, ekLookup).einzelpreis;
-    return manualVk[pos.id] ?? pos.vk_netto;
-  }, [componentsByPos, ekLookup, manualVk]);
-
   const gruppen = useMemo(() => {
     const s = suche.toLowerCase();
     const gefiltert = positionen.filter(p => !s || p.name.toLowerCase().includes(s) || p.kategorie.toLowerCase().includes(s));
@@ -165,11 +158,6 @@ export function KalkulationsExcelAnsicht({ positionen, onEdit, onDataChanged, on
     for (const p of gefiltert) (g[p.kategorie] = g[p.kategorie] || []).push(p);
     return Object.entries(g).sort(([a], [b]) => a.localeCompare(b));
   }, [positionen, suche]);
-
-  const gesamt = useMemo(
-    () => positionen.reduce((s, p) => s + livePreis(p), 0),
-    [positionen, livePreis],
-  );
 
   const dirtyCount = dirtyComp.size + dirtyVk.size;
 
@@ -297,9 +285,6 @@ export function KalkulationsExcelAnsicht({ positionen, onEdit, onDataChanged, on
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input placeholder="Position oder Kategorie suchen..." value={suche} onChange={(e) => setSuche(e.target.value)} className="pl-10" />
         </div>
-        <div className="text-xs text-muted-foreground">
-          Gesamt aller Positionen (netto): <b className="font-mono tabular-nums text-foreground">€ {fmt(gesamt)}</b>
-        </div>
       </div>
 
       <div className="overflow-x-auto rounded-md border bg-background">
@@ -318,13 +303,11 @@ export function KalkulationsExcelAnsicht({ positionen, onEdit, onDataChanged, on
           </thead>
           <tbody>
             {gruppen.map(([kategorie, posn]) => {
-              const katSumme = posn.reduce((s, p) => s + livePreis(p), 0);
               return (
                 <PositionKategorie
                   key={kategorie}
                   kategorie={kategorie}
                   positionen={posn}
-                  katSumme={katSumme}
                   componentsByPos={componentsByPos}
                   ekLookup={ekLookup}
                   manualVk={manualVk}
@@ -372,7 +355,6 @@ export function KalkulationsExcelAnsicht({ positionen, onEdit, onDataChanged, on
 interface KatProps {
   kategorie: string;
   positionen: PositionRow[];
-  katSumme: number;
   componentsByPos: Record<string, EditComp[]>;
   ekLookup: Record<string, number>;
   manualVk: Record<string, number>;
@@ -384,15 +366,14 @@ interface KatProps {
   onAddPosition?: (kategorie: string) => void;
 }
 
-function PositionKategorie({ kategorie, positionen, katSumme, componentsByPos, ekLookup, manualVk, dirtyComp, dirtyVk, onUpdateComp, onUpdateVk, onEdit, onAddPosition }: KatProps) {
+function PositionKategorie({ kategorie, positionen, componentsByPos, ekLookup, manualVk, dirtyComp, dirtyVk, onUpdateComp, onUpdateVk, onEdit, onAddPosition }: KatProps) {
   return (
     <>
+      {/* Überschrift OHNE Preissumme — eine Kategorie ist kein Warenkorb,
+          die Summe ihrer Einzelpreise hat keine Aussagekraft. */}
       <tr>
-        <td colSpan={7} className="border bg-primary/90 text-primary-foreground px-2 py-1.5 font-semibold text-sm">
+        <td colSpan={8} className="border bg-primary/90 text-primary-foreground px-2 py-1.5 font-semibold text-sm">
           {kategorie} <span className="opacity-70 font-normal">({positionen.length})</span>
-        </td>
-        <td className="border bg-primary/90 text-primary-foreground px-2 py-1.5 text-right font-mono tabular-nums font-semibold">
-          € {fmt(katSumme)}
         </td>
       </tr>
       {positionen.map(p => (

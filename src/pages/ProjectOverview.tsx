@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { countProjectFiles } from "@/lib/projectFiles";
+import { istArbeitszeitZeile } from "@/lib/stunden";
 import { useProjectStatuses } from "@/hooks/useProjectStatuses";
 import { Badge } from "@/components/ui/badge";
 import { ProjektNachkalkulation } from "@/components/project/ProjektNachkalkulation";
@@ -62,6 +63,9 @@ const ProjectOverview = () => {
   const [angebotPositionen, setAngebotPositionen] = useState<{position: number; beschreibung: string; menge: number; einheit: string; stunden?: number}[]>([]);
   // Stundenabgleich: im Angebot kalkulierte Lohnstunden (Σ arbeitszeit_minuten × Menge)
   const [angeboteneStunden, setAngeboteneStunden] = useState<number | null>(null);
+  // Kalkulierte Arbeitszeit in den Positionen (Info) — zählt nicht ins Soll,
+  // wenn explizite Stunden-Posten existieren.
+  const [kalkulierteInfoStunden, setKalkulierteInfoStunden] = useState<number | null>(null);
   const [categories, setCategories] = useState<DocumentCategory[]>([
     {
       type: "photos",
@@ -124,24 +128,33 @@ const ProjectOverview = () => {
       const { data: items } = await supabase.from("invoice_items")
         .select("position, beschreibung, kurztext, menge, einheit, arbeitszeit_minuten")
         .eq("invoice_id", referenz.id).order("position");
-      // Lohnminuten je Position: hinterlegte Kalkulations-Minuten — und
-      // Stunden-Zeilen (Einheit Std/h, z.B. "Facharbeiterstunde × 25") zählen
-      // als 60 Min/Einheit, sonst fehlen explizit angebotene Stunden im Soll.
-      const minutenProEinheit = (i: any) => {
-        const m = Number(i.arbeitszeit_minuten) || 0;
-        if (m > 0) return m;
-        return /^(std|std\.|h|stunde|stunden)$/i.test(String(i.einheit || "").trim()) ? 60 : 0;
-      };
-      setAngebotPositionen((items || []).map(i => ({
-        position: i.position, beschreibung: (i as any).kurztext || i.beschreibung,
+      // Stunden-Soll in zwei Stufen:
+      //   1) Gibt es EXPLIZIT angebotene Arbeitsstunden (z.B. "Facharbeiter-
+      //      stunde × 25 Std")? → NUR die zählen als Soll. Die Arbeitszeit-
+      //      Minuten in kalkulierten Positionen sind interne Preiskalkulation,
+      //      keine angebotenen Stunden.
+      //   2) Sonst (kein expliziter Stunden-Posten): Fallback auf die
+      //      kalkulierte Arbeitszeit der Positionen — besser als kein Soll.
+      const zeilen = (items || []) as any[];
+      const nameVon = (i: any) => (i.kurztext || i.beschreibung || "");
+      const explizit = zeilen.filter(i => istArbeitszeitZeile(nameVon(i), i.einheit));
+      const explizitStd = explizit.reduce((s, i) => s + (Number(i.menge) || 0), 0);
+      const kalkStd = zeilen.reduce((s, i) =>
+        s + ((Number(i.arbeitszeit_minuten) || 0) * (Number(i.menge) || 0)) / 60, 0);
+      const nutzeExplizit = explizitStd > 0;
+      setAngebotPositionen(zeilen.map(i => ({
+        position: i.position, beschreibung: nameVon(i),
         menge: Number(i.menge), einheit: i.einheit || "Stk.",
-        stunden: Math.round((minutenProEinheit(i) * (Number(i.menge) || 0)) / 60 * 10) / 10,
+        stunden: nutzeExplizit
+          ? (istArbeitszeitZeile(nameVon(i), i.einheit) ? Math.round((Number(i.menge) || 0) * 10) / 10 : 0)
+          : Math.round(((Number(i.arbeitszeit_minuten) || 0) * (Number(i.menge) || 0)) / 60 * 10) / 10,
       })));
-      const minuten = (items || []).reduce((s, i) =>
-        s + minutenProEinheit(i) * (Number(i.menge) || 0), 0);
-      setAngeboteneStunden(Math.round((minuten / 60) * 10) / 10);
+      setAngeboteneStunden(Math.round((nutzeExplizit ? explizitStd : kalkStd) * 10) / 10);
+      // Info fürs Aufklappmenü: kalkulierte Arbeitszeit, die NICHT ins Soll zählt
+      setKalkulierteInfoStunden(nutzeExplizit && kalkStd > 0 ? Math.round(kalkStd * 10) / 10 : null);
     } else {
       setAngeboteneStunden(null);
+      setKalkulierteInfoStunden(null);
     }
   };
 
@@ -655,6 +668,12 @@ const ProjectOverview = () => {
                               <span className="font-mono tabular-nums shrink-0">{(p.stunden || 0).toFixed(1)} h</span>
                             </li>
                           ))}
+                          {kalkulierteInfoStunden !== null && (
+                            <li className="pt-1 mt-1 border-t border-border/50 text-muted-foreground/80">
+                              ℹ️ In den übrigen Positionen stecken {kalkulierteInfoStunden.toFixed(1)} h
+                              interne Kalkulations-Arbeitszeit (Preisbasis) — zählt nicht als angebotene Stunden.
+                            </li>
+                          )}
                         </ul>
                       </details>
                     )}
