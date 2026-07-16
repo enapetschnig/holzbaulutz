@@ -601,16 +601,21 @@ export default function InvoiceDetail() {
       }
 
       // Schlussrechnung: Anzahlungen als negative BRUTTO-Zeilen anhängen.
+      // § 11 UStG (Endrechnung): Die vereinnahmten Teilentgelte UND die darauf
+      // entfallenden Steuerbeträge sind abzusetzen — deshalb weist die
+      // Abzugszeile die in der Anzahlung enthaltene USt explizit aus.
       if (targetTyp === "schlussrechnung" && opts?.abzugIds && opts.abzugIds.length > 0) {
         const { data: abzugInvs } = await supabase
           .from("invoices")
-          .select("id, nummer, netto_summe, brutto_summe, datum")
+          .select("id, nummer, netto_summe, brutto_summe, mwst_betrag, mwst_satz, datum")
           .in("id", opts.abzugIds);
         ((abzugInvs as any[]) || []).forEach((abz) => {
           const brutto = Number(abz.brutto_summe) || 0;
+          const ustBetrag = Number(abz.mwst_betrag) || 0;
+          const ustSatz = Number(abz.mwst_satz) || 20;
           nextItems.push({
             position: nextItems.length + 1,
-            beschreibung: `Abzug Anzahlung ${abz.nummer} vom ${new Date(abz.datum + "T12:00:00").toLocaleDateString("de-AT")} (brutto, MwSt-frei)`,
+            beschreibung: `Abzug Anzahlungsrechnung ${abz.nummer} vom ${new Date(abz.datum + "T12:00:00").toLocaleDateString("de-AT")} (brutto, darin enthaltene ${ustSatz}% USt: € ${ustBetrag.toFixed(2)})`,
             kurztext: `Abzug ${abz.nummer}`,
             langtext: "",
             menge: 1,
