@@ -94,7 +94,7 @@ function AppContent() {
           <Route path="/construction-sites" element={<ProtectedRoute><ConstructionSites /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute feature="admin"><Admin /></ProtectedRoute>} />
           <Route path="/hours-report" element={<ProtectedRoute feature="stundenauswertung"><HoursReport /></ProtectedRoute>} />
-          <Route path="/employees" element={<ProtectedRoute><Employees /></ProtectedRoute>} />
+          <Route path="/employees" element={<ProtectedRoute feature="admin"><Employees /></ProtectedRoute>} />
           <Route path="/notepad" element={<ProtectedRoute><Notepad /></ProtectedRoute>} />
           <Route path="/disturbances" element={<ProtectedRoute feature="regieberichte"><Disturbances /></ProtectedRoute>} />
           <Route path="/disturbances/:id" element={<ProtectedRoute feature="regieberichte"><DisturbanceDetail /></ProtectedRoute>} />

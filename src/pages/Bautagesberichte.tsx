@@ -282,7 +282,9 @@ const Bautagesberichte = () => {
                             <User className="h-4 w-4 text-muted-foreground" />
                             {bericht.kunde_name}
                           </h3>
-                          {isAdmin && (bericht.profile_vorname || bericht.profile_nachname) && (
+                          {/* Alle sehen alle Bautagesberichte — der Ersteller
+                              hilft jedem beim Einordnen, nicht nur Admins. */}
+                          {(bericht.profile_vorname || bericht.profile_nachname) && (
                             <p className="text-xs text-muted-foreground">
                               Erstellt von: {bericht.profile_vorname} {bericht.profile_nachname}
                             </p>

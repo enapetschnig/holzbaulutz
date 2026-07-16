@@ -48,6 +48,7 @@ const MaterialList = () => {
   const [loading, setLoading] = useState(true);
   const [projectName, setProjectName] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [darfPreiseSehen, setDarfPreiseSehen] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [showSummary, setShowSummary] = useState(true);
 
@@ -77,6 +78,9 @@ const MaterialList = () => {
       .eq("user_id", user.id)
       .single();
     setIsAdmin(roleData?.role === "administrator");
+    // Einzelpreise (EK aus der Kalkulation) sind Betriebswissen — nur
+    // Admin/Vorarbeiter sehen €-Werte; Mitarbeiter erfassen ohne Preis.
+    setDarfPreiseSehen(roleData?.role === "administrator" || roleData?.role === "vorarbeiter");
     await Promise.all([fetchProjectName(), fetchEntries()]);
     setLoading(false);
   };
@@ -89,13 +93,15 @@ const MaterialList = () => {
 
   const fetchEntries = async () => {
     if (!projectId) return;
-    const { data, error } = await supabase
-      .from("material_entries")
+    // Maskierte Ansicht: einzelpreis kommt nur für Admin/Vorarbeiter aus der
+    // DB (material_entries_ansicht) — Mitarbeiter erhalten NULL, auch per API.
+    const { data, error } = await (supabase as any)
+      .from("material_entries_ansicht")
       .select("*")
       .eq("project_id", projectId)
       .order("created_at", { ascending: false });
     if (!error && data) {
-      const userIds = [...new Set(data.map(e => e.user_id))];
+      const userIds = [...new Set((data as any[]).map(e => String(e.user_id)))];
       const { data: profiles } = await supabase
         .from("profiles")
         .select("id, vorname, nachname")
@@ -228,7 +234,7 @@ const MaterialList = () => {
                         <div>
                           <p className="font-medium text-sm">{s.material}</p>
                           <p className="text-xs text-muted-foreground">
-                            {s.einzelpreis > 0 && `€ ${s.einzelpreis.toFixed(2)} / ${s.einheit}`}
+                            {darfPreiseSehen && s.einzelpreis > 0 && `€ ${s.einzelpreis.toFixed(2)} / ${s.einheit}`}
                             {s.bedarf > 0 && (
                               <span className="ml-2 text-blue-600">Soll lt. Angebot: {s.bedarf.toFixed(1)} {s.einheit}</span>
                             )}
@@ -238,7 +244,7 @@ const MaterialList = () => {
                           <p className={`font-bold ${ueber ? "text-destructive" : ""}`}>
                             {s.verbrauch.toFixed(1)}{s.bedarf > 0 ? ` / ${s.bedarf.toFixed(1)}` : ""} {s.einheit}
                           </p>
-                          {s.einzelpreis > 0 && s.verbrauch > 0 && (
+                          {darfPreiseSehen && s.einzelpreis > 0 && s.verbrauch > 0 && (
                             <p className="text-xs text-muted-foreground">
                               € {(s.verbrauch * s.einzelpreis).toFixed(2)}
                             </p>
@@ -307,10 +313,12 @@ const MaterialList = () => {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div>
-                    <label className="text-sm font-medium">Einzelpreis (€)</label>
-                    <Input value={newEinzelpreis} onChange={(e) => setNewEinzelpreis(e.target.value)} placeholder="0.00" type="number" step="0.01" />
-                  </div>
+                  {darfPreiseSehen && (
+                    <div>
+                      <label className="text-sm font-medium">Einzelpreis (€)</label>
+                      <Input value={newEinzelpreis} onChange={(e) => setNewEinzelpreis(e.target.value)} placeholder="0.00" type="number" step="0.01" />
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <Button type="submit" disabled={submitting || !newMaterial.trim()}>
@@ -342,7 +350,7 @@ const MaterialList = () => {
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {entry.menge && `${entry.menge} ${entry.einheit || ""}`}
-                          {entry.einzelpreis && entry.einzelpreis > 0 ? ` · € ${entry.einzelpreis.toFixed(2)}` : ""}
+                          {darfPreiseSehen && entry.einzelpreis && entry.einzelpreis > 0 ? ` · € ${entry.einzelpreis.toFixed(2)}` : ""}
                           {" · "}
                           {entry.profiles ? `${entry.profiles.vorname} ${entry.profiles.nachname}` : ""}
                           {" · "}
