@@ -435,6 +435,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   try {
+    // AUTH: Nur eingeloggte, aktive App-Nutzer dürfen versenden — die Function
+    // läuft sonst unauthentifiziert mit Service-Role (Spam-/Phishing-Risiko,
+    // beliebige Schreibzugriffe auf Projektordner). Gleiches Muster wie
+    // create-team-time-entries.
+    const authHeader = req.headers.get("Authorization") || "";
+    const token = authHeader.replace("Bearer ", "");
+    if (!token) {
+      return new Response(JSON.stringify({ error: "Nicht angemeldet" }),
+        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } });
+    }
+    const { data: userData, error: authErr } = await supabaseAdmin.auth.getUser(token);
+    if (authErr || !userData?.user) {
+      return new Response(JSON.stringify({ error: "Ungültige Anmeldung" }),
+        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } });
+    }
+
     const { disturbance, materials, technicianNames, technicianName, photos }: ReportRequest = await req.json();
 
     // Backward compatibility + fallback

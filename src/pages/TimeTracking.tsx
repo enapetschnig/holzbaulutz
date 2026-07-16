@@ -448,20 +448,44 @@ const TimeTracking = () => {
       return;
     }
 
-    const { count: existingCount } = await supabase
+    const { data: existingDay } = await supabase
       .from("time_entries")
-      .select("id", { count: "exact", head: true })
+      .select("id, start_time, end_time, taetigkeit, is_full_day" as any)
       .eq("user_id", user.id)
       .eq("datum", absenceData.date);
 
-    if ((existingCount ?? 0) > 0) {
-      toast({ 
-        variant: "destructive", 
-        title: "Eintrag bereits vorhanden", 
-        description: "Für diesen Tag wurden die Stunden bereits eingetragen, gehe unter Meine Stunden rein." 
-      });
-      setSubmittingAbsence(false);
-      return;
+    if (absenceData.isFullDay) {
+      // Ganztages-Abwesenheit: Tag muss komplett frei sein
+      if ((existingDay?.length ?? 0) > 0) {
+        toast({
+          variant: "destructive",
+          title: "Eintrag bereits vorhanden",
+          description: "Für diesen Tag wurden bereits Stunden eingetragen — Ganztages-Abwesenheit nicht möglich. Für einen halben Tag den 'Ganzer Tag'-Schalter ausschalten.",
+        });
+        setSubmittingAbsence(false);
+        return;
+      }
+    } else {
+      // Teilzeit-Abwesenheit (Von/Bis): koexistiert mit Arbeitszeit — nur
+      // echte Zeitüberschneidungen und Ganztages-Sonderzeit blockieren.
+      const toMin = (t: string) => { const [h, m] = String(t || "0:0").split(":").map(Number); return h * 60 + m; };
+      const [sH, sM] = absenceData.absenceStartTime.split(":").map(Number);
+      const [eH, eM] = absenceData.absenceEndTime.split(":").map(Number);
+      const neuStart = sH * 60 + sM, neuEnde = eH * 60 + eM;
+      for (const e of (existingDay || []) as any[]) {
+        const istSonder = ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit);
+        if (istSonder && e.is_full_day !== false) {
+          toast({ variant: "destructive", title: "Tag bereits blockiert", description: `Für diesen Tag ist bereits ${e.taetigkeit} (ganztägig) eingetragen.` });
+          setSubmittingAbsence(false);
+          return;
+        }
+        const exStart = toMin(e.start_time), exEnde = toMin(e.end_time);
+        if (neuStart < exEnde && exStart < neuEnde) {
+          toast({ variant: "destructive", title: "Zeitüberschneidung", description: `Überschneidet mit bestehendem Eintrag (${String(e.start_time).substring(0, 5)}–${String(e.end_time).substring(0, 5)}).` });
+          setSubmittingAbsence(false);
+          return;
+        }
+      }
     }
 
     let documentPath = null;
@@ -550,7 +574,10 @@ const TimeTracking = () => {
       location_type: "baustelle",
       notizen: documentPath ? `Krankmeldung: ${documentPath}` : null,
       week_type: null,
-    }).select("id").single();
+      // Teilzeit-Abwesenheit (Von/Bis) koexistiert mit Arbeitszeit am selben
+      // Tag — nur Ganztages-Sonderzeit blockiert den ganzen Tag.
+      is_full_day: absenceData.isFullDay,
+    } as any).select("id").single();
 
     // ZA: erst jetzt vom Zeitkonto abbuchen
     if (!error && zaAccount) {
@@ -724,17 +751,21 @@ const TimeTracking = () => {
     // Check for overlaps with existing entries
     const { data: existingEntries } = await supabase
       .from("time_entries")
-      .select("id, start_time, end_time, taetigkeit")
+      .select("id, start_time, end_time, taetigkeit, is_full_day" as any)
       .eq("user_id", user.id)
       .eq("datum", selectedDate);
 
     if (existingEntries && existingEntries.length > 0) {
-      for (const entry of existingEntries) {
-        if (["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(entry.taetigkeit)) {
-          toast({ 
-            variant: "destructive", 
-            title: "Tag bereits blockiert", 
-            description: `Für diesen Tag ist bereits ${entry.taetigkeit} eingetragen.` 
+      for (const entry of (existingEntries as any[])) {
+        // Nur GANZTÄGIGE Sonderzeit blockiert den Tag — eine Teilzeit-
+        // Abwesenheit (z.B. mittags auf Zeitausgleich, is_full_day=false)
+        // läuft über den normalen Überlappungs-Check darunter.
+        // NULL = Altbestand → konservativ als ganztägig behandeln.
+        if (["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(entry.taetigkeit) && entry.is_full_day !== false) {
+          toast({
+            variant: "destructive",
+            title: "Tag bereits blockiert",
+            description: `Für diesen Tag ist bereits ${entry.taetigkeit} (ganztägig) eingetragen.`
           });
           setSaving(false);
           return;

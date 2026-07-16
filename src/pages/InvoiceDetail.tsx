@@ -91,6 +91,8 @@ interface InvoiceItem {
   sonstiges_preis?: number;
   arbeitszeit_minuten?: number;
   stundensatz?: number;
+  /** Katalog-VK-Snapshot beim Einfügen (Stale-Referenz) */
+  katalog_vk?: number;
 }
 
 interface InvoiceData {
@@ -415,6 +417,9 @@ export default function InvoiceDetail() {
       anzahlungProzent?: number | null;
       anzahlungBetrag?: number | null;
       abzugIds?: string[];
+      /** Duplikat-Modus: unabhängige Kopie — KEIN parent_invoice_id,
+       *  Original wird beim Speichern NICHT als "verrechnet" markiert. */
+      duplicate?: boolean;
     },
   ): Promise<boolean> => {
     try {
@@ -468,7 +473,8 @@ export default function InvoiceDetail() {
         ansprechpartner_email: data.ansprechpartner_email || "",
         anzahlung_prozent: opts?.anzahlungProzent ?? null,
         anzahlung_betrag: opts?.anzahlungBetrag ?? null,
-        parent_invoice_id: fromDocId,
+        // Duplikat: unabhängige Kopie ohne Beleg-Verknüpfung
+        parent_invoice_id: opts?.duplicate ? null : fromDocId,
       } as any));
 
       const srcItems = (itemsRes.data || []) as any[];
@@ -490,6 +496,7 @@ export default function InvoiceDetail() {
         // "Preise aktualisieren"-Funktion auch nach Angebot→Rechnung greift.
         ist_kalkuliert: !!(it as any).ist_kalkuliert,
         kalkulation_template_id: (it as any).kalkulation_template_id || null,
+        katalog_vk: Number((it as any).katalog_vk) || undefined,
         ek_preis: Number((it as any).ek_preis) || 0,
         verschnitt_prozent: Number((it as any).verschnitt_prozent) || 0,
         aufschlag_prozent: Number((it as any).aufschlag_prozent) || 0,
@@ -611,7 +618,9 @@ export default function InvoiceDetail() {
       }
 
       if (nextItems.length > 0) setItems(nextItems);
-      setFromAngebotId(fromDocId);
+      // Duplikat: Original NICHT als Quelle merken (würde es beim Speichern
+      // sonst fälschlich auf "verrechnet" setzen)
+      setFromAngebotId(opts?.duplicate ? null : fromDocId);
       return true;
     } catch (err) {
       console.error("Konversion fehlgeschlagen:", err);
@@ -695,6 +704,7 @@ export default function InvoiceDetail() {
           anzahlungProzent: anzahlungProzentParam ? Number(anzahlungProzentParam) : null,
           anzahlungBetrag: anzahlungBetragParam ? Number(anzahlungBetragParam) : null,
           abzugIds: abzugIdsParam ? abzugIdsParam.split(",").filter(Boolean) : undefined,
+          duplicate: searchParams.get("duplicate") === "1",
         });
       })();
     } else if (isNew && defaultProjectId) {
@@ -913,6 +923,7 @@ export default function InvoiceDetail() {
         set_snapshot: (it as any).set_snapshot || null,
         ist_kalkuliert: !!(it as any).ist_kalkuliert,
         kalkulation_template_id: (it as any).kalkulation_template_id || null,
+        katalog_vk: Number((it as any).katalog_vk) || undefined,
         ek_preis: Number((it as any).ek_preis) || 0,
         verschnitt_prozent: Number((it as any).verschnitt_prozent) || 0,
         aufschlag_prozent: Number((it as any).aufschlag_prozent) || 0,
@@ -1172,8 +1183,8 @@ export default function InvoiceDetail() {
         // Alte Einzel-Kalkulation: Snapshot-Felder mitziehen. Komponenten-
         // Positionen/Materialien: nur EP + Lohnminuten (für Stundenabgleich).
         const updated = it.ist_kalkuliert && t.ist_kalkuliert
-          ? { ...it, ...kalkFromTemplate(t), einzelpreis: ep }
-          : { ...it, einzelpreis: ep, arbeitszeit_minuten: Number(t.arbeitszeit_minuten) || 0 };
+          ? { ...it, ...kalkFromTemplate(t), einzelpreis: ep, katalog_vk: ep }
+          : { ...it, einzelpreis: ep, katalog_vk: ep, arbeitszeit_minuten: Number(t.arbeitszeit_minuten) || 0 };
         updated.gesamtpreis = computeItemTotal(updated);
         return updated;
       });
@@ -1209,7 +1220,13 @@ export default function InvoiceDetail() {
       for (const it of items) {
         if (it.kalkulation_template_id && map[it.kalkulation_template_id]) {
           const ep = expectedEpFromCatalog(it, map[it.kalkulation_template_id]);
-          if (Math.abs(ep - (Number(it.einzelpreis) || 0)) > 0.005) stale++;
+          // Referenz ist der KATALOG-Snapshot vom Einfügen (katalog_vk) —
+          // nicht der aktuelle Zeilenpreis. Ein bewusst verhandelter Preis
+          // ist KEINE Katalog-Änderung. Fallback für Alt-Zeilen ohne
+          // Snapshot: bisheriges Verhalten (Vergleich mit einzelpreis).
+          const referenz = Number((it as any).katalog_vk);
+          const basis = Number.isFinite(referenz) && referenz > 0 ? referenz : (Number(it.einzelpreis) || 0);
+          if (Math.abs(ep - basis) > 0.005) stale++;
         }
       }
       setStaleKalkCount(stale);
@@ -1663,6 +1680,7 @@ export default function InvoiceDetail() {
         set_snapshot: item.set_snapshot || null,
         ist_kalkuliert: item.ist_kalkuliert || false,
         kalkulation_template_id: item.kalkulation_template_id || null,
+        katalog_vk: (item as any).katalog_vk ?? null,
         ek_preis: item.ek_preis || 0,
         verschnitt_prozent: item.verschnitt_prozent || 0,
         aufschlag_prozent: item.aufschlag_prozent || 0,
@@ -2114,108 +2132,15 @@ export default function InvoiceDetail() {
     }
   };
 
-  const handleDuplicate = async () => {
+  const handleDuplicate = () => {
     if (!invoiceId) return;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    try {
-      const { data: numData, error: numError } = await supabase.rpc("next_document_number" as never, {
-        p_typ: form.typ,
-        p_jahr: new Date().getFullYear(),
-      } as never);
-      if (numError) throw numError;
-
-      const nummer = numData as string;
-      // Laufnummer aus den TRAILING Digits extrahieren — funktioniert für alle
-      // Typ-Präfixe (AN, AB, AR, SR, LS, GS, TR, …) und Formate.
-      const laufnummer = parseInt((nummer.match(/(\d+)$/) || ["", "1"])[1]) || 1;
-
-      const { data: newInvoice, error: insertError } = await supabase
-        .from("invoices")
-        .insert({
-          user_id: user.id,
-          typ: form.typ,
-          nummer,
-          laufnummer,
-          jahr: new Date().getFullYear(),
-          status: form.typ === "rechnung" ? "offen" : "entwurf",
-          kunde_name: form.kunde_name,
-          kunde_adresse: form.kunde_adresse || null,
-          kunde_plz: form.kunde_plz || null,
-          kunde_ort: form.kunde_ort || null,
-          kunde_land: form.kunde_land || null,
-          kunde_email: form.kunde_email || null,
-          kunde_telefon: form.kunde_telefon || null,
-          kunde_uid: form.kunde_uid || null,
-          datum: format(new Date(), "yyyy-MM-dd"),
-          faellig_am: null,
-          leistungsdatum: form.leistungsdatum || null,
-          // leistungsdatum_bis bewusst weggelassen — die Spalte wird erst
-          // mit Migration 20260503100000 angelegt; der Duplikat-Pfad
-          // funktioniert auch ohne sie (Original-Wert wird hier nicht
-          // übernommen, ist bei Duplikaten ohnehin selten relevant).
-          zahlungsbedingungen: form.zahlungsbedingungen || null,
-          notizen: form.notizen || null,
-          netto_summe: nettoSumme,
-          mwst_satz: form.mwst_satz,
-          mwst_betrag: mwstBetrag,
-          brutto_summe: bruttoSumme,
-          project_id: form.project_id || null,
-          rabatt_prozent: form.rabatt_prozent,
-          rabatt_betrag: form.rabatt_betrag,
-          kunde_anrede: (form as any).kunde_anrede || null,
-          kunde_titel: (form as any).kunde_titel || null,
-          reverse_charge: (form as any).reverse_charge || false,
-          skonto_prozent: form.skonto_prozent || 0,
-          skonto_tage: form.skonto_tage || 0,
-          gueltig_bis: form.gueltig_bis || null,
-          customer_id: form.customer_id || null,
-          // Duplikate sind bewusst unabhängig — kein parent_invoice_id und
-          // keine Anzahlungs-Felder, damit das Duplikat nicht versehentlich
-          // in einer Schlussrechnung als Abzug auftaucht.
-          parent_invoice_id: null,
-          anzahlung_prozent: null,
-          anzahlung_betrag: null,
-        })
-        .select("id")
-        .single();
-
-      if (insertError) throw insertError;
-
-      const itemsToInsert = items.map((item, idx) => ({
-        invoice_id: newInvoice.id,
-        position: idx + 1,
-        beschreibung: item.beschreibung,
-        kurztext: (item as any).kurztext || item.beschreibung,
-        langtext: (item as any).langtext || null,
-        menge: item.menge,
-        einheit: item.einheit,
-        einzelpreis: item.einzelpreis,
-        gesamtpreis: item.gesamtpreis,
-        produktnummer: (item as any).produktnummer || null,
-        rabatt_prozent: (item as any).rabatt_prozent || 0,
-        mwst_exempt: (item as any).mwst_exempt || false,
-        set_template_id: (item as any).set_template_id || null,
-        set_snapshot: (item as any).set_snapshot || null,
-        ist_kalkuliert: (item as any).ist_kalkuliert || false,
-        kalkulation_template_id: (item as any).kalkulation_template_id || null,
-        ek_preis: (item as any).ek_preis || 0,
-        verschnitt_prozent: (item as any).verschnitt_prozent || 0,
-        aufschlag_prozent: (item as any).aufschlag_prozent || 0,
-        befestigung_preis: (item as any).befestigung_preis || 0,
-        sonstiges_preis: (item as any).sonstiges_preis || 0,
-        arbeitszeit_minuten: (item as any).arbeitszeit_minuten || 0,
-        stundensatz: (item as any).stundensatz || 52,
-      }));
-
-      await supabase.from("invoice_items").insert(itemsToInsert);
-
-      toast({ title: "Dupliziert", description: `${form.typ === "rechnung" ? "Rechnung" : "Angebot"} wurde dupliziert` });
-      navigate(`/invoices/${newInvoice.id}`);
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Fehler", description: err.message || "Duplizieren fehlgeschlagen" });
-    }
+    // Duplikat als UNGESPEICHERTER Entwurf über den from_doc-Flow: Kunde +
+    // Positionen + Kalkulationsfelder werden vorbefüllt, aber es wird KEINE
+    // Belegnummer gezogen und nichts gesperrt — Nummer/Status entstehen erst
+    // beim regulären Speichern. (Vorher: sofortiger Insert → gesperrte
+    // Rechnung mit verbrauchter Nummer, die sich nur stornieren ließ.)
+    navigate(`/invoices/new?typ=${form.typ}&from_doc=${invoiceId}&duplicate=1`);
+    toast({ title: "Duplikat erstellt", description: "Als Entwurf geladen — Nummer wird beim Speichern vergeben." });
   };
 
   const handleConvertToInvoice = async () => {
@@ -4222,6 +4147,7 @@ export default function InvoiceDetail() {
                                       updateItem(idx, "langtext", lang && lang !== kurz ? lang : "");
                                       updateItem(idx, "einheit", t.einheit);
                                       updateItem(idx, "einzelpreis", netto);
+                                      updateItem(idx, "katalog_vk", netto); // Stale-Referenz
                                       updateItem(idx, "produktnummer", (t as any).produktnummer || "");
                                       // Katalog-Verknüpfung + Lohnminuten — sonst würde diese Position
                                       // bei "Preise aktualisieren" und im Stundenabgleich NICHT mitziehen
@@ -4762,6 +4688,7 @@ export default function InvoiceDetail() {
                       menge,
                       einheit: t.einheit,
                       einzelpreis: netto,
+                      katalog_vk: netto, // Snapshot: Katalogpreis beim Einfügen
                       gesamtpreis: Math.round(netto * menge * 100) / 100,
                       produktnummer: (t as any).produktnummer || "",
                       ist_kalkuliert: isKalk,

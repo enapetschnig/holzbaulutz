@@ -53,13 +53,19 @@ export function aggregateByDay(entries: TimeEntryLite[]): DayBalance[] {
   const out: DayBalance[] = [];
   for (const [datum, dayEntries] of grouped) {
     const ist = dayEntries.reduce((s, e) => s + Number(e.stunden || 0), 0);
-    const istSonderzeit = dayEntries.some(
-      (e) => !!e.taetigkeit && SONDER_TAETIGKEITEN.has(e.taetigkeit),
+    const sonderStunden = dayEntries.reduce(
+      (s, e) => s + (!!e.taetigkeit && SONDER_TAETIGKEITEN.has(e.taetigkeit) ? Number(e.stunden || 0) : 0),
+      0,
     );
-    const soll = istSonderzeit
-      ? 0
-      : getNormalWorkingHours(new Date(datum + "T12:00:00"));
-    const saldo = istSonderzeit ? 0 : ist - soll;
+    const istSonderzeit = sonderStunden > 0;
+    const tagessoll = getNormalWorkingHours(new Date(datum + "T12:00:00"));
+    // Neutralisieren nur, wenn die Sonderzeit das TAGESSOLL abdeckt (Ganztag).
+    // Teilzeit-Sonderzeit (z.B. mittags 4h ZA + 6h Arbeit): Sonderstunden
+    // zählen als Ist mit — 6h Arbeit + 4h ZA auf einen 10h-Tag = Saldo 0,
+    // 7h Arbeit + 4h ZA = +1. Ganztag verhält sich exakt wie bisher.
+    const deckt = sonderStunden >= tagessoll - 0.005;
+    const soll = istSonderzeit && deckt ? 0 : tagessoll;
+    const saldo = istSonderzeit && deckt ? 0 : ist - soll;
     out.push({ datum, ist, soll, saldo, istSonderzeit });
   }
   return out.sort((a, b) => a.datum.localeCompare(b.datum));
