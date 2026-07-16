@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
-import { TrendingUp, TrendingDown, AlertTriangle, Info } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle, Info, ChevronDown, ChevronUp } from "lucide-react";
 
 /**
  * Projekt-Nachkalkulation — Deckungsbeitrag je Baustelle:
@@ -25,6 +25,9 @@ interface Props { projectId: string; }
 
 export function ProjektNachkalkulation({ projectId }: Props) {
   const [loading, setLoading] = useState(true);
+  // Standardmäßig ZUGEKLAPPT — die Geldzahlen erscheinen erst auf
+  // "Nachkalkulation öffnen" (bewusster Blick statt Dauer-Anzeige).
+  const [offen, setOffen] = useState(false);
   const [d, setD] = useState<null | {
     erloes: number; lohn: number; material: number; fremd: number;
     faktor: number; stundenIst: number;
@@ -114,12 +117,19 @@ export function ProjektNachkalkulation({ projectId }: Props) {
 
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base flex items-center gap-2">
-          {positiv ? <TrendingUp className="w-4 h-4 text-green-600" /> : <TrendingDown className="w-4 h-4 text-destructive" />}
-          Nachkalkulation — verdient die Baustelle Geld?
+      <CardHeader className="pb-2 cursor-pointer select-none" onClick={() => setOffen(o => !o)}>
+        <CardTitle className="text-base flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            {positiv ? <TrendingUp className="w-4 h-4 text-green-600" /> : <TrendingDown className="w-4 h-4 text-destructive" />}
+            Nachkalkulation — verdient die Baustelle Geld?
+          </span>
+          <span className="flex items-center gap-1.5 text-sm font-normal text-muted-foreground">
+            {offen ? "Schließen" : "Öffnen"}
+            {offen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </span>
         </CardTitle>
       </CardHeader>
+      {offen && (
       <CardContent>
         <Zeile label="Erlöse (gestellte Rechnungen, netto)" wert={d.erloes} />
         <Zeile label="Lohnkosten" sub={`${d.stundenIst} Std × Lohn × ${d.faktor.toLocaleString("de-AT")} (inkl. Nebenkosten)`} wert={d.lohn} minus />
@@ -150,6 +160,7 @@ export function ProjektNachkalkulation({ projectId }: Props) {
           Erlös = netto der gestellten Rechnungen (bei Schlussrechnung ohne Doppelzählung der Anzahlungen). Lohn-Nebenkostenfaktor unter Admin → Einstellungen anpassbar.
         </p>
       </CardContent>
+      )}
     </Card>
   );
 }

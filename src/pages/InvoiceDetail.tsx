@@ -1157,6 +1157,8 @@ export default function InvoiceDetail() {
   // das Original unangetastet (archiviert, Vorgänger-Verweis).
   const [kalkRefreshApplied, setKalkRefreshApplied] = useState(false);
   const [staleKalkCount, setStaleKalkCount] = useState(0);
+  // Welche Positionen sind betroffen (Name + alt→neu) — für den Banner
+  const [staleKalkDetails, setStaleKalkDetails] = useState<{ pos: number; name: string; alt: number; neu: number }[]>([]);
 
   const fetchCatalogKalk = useCallback(async (): Promise<Record<string, any>> => {
     const ids = Array.from(new Set(
@@ -1251,7 +1253,8 @@ export default function InvoiceDetail() {
       const map = await fetchCatalogKalk();
       if (cancelled) return;
       let stale = 0;
-      for (const it of items) {
+      const details: { pos: number; name: string; alt: number; neu: number }[] = [];
+      items.forEach((it, idx) => {
         if (it.kalkulation_template_id && map[it.kalkulation_template_id]) {
           const ep = expectedEpFromCatalog(it, map[it.kalkulation_template_id]);
           // Referenz ist der KATALOG-Snapshot vom Einfügen (katalog_vk) —
@@ -1260,10 +1263,14 @@ export default function InvoiceDetail() {
           // Snapshot: bisheriges Verhalten (Vergleich mit einzelpreis).
           const referenz = Number((it as any).katalog_vk);
           const basis = Number.isFinite(referenz) && referenz > 0 ? referenz : (Number(it.einzelpreis) || 0);
-          if (Math.abs(ep - basis) > 0.005) stale++;
+          if (Math.abs(ep - basis) > 0.005) {
+            stale++;
+            details.push({ pos: idx + 1, name: it.kurztext || it.beschreibung || `Position ${idx + 1}`, alt: Number(it.einzelpreis) || 0, neu: ep });
+          }
         }
-      }
+      });
       setStaleKalkCount(stale);
+      setStaleKalkDetails(details);
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4237,16 +4244,35 @@ export default function InvoiceDetail() {
             </CardHeader>
             <CardContent>
               {!isLocked && staleKalkCount > 0 && (
-                <div className="mb-4 flex flex-col sm:flex-row sm:items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5">
-                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-                  <p className="text-sm text-amber-900 flex-1">
-                    Bei <strong>{staleKalkCount}</strong> kalkulierten Position(en) haben sich die Material-/EK-Preise im Katalog seit dem Erstellen geändert.
-                  </p>
-                  <Button onClick={refreshKalkulationFromCatalog} disabled={kalkRefreshing} size="sm"
-                    className="bg-amber-600 hover:bg-amber-700 gap-1 shrink-0">
-                    <RefreshCw className={`w-4 h-4 ${kalkRefreshing ? "animate-spin" : ""}`} />
-                    Jetzt aktualisieren
-                  </Button>
+                <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                    <p className="text-sm text-amber-900 flex-1">
+                      Bei <strong>{staleKalkCount}</strong> Position(en) haben sich die Katalogpreise seit dem Erstellen geändert:
+                    </p>
+                    <Button onClick={refreshKalkulationFromCatalog} disabled={kalkRefreshing} size="sm"
+                      className="bg-amber-600 hover:bg-amber-700 gap-1 shrink-0">
+                      <RefreshCw className={`w-4 h-4 ${kalkRefreshing ? "animate-spin" : ""}`} />
+                      Jetzt aktualisieren
+                    </Button>
+                  </div>
+                  {/* WELCHE Positionen betroffen sind — mit altem und neuem Preis */}
+                  <ul className="mt-2 space-y-0.5 pl-6">
+                    {staleKalkDetails.slice(0, 6).map(d => (
+                      <li key={d.pos} className="text-xs text-amber-900 flex flex-wrap items-baseline gap-x-2">
+                        <span className="font-medium">Pos. {d.pos} · {d.name.length > 60 ? d.name.slice(0, 60) + "…" : d.name}</span>
+                        <span className="font-mono tabular-nums">
+                          € {d.alt.toFixed(2)} → <b>€ {d.neu.toFixed(2)}</b>
+                          <span className={d.neu >= d.alt ? " text-red-700" : " text-green-700"}>
+                            {" "}({d.neu >= d.alt ? "+" : ""}{(d.neu - d.alt).toFixed(2)})
+                          </span>
+                        </span>
+                      </li>
+                    ))}
+                    {staleKalkDetails.length > 6 && (
+                      <li className="text-xs text-amber-800">… und {staleKalkDetails.length - 6} weitere</li>
+                    )}
+                  </ul>
                 </div>
               )}
               <fieldset disabled={isLocked}>

@@ -76,12 +76,16 @@ export function StundenabgleichWidget() {
         if (angebotIds.length > 0) {
           const { data: items } = await supabase
             .from("invoice_items")
-            .select("invoice_id, menge, arbeitszeit_minuten")
+            .select("invoice_id, menge, einheit, arbeitszeit_minuten")
             .in("invoice_id", angebotIds);
           const minutenByInvoice: Record<string, number> = {};
           for (const it of (items || [])) {
+            // Stunden-Zeilen (Einheit Std/h) zählen als 60 Min/Einheit —
+            // sonst fehlen explizit angebotene Stunden im Soll.
+            let mpe = Number((it as any).arbeitszeit_minuten) || 0;
+            if (mpe <= 0 && /^(std|std\.|h|stunde|stunden)$/i.test(String((it as any).einheit || "").trim())) mpe = 60;
             minutenByInvoice[it.invoice_id] = (minutenByInvoice[it.invoice_id] || 0)
-              + (Number((it as any).arbeitszeit_minuten) || 0) * (Number(it.menge) || 0);
+              + mpe * (Number(it.menge) || 0);
           }
           for (const [pid, ref] of Object.entries(angebotByProject)) {
             angebotenMap[pid] = Math.round(((minutenByInvoice[ref.id] || 0) / 60) * 10) / 10;
@@ -117,8 +121,11 @@ export function StundenabgleichWidget() {
       <CardContent className="space-y-3">
         {zeilen.map(z => {
           const hatAngebot = z.angeboten > 0;
-          const pct = hatAngebot ? Math.min(100, Math.round((z.gebucht / z.angeboten) * 100)) : 0;
+          const pctRaw = hatAngebot ? Math.round((z.gebucht / z.angeboten) * 100) : 0;
+          const pct = Math.min(100, pctRaw);
           const ueber = hatAngebot && z.gebucht > z.angeboten;
+          const knapp = hatAngebot && !ueber && pctRaw >= 80;
+          const barFarbe = ueber ? "bg-destructive" : knapp ? "bg-amber-500" : "bg-green-600";
           return (
             <button
               key={z.projectId}
@@ -128,17 +135,31 @@ export function StundenabgleichWidget() {
             >
               <div className="flex justify-between items-baseline gap-2">
                 <span className="text-sm font-medium truncate">{z.name}</span>
-                <span className={`text-xs tabular-nums shrink-0 ${ueber ? "text-destructive font-semibold" : "text-muted-foreground"}`}>
-                  {z.gebucht.toFixed(1)} / {hatAngebot ? z.angeboten.toFixed(1) : "–"} Std.
+                <span className="flex items-center gap-2 shrink-0">
+                  {hatAngebot && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold tabular-nums ${ueber ? "bg-destructive/10 text-destructive" : knapp ? "bg-amber-100 text-amber-800" : "bg-green-100 text-green-800"}`}>
+                      {pctRaw}%
+                    </span>
+                  )}
+                  <span className={`text-xs tabular-nums ${ueber ? "text-destructive font-semibold" : "text-muted-foreground"}`}>
+                    {z.gebucht.toFixed(1)} / {hatAngebot ? z.angeboten.toFixed(1) : "–"} Std.
+                  </span>
                 </span>
               </div>
               {hatAngebot && (
-                <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className={`h-full rounded-full ${ueber ? "bg-destructive" : "bg-primary"}`}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
+                <>
+                  <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${barFarbe}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <p className={`text-[11px] ${ueber ? "text-destructive font-medium" : "text-muted-foreground"}`}>
+                    {ueber
+                      ? `⚠️ ${(z.gebucht - z.angeboten).toFixed(1)} Std. über dem Angebot`
+                      : `${(z.angeboten - z.gebucht).toFixed(1)} Std. verbleibend`}
+                  </p>
+                </>
               )}
             </button>
           );

@@ -59,7 +59,7 @@ const ProjectOverview = () => {
   const [purchaseInvoices, setPurchaseInvoices] = useState<{id: string; lieferant: string; rechnungsdatum: string | null; betrag_brutto: number; status: string; kategorie: string | null}[]>([]);
   const [projectData, setProjectData] = useState<any>(null);
   const [projectHours, setProjectHours] = useState<{user_id: string, name: string, total: number}[]>([]);
-  const [angebotPositionen, setAngebotPositionen] = useState<{position: number; beschreibung: string; menge: number; einheit: string}[]>([]);
+  const [angebotPositionen, setAngebotPositionen] = useState<{position: number; beschreibung: string; menge: number; einheit: string; stunden?: number}[]>([]);
   // Stundenabgleich: im Angebot kalkulierte Lohnstunden (Σ arbeitszeit_minuten × Menge)
   const [angeboteneStunden, setAngeboteneStunden] = useState<number | null>(null);
   const [categories, setCategories] = useState<DocumentCategory[]>([
@@ -124,13 +124,21 @@ const ProjectOverview = () => {
       const { data: items } = await supabase.from("invoice_items")
         .select("position, beschreibung, kurztext, menge, einheit, arbeitszeit_minuten")
         .eq("invoice_id", referenz.id).order("position");
+      // Lohnminuten je Position: hinterlegte Kalkulations-Minuten — und
+      // Stunden-Zeilen (Einheit Std/h, z.B. "Facharbeiterstunde × 25") zählen
+      // als 60 Min/Einheit, sonst fehlen explizit angebotene Stunden im Soll.
+      const minutenProEinheit = (i: any) => {
+        const m = Number(i.arbeitszeit_minuten) || 0;
+        if (m > 0) return m;
+        return /^(std|std\.|h|stunde|stunden)$/i.test(String(i.einheit || "").trim()) ? 60 : 0;
+      };
       setAngebotPositionen((items || []).map(i => ({
         position: i.position, beschreibung: (i as any).kurztext || i.beschreibung,
         menge: Number(i.menge), einheit: i.einheit || "Stk.",
+        stunden: Math.round((minutenProEinheit(i) * (Number(i.menge) || 0)) / 60 * 10) / 10,
       })));
-      // Angebotene Lohnstunden: Minuten/EH × Menge über alle Positionen
       const minuten = (items || []).reduce((s, i) =>
-        s + (Number((i as any).arbeitszeit_minuten) || 0) * (Number(i.menge) || 0), 0);
+        s + minutenProEinheit(i) * (Number(i.menge) || 0), 0);
       setAngeboteneStunden(Math.round((minuten / 60) * 10) / 10);
     } else {
       setAngeboteneStunden(null);
@@ -511,14 +519,20 @@ const ProjectOverview = () => {
           </div>
         </div>
 
-        {/* Quick-Actions: neues Dokument mit vorbelegter project_id */}
+        {/* Quick-Actions: neues Dokument mit vorbelegter project_id.
+            Angebot/Rechnung nur für Admins — die Route /invoices/new ist
+            feature-gated (rechnungen), Mitarbeiter liefen sonst auf "Kein Zugriff". */}
         <div className="flex flex-wrap gap-2 mb-4">
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/invoices/new?typ=angebot&project=${projectId}`)}>
-            <FileText className="h-3.5 w-3.5" />Neues Angebot
-          </Button>
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/invoices/new?typ=rechnung&project=${projectId}`)}>
-            <FileDown className="h-3.5 w-3.5" />Neue Rechnung
-          </Button>
+          {isAdmin && (
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/invoices/new?typ=angebot&project=${projectId}`)}>
+              <FileText className="h-3.5 w-3.5" />Neues Angebot
+            </Button>
+          )}
+          {isAdmin && (
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/invoices/new?typ=rechnung&project=${projectId}`)}>
+              <FileDown className="h-3.5 w-3.5" />Neue Rechnung
+            </Button>
+          )}
           <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/disturbances?new=${projectId}`)}>
             <FileText className="h-3.5 w-3.5" />Neuer Regiebericht
           </Button>
@@ -573,36 +587,77 @@ const ProjectOverview = () => {
         {isAdmin && (
           <Card className="mb-4">
             <CardHeader>
-              <CardTitle className="text-base">Projektstunden</CardTitle>
+              <CardTitle className="text-base">⏱️ Stundenabgleich — Angebot vs. gebucht</CardTitle>
             </CardHeader>
             <CardContent>
-              {/* Stundenabgleich: Angebot vs. tatsächlich gebucht */}
+              {/* Stundenabgleich: Soll kommt AUTOMATISCH aus dem verknüpften
+                  Angebot (Σ kalkulierte Lohnminuten × Menge je Position) —
+                  drei große Zahlen + Ampel-Fortschrittsbalken. */}
               {(() => {
                 const gebucht = projectHours.reduce((s, h) => s + h.total, 0);
-                if (angeboteneStunden === null || angeboteneStunden <= 0) return null;
-                const pct = Math.min(100, Math.round((gebucht / angeboteneStunden) * 100));
-                const ueber = gebucht > angeboteneStunden;
-                return (
-                  <div className="mb-4 p-3 rounded-lg border bg-muted/30 space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Stunden laut Angebot</span>
-                      <span className="font-medium">{angeboteneStunden.toFixed(1)} Std.</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Bereits gebucht</span>
-                      <span className={`font-medium ${ueber ? "text-destructive" : ""}`}>{gebucht.toFixed(1)} Std.</span>
-                    </div>
-                    <div className="h-2 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all ${ueber ? "bg-destructive" : "bg-primary"}`}
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                    <p className={`text-xs ${ueber ? "text-destructive font-medium" : "text-muted-foreground"}`}>
-                      {ueber
-                        ? `⚠️ ${(gebucht - angeboteneStunden).toFixed(1)} Std. über dem Angebot`
-                        : `${(angeboteneStunden - gebucht).toFixed(1)} Std. verbleibend (${pct}% verbraucht)`}
+                if (angeboteneStunden === null || angeboteneStunden <= 0) {
+                  return (
+                    <p className="mb-4 text-sm text-muted-foreground rounded-md border border-dashed px-3 py-2.5">
+                      Kein Angebot mit kalkulierten Stunden verknüpft — sobald ein Angebot mit
+                      Katalog-Positionen an diesem Projekt hängt, erscheint hier automatisch der
+                      Soll/Ist-Vergleich.
                     </p>
+                  );
+                }
+                const pctRaw = Math.round((gebucht / angeboteneStunden) * 100);
+                const pct = Math.min(100, pctRaw);
+                const ueber = gebucht > angeboteneStunden;
+                const knapp = !ueber && pctRaw >= 80;
+                const barFarbe = ueber ? "bg-destructive" : knapp ? "bg-amber-500" : "bg-green-600";
+                const rest = angeboteneStunden - gebucht;
+                return (
+                  <div className="mb-4 space-y-3">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="rounded-lg border bg-muted/30 p-3 text-center">
+                        <div className="text-xl font-bold tabular-nums">{angeboteneStunden.toFixed(1)}</div>
+                        <div className="text-[11px] text-muted-foreground">Std. laut Angebot</div>
+                      </div>
+                      <div className="rounded-lg border bg-muted/30 p-3 text-center">
+                        <div className={`text-xl font-bold tabular-nums ${ueber ? "text-destructive" : ""}`}>{gebucht.toFixed(1)}</div>
+                        <div className="text-[11px] text-muted-foreground">Std. gebucht</div>
+                      </div>
+                      <div className={`rounded-lg border p-3 text-center ${ueber ? "border-destructive/50 bg-destructive/5" : knapp ? "border-amber-300 bg-amber-50" : "border-green-500/40 bg-green-50"}`}>
+                        <div className={`text-xl font-bold tabular-nums ${ueber ? "text-destructive" : knapp ? "text-amber-700" : "text-green-700"}`}>
+                          {ueber ? `+${(gebucht - angeboteneStunden).toFixed(1)}` : rest.toFixed(1)}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">{ueber ? "Std. ÜBER Angebot" : "Std. verbleibend"}</div>
+                      </div>
+                    </div>
+                    <div className="relative h-3 rounded-full bg-muted overflow-hidden">
+                      <div className={`h-full rounded-full transition-all ${barFarbe}`} style={{ width: `${pct}%` }} />
+                    </div>
+                    <p className={`text-xs ${ueber ? "text-destructive font-medium" : knapp ? "text-amber-700 font-medium" : "text-muted-foreground"}`}>
+                      {ueber
+                        ? `⚠️ Angebotsstunden überschritten (${pctRaw}%) — Mehraufwand als Regie verrechnen oder Nachtrag stellen.`
+                        : knapp
+                          ? `⚠️ ${pctRaw}% der Angebotsstunden verbraucht — Reserve wird knapp.`
+                          : `${pctRaw}% verbraucht.`}
+                    </p>
+                    {/* Aufschlüsselung: WOHER kommen die Angebotsstunden?
+                        Jede Position trägt ihre einkalkulierte Arbeitszeit bei. */}
+                    {angebotPositionen.some(p => (p.stunden || 0) > 0) && (
+                      <details className="text-xs">
+                        <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
+                          Woraus sich die {angeboteneStunden.toFixed(1)} Std. ergeben ▾
+                        </summary>
+                        <ul className="mt-1.5 space-y-0.5 rounded-md border bg-muted/20 p-2">
+                          {angebotPositionen.filter(p => (p.stunden || 0) > 0).map(p => (
+                            <li key={p.position} className="flex justify-between gap-2">
+                              <span className="truncate text-muted-foreground">
+                                {p.beschreibung.length > 55 ? p.beschreibung.slice(0, 55) + "…" : p.beschreibung}
+                                <span className="opacity-70"> · {p.menge} {p.einheit}</span>
+                              </span>
+                              <span className="font-mono tabular-nums shrink-0">{(p.stunden || 0).toFixed(1)} h</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
                   </div>
                 );
               })()}
@@ -610,16 +665,24 @@ const ProjectOverview = () => {
                 <p className="text-sm text-muted-foreground">Keine Stunden gebucht</p>
               ) : (
                 <div className="space-y-2">
-                  {projectHours.map((h) => (
-                    <div key={h.user_id} className="flex justify-between text-sm">
-                      <span>{h.name}</span>
-                      <span className="font-medium">{h.total.toFixed(1)} Std.</span>
-                    </div>
-                  ))}
+                  {(() => {
+                    const max = Math.max(...projectHours.map(h => h.total), 1);
+                    return projectHours.map((h) => (
+                      <div key={h.user_id} className="text-sm">
+                        <div className="flex justify-between mb-0.5">
+                          <span>{h.name}</span>
+                          <span className="font-medium tabular-nums">{h.total.toFixed(1)} Std.</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                          <div className="h-full rounded-full bg-primary/60" style={{ width: `${Math.round((h.total / max) * 100)}%` }} />
+                        </div>
+                      </div>
+                    ));
+                  })()}
                   <Separator />
                   <div className="flex justify-between font-medium">
                     <span>Gesamt</span>
-                    <span>{projectHours.reduce((s, h) => s + h.total, 0).toFixed(1)} Std.</span>
+                    <span className="tabular-nums">{projectHours.reduce((s, h) => s + h.total, 0).toFixed(1)} Std.</span>
                   </div>
                 </div>
               )}

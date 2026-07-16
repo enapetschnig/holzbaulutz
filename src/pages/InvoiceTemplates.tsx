@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/PageHeader";
-import { Plus, Trash2, Save, Package, Search, Filter, Upload, Star, TrendingUp, Percent, Euro, ImagePlus, X, Calculator } from "lucide-react";
+import { Plus, Trash2, Save, Package, Search, Filter, Upload, Star, TrendingUp, Percent, Euro, ImagePlus, X, Calculator, Clock } from "lucide-react";
 import { MaterialFileImport } from "@/components/MaterialFileImport";
 import { Textarea } from "@/components/ui/textarea";
 import { useEinheiten } from "@/hooks/useEinheiten";
@@ -76,6 +76,14 @@ interface Template {
   art: "material" | "position";
 }
 
+// Stundensatz-Artikel: Materialien mit Stunden-Einheit oder typischem
+// Satz-Namen (Facharbeiter, Regie, Lehrling, Kran, Maschine, LKW/Hiab …)
+const istStundensatz = (t: { art: string; einheit: string; name: string; kurzbezeichnung?: string | null }) =>
+  t.art === "material" && (
+    /^(h|std|std\.|stunde|stunden)$/i.test(t.einheit || "") ||
+    /\b(stunde|regiestunde|facharbeiter|lehrling|baumeister|kranfahrer|hiab|maschinenstunde)\b/i.test((t.kurzbezeichnung || t.name || ""))
+  );
+
 export default function InvoiceTemplates() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,7 +92,7 @@ export default function InvoiceTemplates() {
   const [search, setSearch] = useState("");
   const [filterKategorie, setFilterKategorie] = useState<string>("alle");
   // Aktiver Tab: Positionen (kalkulierte Leistungen) oder Materialien (EK-Liste)
-  const [activeArt, setActiveArt] = useState<"position" | "material">("position");
+  const [activeArt, setActiveArt] = useState<"position" | "material" | "stundensatz">("position");
   // Positionen-Darstellung: Liste (Karten je Kategorie) oder Excel-Gesamtansicht
   const [posAnsicht, setPosAnsicht] = useState<"liste" | "excel">("liste");
   const [form, setForm] = useState({
@@ -199,7 +207,9 @@ export default function InvoiceTemplates() {
     setLoading(false);
   };
 
-  const kategorien = [...new Set(templates.filter(t => t.art === activeArt).map(t => t.kategorie))].sort();
+  const kategorien = [...new Set(templates.filter(t =>
+    activeArt === "stundensatz" ? istStundensatz(t) : activeArt === "material" ? (t.art === "material" && !istStundensatz(t)) : t.art === activeArt
+  ).map(t => t.kategorie))].sort();
   const produktgruppen = [...new Set(templates.map(t => t.produktgruppe).filter(Boolean))].sort() as string[];
   const lieferanten = [...new Set(templates.map(t => t.lieferant).filter(Boolean))].sort() as string[];
 
@@ -214,7 +224,12 @@ export default function InvoiceTemplates() {
       (t.langbezeichnung && t.langbezeichnung.toLowerCase().includes(s)) ||
       (t.lieferant && t.lieferant.toLowerCase().includes(s));
     const matchesKategorie = filterKategorie === "alle" || t.kategorie === filterKategorie;
-    return matchesSearch && matchesKategorie && t.art === activeArt;
+    const matchesArt = activeArt === "stundensatz"
+      ? istStundensatz(t)
+      : activeArt === "material"
+        ? t.art === "material" && !istStundensatz(t)
+        : t.art === activeArt;
+    return matchesSearch && matchesKategorie && matchesArt;
   });
 
   // Materialien (EK-Liste) für den Komponenten-Picker im Positions-Dialog
@@ -234,10 +249,12 @@ export default function InvoiceTemplates() {
   }, {});
 
   const openNew = (kategorie?: string, art?: "position" | "material") => {
-    const neueArt = art ?? activeArt;
+    // Stundensätze sind Materialien mit Stunden-Einheit
+    const neueArt = art ?? (activeArt === "stundensatz" ? "material" : activeArt);
+    const stundenTab = !art && activeArt === "stundensatz";
     setEditId(null);
     setForm({
-      name: "", beschreibung: "", einheit: neueArt === "position" ? "m2" : "Stk.", einzelpreis: 0,
+      name: "", beschreibung: "", einheit: neueArt === "position" ? "m2" : (stundenTab ? "Std." : "Stk."), einzelpreis: 0,
       kategorie: kategorie || "Allgemein", artikelnummer: "",
       produktnummer: "", kurzbezeichnung: "", langbezeichnung: "", netto_preis: 0, brutto_preis: 0, ust_satz: 20,
       ist_lagerartikel: false, lieferant: "", produktgruppe: kategorie || "",
@@ -576,10 +593,10 @@ export default function InvoiceTemplates() {
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <Tabs value={activeArt} onValueChange={(v) => {
             if (!confirmExcelLeave()) return;
-            setActiveArt(v as "position" | "material");
+            setActiveArt(v as "position" | "material" | "stundensatz");
             setFilterKategorie("alle");
           }}>
-            <TabsList className="grid w-full max-w-md grid-cols-2">
+            <TabsList className="grid w-full max-w-xl grid-cols-3">
               <TabsTrigger value="position" className="gap-1.5">
                 <Calculator className="w-4 h-4" />
                 Positionen
@@ -587,6 +604,10 @@ export default function InvoiceTemplates() {
               <TabsTrigger value="material" className="gap-1.5">
                 <Package className="w-4 h-4" />
                 Materialien (EK)
+              </TabsTrigger>
+              <TabsTrigger value="stundensatz" className="gap-1.5">
+                <Clock className="w-4 h-4" />
+                Stundensätze
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -658,7 +679,7 @@ export default function InvoiceTemplates() {
             </Button>
             <Button onClick={() => openNew()} className="gap-2">
               <Plus className="w-4 h-4" />
-              {activeArt === "position" ? "Neue Position" : "Neues Material"}
+              {activeArt === "position" ? "Neue Position" : activeArt === "stundensatz" ? "Neuer Stundensatz" : "Neues Material"}
             </Button>
           </div>
         </div>
@@ -690,11 +711,11 @@ export default function InvoiceTemplates() {
             <CardContent className="py-12 text-center text-muted-foreground">
               <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p>{search || filterKategorie !== "alle"
-                ? (activeArt === "position" ? "Keine Positionen gefunden" : "Keine Materialien gefunden")
-                : (activeArt === "position" ? "Noch keine Positionen angelegt" : "Noch keine Materialien angelegt")}</p>
+                ? (activeArt === "position" ? "Keine Positionen gefunden" : activeArt === "stundensatz" ? "Keine Stundensätze gefunden" : "Keine Materialien gefunden")
+                : (activeArt === "position" ? "Noch keine Positionen angelegt" : activeArt === "stundensatz" ? "Noch keine Stundensätze angelegt" : "Noch keine Materialien angelegt")}</p>
               {!search && filterKategorie === "alle" && (
                 <Button className="mt-4" onClick={() => openNew()}>
-                  {activeArt === "position" ? "Erste Position anlegen" : "Erstes Material anlegen"}
+                  {activeArt === "position" ? "Erste Position anlegen" : activeArt === "stundensatz" ? "Ersten Stundensatz anlegen" : "Erstes Material anlegen"}
                 </Button>
               )}
             </CardContent>

@@ -160,6 +160,15 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
 
   const update = (field: string, value: any) => setForm((prev: any) => ({ ...prev, [field]: value }));
 
+  // Netto aus Brutto + USt-Satz ableiten (wie im Upload-Dialog) — hält
+  // betrag_netto konsistent, damit die Projekt-Nachkalkulation stimmt.
+  const deriveNetto = (brutto: any, ust: any): string | null => {
+    const b = parseFloat(brutto);
+    const u = parseFloat(ust);
+    if (!Number.isFinite(b) || !Number.isFinite(u)) return null;
+    return (b / (1 + u / 100)).toFixed(2);
+  };
+
   const handleSave = async () => {
     if (!form) return;
     // Validierung: Lieferant + gültiger Bruttobetrag (verhindert NaN in der DB)
@@ -173,6 +182,13 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
       return;
     }
     const toNumOrNull = (v: any) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+    // Netto: fehlend/ungültig/negativ → aus Brutto+USt ableiten, damit die
+    // Nachkalkulation nicht auf den pauschalen Brutto/1,2-Fallback fällt.
+    let netto = toNumOrNull(form.betrag_netto);
+    if (netto === null || netto <= 0) {
+      const ust = toNumOrNull(form.ust_satz) ?? 20;
+      netto = parseFloat((brutto / (1 + ust / 100)).toFixed(2));
+    }
     setSaving(true);
     const { error } = await supabase.from("purchase_invoices").update({
       lieferant: form.lieferant.trim(),
@@ -181,7 +197,7 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
       faellig_am: form.faellig_am || null,
       bezahlt_am: form.bezahlt_am || null,
       betrag_brutto: brutto,
-      betrag_netto: toNumOrNull(form.betrag_netto),
+      betrag_netto: netto,
       ust_satz: toNumOrNull(form.ust_satz),
       kategorie: form.kategorie,
       project_id: form.project_id || null,
@@ -330,7 +346,19 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
               </div>
               <div>
                 <Label>Betrag Brutto * (€)</Label>
-                <Input type="number" step="0.01" value={form.betrag_brutto || ""} onChange={e => update("betrag_brutto", e.target.value)} />
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={form.betrag_brutto || ""}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setForm((prev: any) => ({
+                      ...prev,
+                      betrag_brutto: v,
+                      betrag_netto: deriveNetto(v, prev.ust_satz) ?? prev.betrag_netto,
+                    }));
+                  }}
+                />
               </div>
               <div>
                 <Label>Betrag Netto (€)</Label>
@@ -338,7 +366,16 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
               </div>
               <div>
                 <Label>USt-Satz (%)</Label>
-                <Select value={String(form.ust_satz || 20)} onValueChange={v => update("ust_satz", v)}>
+                <Select
+                  value={String(form.ust_satz || 20)}
+                  onValueChange={v => {
+                    setForm((prev: any) => ({
+                      ...prev,
+                      ust_satz: v,
+                      betrag_netto: deriveNetto(prev.betrag_brutto, v) ?? prev.betrag_netto,
+                    }));
+                  }}
+                >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="0">0%</SelectItem>

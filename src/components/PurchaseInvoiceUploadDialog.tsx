@@ -86,9 +86,16 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
         status: "offen",
         notizen: "",
       });
-      // Load projects
-      supabase.from("projects").select("id, name").not("status", "eq", "Abgeschlossen").order("name").then(({ data }) => {
-        if (data) setProjects(data);
+      // Load projects — vorausgewähltes Projekt (?project=) immer aufnehmen,
+      // auch wenn es abgeschlossen ist, sonst zeigt das Select fälschlich
+      // "Kein Projekt" obwohl die Zuordnung gesetzt ist.
+      supabase.from("projects").select("id, name").not("status", "eq", "Abgeschlossen").order("name").then(async ({ data }) => {
+        let list = data || [];
+        if (prefillProjectId && !list.some(p => p.id === prefillProjectId)) {
+          const { data: pre } = await supabase.from("projects").select("id, name").eq("id", prefillProjectId).maybeSingle();
+          if (pre) list = [pre, ...list];
+        }
+        setProjects(list);
       });
       // Kategorien aus admin_config_options laden (fallback: hardcoded)
       (supabase.from("admin_config_options" as never) as any)
@@ -282,8 +289,11 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
         // 1. Create DB entry
         const brutto = parseFloat(form.betrag_brutto);
         const ust = parseFloat(form.ust_satz);
-        const netto = form.betrag_netto
-          ? parseFloat(form.betrag_netto)
+        // Netto: manuelle Eingabe wenn gültig, sonst aus Brutto+USt ableiten
+        // (Nachkalkulation rechnet mit betrag_netto — darf nie fehlen/negativ sein).
+        const nettoInput = parseFloat(form.betrag_netto);
+        const netto = Number.isFinite(nettoInput) && nettoInput > 0
+          ? nettoInput
           : (brutto / (1 + ust / 100));
 
         const { data: inv, error } = await supabase
@@ -464,6 +474,16 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
                   update("betrag_brutto", e.target.value);
                   update("betrag_netto", calcNetto(e.target.value, form.ust_satz));
                 }}
+              />
+            </div>
+            <div>
+              <Label>Betrag Netto (€)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={form.betrag_netto}
+                onChange={e => update("betrag_netto", e.target.value)}
+                placeholder="auto aus Brutto"
               />
             </div>
             <div>
