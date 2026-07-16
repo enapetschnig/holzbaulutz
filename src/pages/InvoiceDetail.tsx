@@ -15,6 +15,7 @@ import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Pack
 import { KatalogKalkulationPopover } from "@/components/KatalogKalkulationPopover";
 import { StundenlohnAnpassenDialog, neuerEinzelpreis, type StundenlohnUpdate } from "@/components/StundenlohnAnpassenDialog";
 import { istArbeitszeitZeile, istStundensatzName } from "@/lib/stunden";
+import { erzeugeEbInterfaceXml } from "@/lib/erechnung";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { KalkulationFields } from "@/components/KalkulationFields";
@@ -396,6 +397,42 @@ export default function InvoiceDetail() {
   // (formatiert) im State, damit das InvoicePdfPreview-formData
   // synchron mit der Vorschau ist (sonst sähe die Vorschau den Bezug
   // nicht, weil sie nur den form-State spreaded).
+  // Ausschreibungs-Import (ÖNORM/GAEB): Positionen aus dem Import-Screen
+  // übernehmen — Preise trägt der Nutzer hier ein. Einmalig beim Anlegen.
+  useEffect(() => {
+    if (!isNew || searchParams.get("ausschreibung") !== "1") return;
+    const raw = sessionStorage.getItem("ausschreibung_import");
+    if (!raw) return;
+    sessionStorage.removeItem("ausschreibung_import");
+    try {
+      const lv = JSON.parse(raw);
+      const positionen = (lv.positionen || []) as any[];
+      if (positionen.length === 0) return;
+      setItems(positionen.map((p, idx) => ({
+        position: idx + 1,
+        beschreibung: p.kurztext || "",
+        kurztext: p.kurztext || "",
+        langtext: p.langtext || "",
+        menge: Number(p.menge) || 1,
+        einheit: p.einheit || "Stk.",
+        einzelpreis: 0,
+        rabatt_prozent: 0,
+        gesamtpreis: 0,
+        produktnummer: p.nr || "",
+      })) as InvoiceItem[]);
+      setForm(f => ({
+        ...f,
+        betreff: f.betreff || `Angebot ${lv.bezeichnung || "Ausschreibung"}${lv.vorhaben ? ` — ${lv.vorhaben}` : ""}`,
+        kunde_name: f.kunde_name || lv.auftraggeber || "",
+      }));
+      toast({
+        title: "Ausschreibung übernommen",
+        description: `${positionen.length} Positionen aus ${lv.dateiname || "dem Datenträger"} — jetzt nur noch die Preise eintragen.`,
+      });
+    } catch { /* defekter Storage-Eintrag — ignorieren */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     const pid = form.parent_invoice_id;
     if (!pid) {
@@ -2290,6 +2327,72 @@ export default function InvoiceDetail() {
       firmenUid,
       invoiceLayout,
     );
+  };
+
+  // E-Rechnung (ebInterface 6.1, ÖNORM-konformes XML) herunterladen —
+  // nur für gespeicherte Rechnungen mit Nummer.
+  const handleERechnungDownload = async () => {
+    try {
+      const [settingsRes, kundeRes] = await Promise.all([
+        supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "firmen_uid"]),
+        form.customer_id
+          ? (supabase as any).from("customers").select("uid_nummer, email").eq("id", form.customer_id).maybeSingle()
+          : Promise.resolve({ data: null }),
+      ]);
+      const s: Record<string, string> = {};
+      (settingsRes.data || []).forEach((r: any) => { s[r.key] = r.value; });
+      const { xml, hinweise } = erzeugeEbInterfaceXml({
+        nummer: form.nummer,
+        datum: form.datum,
+        faellig_am: form.faellig_am || null,
+        typ: form.typ,
+        ust_satz: Number(form.mwst_satz) || 20,
+        rabatt_prozent: Number(form.rabatt_prozent) || 0,
+        rabatt_euro: Number((form as any).rabatt_betrag) || 0,
+        betreff: form.betreff || "",
+        zahlungsbedingungen: form.zahlungsbedingungen || "",
+        kunde: {
+          name: form.kunde_name,
+          adresse: form.kunde_adresse,
+          plz: form.kunde_plz,
+          ort: form.kunde_ort,
+          email: form.kunde_email || (kundeRes as any)?.data?.email || "",
+          uid: (kundeRes as any)?.data?.uid_nummer || null,
+        },
+        firma: {
+          name: "Holzbau Lutz OG",
+          strasse: "Am Sportplatz 3",
+          plz: "6642",
+          ort: "Stanzach",
+          email: "info@holzbau-lutz.at",
+          uid: s.firmen_uid || "ATU67426948",
+          iban: s.bank_iban,
+          bic: s.bank_bic,
+          kontoinhaber: s.bank_kontoinhaber,
+        },
+        zeilen: items.map(it => ({
+          position: it.position,
+          beschreibung: it.kurztext || it.beschreibung || "",
+          menge: Number(it.menge) || 0,
+          einheit: it.einheit,
+          einzelpreis: Number(it.einzelpreis) || 0,
+          rabatt_prozent: Number(it.rabatt_prozent) || 0,
+          gesamtpreis: Number(it.gesamtpreis) || 0,
+          mwst_exempt: !!it.mwst_exempt,
+        })),
+      });
+      const blob = new Blob([xml], { type: "application/xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `E-Rechnung_${form.nummer}.xml`; a.click();
+      URL.revokeObjectURL(url);
+      toast({
+        title: "E-Rechnung erstellt",
+        description: hinweise.length > 0 ? hinweise.join(" ") : `ebInterface 6.1 — E-Rechnung_${form.nummer}.xml`,
+      });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "E-Rechnung fehlgeschlagen", description: e?.message || "Unbekannter Fehler" });
+    }
   };
 
   const handleDownloadPdf = async () => {
@@ -4799,6 +4902,11 @@ export default function InvoiceDetail() {
                 <Button onClick={handleDownloadPdf} variant="outline" className="gap-2">
                   <Download className="w-4 h-4" />
                   PDF herunterladen
+                </Button>
+                <Button onClick={handleERechnungDownload} variant="outline" className="gap-2"
+                  title="Strukturierte E-Rechnung im österreichischen Standard ebInterface 6.1 (XML) — z.B. für Behörden und Firmenkunden">
+                  <FileDown className="w-4 h-4" />
+                  E-Rechnung (XML)
                 </Button>
                 <Button onClick={handlePrintPdf} variant="outline" className="gap-2">
                   <Printer className="w-4 h-4" />

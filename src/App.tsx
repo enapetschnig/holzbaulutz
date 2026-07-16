@@ -33,6 +33,7 @@ import Invoices from "./pages/Invoices";
 import InvoiceDetail from "./pages/InvoiceDetail";
 import PurchaseInvoices from "./pages/PurchaseInvoices";
 import InvoiceTemplates from "./pages/InvoiceTemplates";
+import AusschreibungImport from "./pages/AusschreibungImport";
 import Customers from "./pages/Customers";
 import OfferPackages from "./pages/OfferPackages";
 import ScheduleBoard from "./pages/ScheduleBoard";
@@ -103,6 +104,7 @@ function AppContent() {
           <Route path="/invoices" element={<ProtectedRoute feature="rechnungen"><Invoices /></ProtectedRoute>} />
           <Route path="/invoices/templates" element={<ProtectedRoute feature="rechnungen"><InvoiceTemplates /></ProtectedRoute>} />
           <Route path="/invoices/packages" element={<ProtectedRoute feature="rechnungen"><OfferPackages /></ProtectedRoute>} />
+          <Route path="/invoices/ausschreibung" element={<ProtectedRoute feature="rechnungen"><AusschreibungImport /></ProtectedRoute>} />
           <Route path="/invoices/new" element={<ProtectedRoute feature="rechnungen"><InvoiceDetailKeyed /></ProtectedRoute>} />
           <Route path="/invoices/:id" element={<ProtectedRoute feature="rechnungen"><InvoiceDetailKeyed /></ProtectedRoute>} />
           <Route path="/eingangsrechnungen" element={<ProtectedRoute feature="eingangsrechnungen"><PurchaseInvoices /></ProtectedRoute>} />

@@ -649,6 +649,9 @@ export default function Invoices() {
                           <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=auftragsbestaetigung")}>
                             <FileText className="w-4 h-4 mr-2" /> Neue Auftragsbestätigung
                           </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => navigate("/invoices/ausschreibung")}>
+                            <FileText className="w-4 h-4 mr-2" /> Ausschreibung importieren (ÖNORM/GAEB)
+                          </DropdownMenuItem>
                         </>
                       ) : (
                         <>
