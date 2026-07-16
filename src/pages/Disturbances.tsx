@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Zap, Plus, Calendar, Clock, User, Mail, Phone, MapPin, Filter, Search, ArrowLeft } from "lucide-react";
+import { Zap, Plus, Calendar, Clock, User, Mail, Phone, MapPin, Filter, Search, ArrowLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -35,7 +35,7 @@ type Disturbance = {
 
 const Disturbances = () => {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
   const [disturbances, setDisturbances] = useState<Disturbance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,6 +46,9 @@ const Disturbances = () => {
   const [statusFilter, setStatusFilter] = useState<string>("alle");
   const [prefillProjectId, setPrefillProjectId] = useState<string | null>(null);
 
+  // Projekt-Link "Regieberichte · N": /disturbances?project=<project_id> → Liste filtern
+  const projectFilter = searchParams.get("project");
+
   useEffect(() => {
     checkAuth();
     // Quick-Action aus Projekt: /disturbances?new=<project_id> → Dialog automatisch öffnen mit vorbelegtem Projekt
@@ -55,6 +58,19 @@ const Disturbances = () => {
       setShowForm(true);
     }
   }, []);
+
+  // Neu laden, wenn der Projekt-Filter wechselt (z. B. Chip entfernt) —
+  // der initiale Fetch läuft über checkAuth, daher hier erst nach dem Laden
+  useEffect(() => {
+    if (!loading) {
+      fetchDisturbances();
+    }
+  }, [projectFilter]);
+
+  const clearProjectFilter = () => {
+    searchParams.delete("project");
+    setSearchParams(searchParams, { replace: true });
+  };
 
   const checkAuth = async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -76,11 +92,17 @@ const Disturbances = () => {
 
   const fetchDisturbances = async () => {
     setLoading(true);
-    
-    const { data, error } = await supabase
+
+    let query = supabase
       .from("disturbances")
       .select("*")
       .order("datum", { ascending: false });
+
+    if (projectFilter) {
+      query = query.eq("project_id", projectFilter);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       toast({
@@ -240,6 +262,21 @@ const Disturbances = () => {
                 </SelectContent>
               </Select>
             </div>
+            {projectFilter && (
+              <div className="mt-3">
+                <Badge variant="secondary" className="gap-1 pr-1">
+                  Projekt-Filter aktiv
+                  <button
+                    type="button"
+                    aria-label="Projekt-Filter aufheben"
+                    className="ml-1 rounded-full p-0.5 hover:bg-muted-foreground/20"
+                    onClick={clearProjectFilter}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -250,11 +287,11 @@ const Disturbances = () => {
               <Zap className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
               <h3 className="text-lg font-medium mb-2">Keine Einträge gefunden</h3>
               <p className="text-muted-foreground mb-4">
-                {searchQuery || statusFilter !== "alle"
+                {searchQuery || statusFilter !== "alle" || projectFilter
                   ? "Keine Einträge entsprechen Ihren Filterkriterien"
                   : "Erstellen Sie Ihren ersten Regiebericht"}
               </p>
-              {!searchQuery && statusFilter === "alle" && (
+              {!searchQuery && statusFilter === "alle" && !projectFilter && (
                 <Button onClick={() => setShowForm(true)} variant="outline">
                   <Plus className="h-4 w-4 mr-2" />
                   Ersten Regiebericht erfassen

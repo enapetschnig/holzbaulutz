@@ -43,14 +43,20 @@ export function componentPreis(c: PositionComponent, materialEk?: number | null)
   return num(c.preis);
 }
 
-/** Zeilenkosten einer Komponente pro Einheit der Position. */
+/**
+ * Zeilenkosten einer Komponente pro Einheit der Position — UNGERUNDET.
+ * Die DB (recompute_position_price) rundet nur die Gesamtsumme; würde hier
+ * pro Zeile gerundet, könnte die Client-Anzeige um Cents vom DB-vk_netto
+ * abweichen. Aufrufer formatieren den Wert nur (fmt()/toFixed) — wer ihn
+ * weiterverrechnet und speichert, muss selbst runden.
+ */
 export function calcComponentZeile(c: PositionComponent, materialEk?: number | null): number {
   const menge = num(c.menge_pro_einheit);
   const preis = componentPreis(c, materialEk);
   if (c.typ === "material") {
-    return r2(menge * preis * (1 + num(c.verschnitt_prozent) / 100) * (1 + num(c.aufschlag_prozent) / 100));
+    return menge * preis * (1 + num(c.verschnitt_prozent) / 100) * (1 + num(c.aufschlag_prozent) / 100);
   }
-  return r2(menge * preis); // lohn: Std x Satz · sonstiges: Menge x Betrag
+  return menge * preis; // lohn: Std x Satz · sonstiges: Menge x Betrag
 }
 
 export interface PositionPreis {

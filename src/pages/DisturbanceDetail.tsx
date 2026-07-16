@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Zap, Calendar, Clock, User, Mail, Phone, MapPin, Edit, Trash2, Package, Plus, ArrowLeft, PenLine, Users, Receipt } from "lucide-react";
+import { Zap, Calendar, Clock, User, Mail, Phone, MapPin, Edit, Trash2, Package, Plus, ArrowLeft, PenLine, Users, Receipt, FileDown, Send, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +30,9 @@ type Disturbance = {
   notizen: string | null;
   status: string;
   is_verrechnet: boolean;
+  pdf_path: string | null;
+  project_id: string | null;
+  unterschrift_kunde: string | null;
   created_at: string;
   updated_at: string;
   user_id: string;
@@ -55,6 +58,7 @@ const DisturbanceDetail = () => {
   const [deleting, setDeleting] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [showSignatureDialog, setShowSignatureDialog] = useState(false);
+  const [resending, setResending] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [autoOpenSignatureHandled, setAutoOpenSignatureHandled] = useState(false);
@@ -193,6 +197,112 @@ const DisturbanceDetail = () => {
     fetchDisturbance();
   };
 
+  // Gespeichertes Bericht-PDF anzeigen (Muster aus BautagesberichtDetail)
+  const handleShowPdf = async () => {
+    if (!disturbance?.pdf_path) return;
+
+    const { data, error } = await supabase.storage
+      .from("regiebericht-pdfs")
+      .createSignedUrl(disturbance.pdf_path, 60);
+
+    if (error || !data?.signedUrl) {
+      toast({
+        variant: "destructive",
+        title: "Fehler",
+        description: "PDF konnte nicht geladen werden",
+      });
+      return;
+    }
+    window.open(data.signedUrl, "_blank");
+  };
+
+  // Bereits unterschriebenen Bericht erneut versenden — invoked die Edge Function
+  // direkt mit den geladenen Daten (gleicher Body wie im SignatureDialog)
+  const handleResend = async () => {
+    if (!disturbance?.unterschrift_kunde) return;
+
+    setResending(true);
+    try {
+      const { data: materials } = await supabase
+        .from("disturbance_materials")
+        .select("*")
+        .eq("disturbance_id", disturbance.id)
+        .order("created_at", { ascending: true });
+
+      const { data: photos } = await supabase
+        .from("disturbance_photos")
+        .select("id, file_path, file_name")
+        .eq("disturbance_id", disturbance.id)
+        .order("created_at", { ascending: true });
+
+      // Technikernamen aus den bereits geladenen Mitarbeitern (Ersteller zuerst)
+      let technicianNames = [...workers]
+        .sort((a, b) => Number(b.is_main) - Number(a.is_main))
+        .map(w => `${w.vorname} ${w.nachname}`.trim())
+        .filter(name => name.length > 0);
+      if (technicianNames.length === 0) {
+        const fallback = `${disturbance.profile_vorname || ""} ${disturbance.profile_nachname || ""}`.trim();
+        technicianNames = fallback.length > 0 ? [fallback] : ["Techniker"];
+      }
+
+      const { data: sendData, error: sendError } = await supabase.functions.invoke("send-disturbance-report", {
+        body: {
+          disturbance,
+          materials: materials || [],
+          technicianNames,
+          photos: photos || [],
+        },
+      });
+
+      if (sendData?.success) {
+        toast({
+          title: "Regiebericht gesendet",
+          description: "Der Bericht wurde erneut per E-Mail versendet.",
+        });
+      } else {
+        // Echte Fehlermeldung extrahieren: bei FunctionsHttpError steckt sie im Response-Body
+        let errorMessage = "Unbekannter Fehler";
+        let pdfStored = false;
+        let projectStored = false;
+        if (sendError) {
+          const body = await (sendError as any).context?.json?.().catch(() => null);
+          errorMessage = body?.error || sendError.message || errorMessage;
+          pdfStored = body?.pdfStored === true;
+          projectStored = body?.projectStored === true;
+        } else if (sendData?.error) {
+          errorMessage = sendData.error;
+          pdfStored = sendData?.pdfStored === true;
+          projectStored = sendData?.projectStored === true;
+        }
+        console.error("Email send error:", sendError || sendData?.error);
+
+        if (pdfStored) {
+          toast({
+            title: "PDF gespeichert",
+            description: `Das PDF wurde gespeichert${projectStored ? " und im Projektordner abgelegt" : ""} — E-Mail: ${errorMessage}`,
+          });
+        } else {
+          toast({
+            variant: "destructive",
+            title: "Versand fehlgeschlagen",
+            description: `E-Mail konnte nicht gesendet werden: ${errorMessage}`,
+          });
+        }
+      }
+
+      fetchDisturbance();
+    } catch (error) {
+      console.error("Error resending report:", error);
+      toast({
+        variant: "destructive",
+        title: "Fehler",
+        description: "Der Bericht konnte nicht erneut gesendet werden",
+      });
+    } finally {
+      setResending(false);
+    }
+  };
+
   const getStatusBadge = (status: string, isVerrechnet?: boolean) => {
     if (isVerrechnet) {
       return <Badge className="bg-emerald-600 text-white text-base px-3 py-1">Verrechnet</Badge>;
@@ -288,6 +398,28 @@ const DisturbanceDetail = () => {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {getStatusBadge(disturbance.status, disturbance.is_verrechnet)}
+            {disturbance.pdf_path && (
+              <Button variant="outline" size="sm" className="gap-1" onClick={handleShowPdf}>
+                <FileDown className="h-4 w-4" />
+                PDF anzeigen
+              </Button>
+            )}
+            {canEdit && disturbance.status === "gesendet" && disturbance.unterschrift_kunde && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1"
+                onClick={handleResend}
+                disabled={resending}
+              >
+                {resending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+                Erneut senden
+              </Button>
+            )}
             {isAdmin && disturbance.status !== "offen" && !disturbance.is_verrechnet && (
               <Button
                 variant="default"

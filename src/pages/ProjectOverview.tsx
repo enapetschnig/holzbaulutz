@@ -103,14 +103,24 @@ const ProjectOverview = () => {
 
   const fetchAngebotPositionen = async () => {
     if (!projectId) return;
+    // Referenz-Angebot: nicht einfach das neueste per Datum — ein abgelehntes
+    // oder Entwurfs-Angebot darf das angenommene nicht verdrängen. Daher nach
+    // Status priorisieren (angenommen > verrechnet > offen > entwurf),
+    // innerhalb desselben Status das neueste Datum.
     const { data: angebote } = await supabase.from("invoices")
-      .select("id").eq("project_id", projectId).eq("typ", "angebot")
-      .not("status", "eq", "storniert")
-      .order("datum", { ascending: false }).limit(1);
-    if (angebote?.[0]) {
+      .select("id, status, datum").eq("project_id", projectId).eq("typ", "angebot")
+      .not("status", "in", '("storniert","abgelehnt")')
+      .order("datum", { ascending: false });
+    const statusRang: Record<string, number> = { angenommen: 0, verrechnet: 1, offen: 2, entwurf: 3 };
+    const referenz = ((angebote as any[]) || []).slice().sort((a, b) => {
+      const diff = (statusRang[a.status] ?? 4) - (statusRang[b.status] ?? 4);
+      if (diff !== 0) return diff;
+      return String(b.datum || "").localeCompare(String(a.datum || ""));
+    })[0];
+    if (referenz) {
       const { data: items } = await supabase.from("invoice_items")
         .select("position, beschreibung, kurztext, menge, einheit, arbeitszeit_minuten")
-        .eq("invoice_id", angebote[0].id).order("position");
+        .eq("invoice_id", referenz.id).order("position");
       setAngebotPositionen((items || []).map(i => ({
         position: i.position, beschreibung: (i as any).kurztext || i.beschreibung,
         menge: Number(i.menge), einheit: i.einheit || "Stk.",

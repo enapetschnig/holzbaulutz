@@ -195,6 +195,13 @@ export function ExportInvoicesDialog({ open, onClose, bankData }: ExportInvoices
         }
       }
 
+      const successCount = invoices.length - failed;
+      // Kein einziges PDF erstellt → kein leeres ZIP herunterladen
+      if (successCount === 0) {
+        toast({ variant: "destructive", title: "Export fehlgeschlagen", description: "Es konnte kein einziges PDF erstellt werden." });
+        return;
+      }
+
       setProgress("ZIP wird erstellt...");
       const zipBlob = await zip.generateAsync({ type: "blob" });
 
@@ -208,7 +215,6 @@ export function ExportInvoicesDialog({ open, onClose, bankData }: ExportInvoices
       a.click();
       URL.revokeObjectURL(url);
 
-      const successCount = invoices.length - failed;
       toast({
         title: "Export abgeschlossen",
         description: failed > 0
@@ -241,7 +247,7 @@ export function ExportInvoicesDialog({ open, onClose, bankData }: ExportInvoices
               <Select value={year} onValueChange={setYear}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {[currentYear - 1, currentYear, currentYear + 1].map(y => (
+                  {[currentYear - 2, currentYear - 1, currentYear, currentYear + 1].map(y => (
                     <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
                   ))}
                 </SelectContent>

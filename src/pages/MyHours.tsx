@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Clock, Building2, Hammer, Pencil, Trash2, TrendingUp, Wallet } from "lucide-react";
-import { aggregateByDay, totalAutoSaldo, formatSaldo } from "@/lib/hoursAccounting";
+import { aggregateByDay, totalAutoSaldo, formatSaldo, SONDER_TAETIGKEITEN } from "@/lib/hoursAccounting";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -52,24 +52,24 @@ const MyHours = () => {
     fetchEntries();
   }, [selectedMonth]);
 
-  // Stundenkonto einmalig laden (nicht abhängig vom angezeigten Monat —
+  // Stundenkonto-Saldo laden (nicht abhängig vom angezeigten Monat —
   // der Saldo läuft über alle Daten, der Monat ist nur Anzeige-Filter).
+  // Wird nach Update/Delete erneut aufgerufen, damit die Karte aktuell bleibt.
+  const fetchSaldo = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const [{ data: acc }, { data: allEntries }] = await Promise.all([
+      (supabase.from("time_accounts" as never) as any)
+        .select("balance_hours").eq("user_id", user.id).maybeSingle(),
+      supabase.from("time_entries")
+        .select("datum, stunden, taetigkeit").eq("user_id", user.id),
+    ]);
+    setManualSaldo(Number((acc as any)?.balance_hours) || 0);
+    setAutoSaldoAll(totalAutoSaldo((allEntries as any[]) || []));
+  };
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const [{ data: acc }, { data: allEntries }] = await Promise.all([
-        (supabase.from("time_accounts" as never) as any)
-          .select("balance_hours").eq("user_id", user.id).maybeSingle(),
-        supabase.from("time_entries")
-          .select("datum, stunden, taetigkeit").eq("user_id", user.id),
-      ]);
-      if (cancelled) return;
-      setManualSaldo(Number((acc as any)?.balance_hours) || 0);
-      setAutoSaldoAll(totalAutoSaldo((allEntries as any[]) || []));
-    })();
-    return () => { cancelled = true; };
+    fetchSaldo();
   }, []);
 
   // Tages-Aggregation des aktuell angezeigten Monats (für Tagessaldo-Spalte).
@@ -102,14 +102,64 @@ const MyHours = () => {
     setLoading(false);
   };
 
+  // Bearbeiten/Löschen nur für Einträge im ECHTEN aktuellen Kalendermonat
+  // (nicht im bloß angezeigten Monat — sonst wäre der Check immer wahr).
   const isCurrentMonth = (datum: string) => {
-    const entryDate = new Date(datum);
-    const [year, month] = selectedMonth.split('-').map(Number);
-    return entryDate.getFullYear() === year && entryDate.getMonth() + 1 === month;
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    return datum.startsWith(currentMonth);
   };
+
+  // Sonderzeit-Einträge (Urlaub/Krankenstand/Zeitausgleich/Feiertag/
+  // Weiterbildung) verändern Zeitkonto bzw. Saldo-Neutralität — Mitarbeiter
+  // dürfen sie nicht selbst bearbeiten oder löschen.
+  const isSpecialEntry = (taetigkeit: string) => SONDER_TAETIGKEITEN.has(taetigkeit);
 
   const handleUpdateEntry = async () => {
     if (!editingEntry || savingEdit) return;
+
+    // Sonderzeit-Einträge sind für Mitarbeiter gesperrt — sonst ginge das
+    // Zeitkonto/der Saldo aus dem Ruder (z.B. ZA ohne Rückbuchung)
+    const original = entries.find(e => e.id === editingEntry.id);
+    if (original && isSpecialEntry(original.taetigkeit)) {
+      toast({ variant: "destructive", title: "Nicht erlaubt", description: "Abwesenheits-/ZA-Einträge können nur vom Admin geändert werden" });
+      return;
+    }
+
+    // Freitext darf keinen Sonderzeit-Namen annehmen — sonst würde der
+    // Eintrag im Saldo plötzlich neutral gerechnet
+    const neueTaetigkeit = (editingEntry.taetigkeit || "").trim();
+    if (Array.from(SONDER_TAETIGKEITEN).some(s => s.toLowerCase() === neueTaetigkeit.toLowerCase())) {
+      toast({ variant: "destructive", title: "Ungültige Tätigkeit", description: `"${neueTaetigkeit}" ist für Abwesenheiten reserviert — bitte eine andere Bezeichnung wählen` });
+      return;
+    }
+
+    // Validierung: Ende > Start, Pause < Arbeitszeit, keine Überschneidung
+    // mit den anderen Einträgen desselben Tags (gleiche Logik wie in der
+    // Zeiterfassung: startA < endB && startB < endA)
+    const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    if (editingEntry.start_time && editingEntry.end_time) {
+      const startMin = toMin(editingEntry.start_time);
+      const endMin = toMin(editingEntry.end_time);
+      if (endMin <= startMin) {
+        toast({ variant: "destructive", title: "Fehler", description: "Endzeit muss nach Startzeit liegen" });
+        return;
+      }
+      const pause = editingEntry.pause_minutes || 0;
+      if (pause >= endMin - startMin) {
+        toast({ variant: "destructive", title: "Fehler", description: `Pause (${pause} Min.) ist länger als die Arbeitszeit (${endMin - startMin} Min.)` });
+        return;
+      }
+      const others = entries.filter(e => e.id !== editingEntry.id && e.datum === editingEntry.datum && e.start_time && e.end_time);
+      for (const other of others) {
+        const oStart = toMin(other.start_time!);
+        const oEnd = toMin(other.end_time!);
+        if (startMin < oEnd && endMin > oStart) {
+          toast({ variant: "destructive", title: "Zeitüberschneidung", description: `Überschneidet sich mit Eintrag ${other.start_time!.substring(0, 5)} - ${other.end_time!.substring(0, 5)}` });
+          return;
+        }
+      }
+    }
 
     setSavingEdit(true);
 
@@ -148,11 +198,20 @@ const MyHours = () => {
       setShowEditDialog(false);
       setEditingEntry(null);
       fetchEntries();
+      fetchSaldo();
     }
     setSavingEdit(false);
   };
 
   const handleDeleteEntry = async (id: string) => {
+    // Sonderzeit-Einträge sind für Mitarbeiter gesperrt — Löschen würde
+    // das Zeitkonto nicht zurückbuchen (Guthabenverlust)
+    const entry = entries.find(e => e.id === id);
+    if (entry && isSpecialEntry(entry.taetigkeit)) {
+      toast({ variant: "destructive", title: "Nicht erlaubt", description: "Abwesenheits-/ZA-Einträge können nur vom Admin geändert werden" });
+      return;
+    }
+
     if (!confirm("Möchtest du diesen Eintrag wirklich löschen?")) return;
 
     const { error } = await supabase
@@ -174,6 +233,7 @@ const MyHours = () => {
       setShowEditDialog(false);
       setEditingEntry(null);
       fetchEntries();
+      fetchSaldo();
     }
   };
 
@@ -344,7 +404,14 @@ const MyHours = () => {
                                 ) : null}
                               </TableCell>
                               <TableCell>
-                                <Button size="sm" variant="ghost" onClick={() => { setEditingEntry(entry); setShowEditDialog(true); }} disabled={!isCurrentMonth(entry.datum)} className="h-7 w-7 p-0">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => { setEditingEntry(entry); setShowEditDialog(true); }}
+                                  disabled={!isCurrentMonth(entry.datum) || isSpecialEntry(entry.taetigkeit)}
+                                  title={isSpecialEntry(entry.taetigkeit) ? "Abwesenheits-/ZA-Einträge können nur vom Admin geändert werden" : undefined}
+                                  className="h-7 w-7 p-0"
+                                >
                                   <Pencil className="h-3.5 w-3.5" />
                                 </Button>
                               </TableCell>

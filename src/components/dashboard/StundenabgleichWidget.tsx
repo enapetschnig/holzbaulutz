@@ -49,19 +49,27 @@ export function StundenabgleichWidget() {
           gebuchtMap[e.project_id] = (gebuchtMap[e.project_id] || 0) + (Number(e.stunden) || 0);
         }
 
-        // Jüngstes nicht storniertes Angebot je Projekt → Lohnminuten
+        // Referenz-Angebot je Projekt → Lohnminuten. Nach Status priorisiert
+        // (angenommen > verrechnet > offen > entwurf), innerhalb desselben
+        // Status das neueste Datum — abgelehnte/stornierte zählen nicht, sonst
+        // verdrängt ein Entwurf/abgelehntes Angebot das angenommene.
         const { data: angebote } = await supabase
           .from("invoices")
-          .select("id, project_id, datum")
+          .select("id, project_id, datum, status")
           .in("project_id", ids)
           .eq("typ", "angebot")
-          .not("status", "eq", "storniert")
+          .not("status", "in", '("storniert","abgelehnt")')
           .order("datum", { ascending: false });
-        const angebotByProject: Record<string, string> = {};
+        const statusRang: Record<string, number> = { angenommen: 0, verrechnet: 1, offen: 2, entwurf: 3 };
+        const angebotByProject: Record<string, { id: string; rang: number }> = {};
         for (const a of (angebote || [])) {
-          if (a.project_id && !angebotByProject[a.project_id]) angebotByProject[a.project_id] = a.id;
+          if (!a.project_id) continue;
+          const rang = statusRang[(a as any).status] ?? 4;
+          const bisher = angebotByProject[a.project_id];
+          // Liste ist datum-absteigend → der erste Treffer je Rang ist der neueste
+          if (!bisher || rang < bisher.rang) angebotByProject[a.project_id] = { id: a.id, rang };
         }
-        const angebotIds = Object.values(angebotByProject);
+        const angebotIds = Object.values(angebotByProject).map(x => x.id);
         const angebotenMap: Record<string, number> = {};
         if (angebotIds.length > 0) {
           const { data: items } = await supabase
@@ -73,8 +81,8 @@ export function StundenabgleichWidget() {
             minutenByInvoice[it.invoice_id] = (minutenByInvoice[it.invoice_id] || 0)
               + (Number((it as any).arbeitszeit_minuten) || 0) * (Number(it.menge) || 0);
           }
-          for (const [pid, invId] of Object.entries(angebotByProject)) {
-            angebotenMap[pid] = Math.round(((minutenByInvoice[invId] || 0) / 60) * 10) / 10;
+          for (const [pid, ref] of Object.entries(angebotByProject)) {
+            angebotenMap[pid] = Math.round(((minutenByInvoice[ref.id] || 0) / 60) * 10) / 10;
           }
         }
 

@@ -53,10 +53,18 @@ export function ImportFromProjectDialog({
     if (!open) return;
     setLocalProjectId(projectId ?? null);
     if (!projectId) {
-      let q = supabase.from("projects").select("id, name")
-        .not("status", "eq", "Abgeschlossen").order("name");
+      // Abgeschlossene Projekte MITLADEN (Schlussrechnung nach Projektende!) —
+      // sie werden im Dropdown markiert und ans Ende sortiert.
+      let q = supabase.from("projects").select("id, name, status").order("name");
       if (customerId) q = q.eq("customer_id", customerId) as any;
-      q.then(({ data }) => setProjects((data as any) || []));
+      q.then(({ data }) => {
+        const rows = ((data as any[]) || []);
+        const istAbgeschlossen = (s: unknown) => String(s || "").toLowerCase() === "abgeschlossen";
+        setProjects([
+          ...rows.filter(r => !istAbgeschlossen(r.status)),
+          ...rows.filter(r => istAbgeschlossen(r.status)).map(r => ({ ...r, name: `${r.name} (abgeschlossen)` })),
+        ]);
+      });
     }
   }, [open, projectId, customerId]);
 
@@ -94,13 +102,16 @@ export function ImportFromProjectDialog({
     // Hidden User (Admin/Inhaber) nicht als Position aufführen
     const visibleProfiles = ((profiles as any[]) || []).filter((p: any) => !p.hidden);
 
+    // Kein stiller 45-€-Default: fehlender/0-Stundenlohn bleibt 0 und wird in
+    // der Zeile sichtbar gemacht — der Nutzer wählt dann einen Stundensatz
+    // über „Verrechnen als".
     const empMap = new Map(
-      (employees || []).map((e: any) => [e.user_id, { satz: Number(e.stundenlohn) || 45, rolle: e.position || "Monteur" }])
+      (employees || []).map((e: any) => [e.user_id, { satz: Number(e.stundenlohn) || 0, rolle: e.position || "Monteur" }])
     );
 
     const profileMap = new Map(
       visibleProfiles.map((p: any) => {
-        const emp = empMap.get(p.id) || { satz: 45, rolle: "Monteur" };
+        const emp = empMap.get(p.id) || { satz: 0, rolle: "Monteur" };
         return [p.id, { name: `${p.vorname} ${p.nachname}`, satz: emp.satz, rolle: emp.rolle }];
       })
     );
@@ -127,7 +138,7 @@ export function ImportFromProjectDialog({
         einzelpreis: p.satz,
         selected: g.stunden > 0,
         source: "zeit" as const,
-        detail: `${p.rolle} · ${g.stunden.toFixed(1)} Std.`,
+        detail: `${p.rolle} · ${g.stunden.toFixed(1)} Std.${p.satz > 0 ? "" : " · Kein Stundenlohn hinterlegt — bitte Stundensatz wählen"}`,
       };
     });
   };
@@ -150,16 +161,24 @@ export function ImportFromProjectDialog({
 
     if (!entries || entries.length === 0) return [];
 
-    // 2. Load Angebot prices for this project
+    // 2. Load Angebot prices for this project — Referenz-Angebot nach Status
+    // priorisiert (angenommen > verrechnet > offen > entwurf), innerhalb
+    // desselben Status das neueste Datum. Abgelehnte/stornierte zählen nicht.
     const { data: angebote } = await supabase.from("invoices")
-      .select("id").eq("project_id", pid).eq("typ", "angebot")
-      .not("status", "eq", "storniert")
-      .order("datum", { ascending: false }).limit(1);
+      .select("id, status, datum").eq("project_id", pid).eq("typ", "angebot")
+      .not("status", "in", '("storniert","abgelehnt")')
+      .order("datum", { ascending: false });
+    const statusRang: Record<string, number> = { angenommen: 0, verrechnet: 1, offen: 2, entwurf: 3 };
+    const referenzAngebot = ((angebote as any[]) || []).slice().sort((a, b) => {
+      const diff = (statusRang[a.status] ?? 4) - (statusRang[b.status] ?? 4);
+      if (diff !== 0) return diff;
+      return String(b.datum || "").localeCompare(String(a.datum || ""));
+    })[0];
     let angebotMap = new Map<string, { einzelpreis: number; menge: number; einheit: string }>();
-    if (angebote?.[0]) {
+    if (referenzAngebot) {
       const { data: angebotItems } = await supabase.from("invoice_items")
         .select("beschreibung, kurztext, menge, einheit, einzelpreis")
-        .eq("invoice_id", angebote[0].id);
+        .eq("invoice_id", referenzAngebot.id);
       if (angebotItems) {
         angebotItems.forEach(ai => {
           const key = ((ai as any).kurztext || ai.beschreibung).toLowerCase().trim();
@@ -336,7 +355,7 @@ export function ImportFromProjectDialog({
               <SelectTrigger><SelectValue placeholder="Projekt auswählen…" /></SelectTrigger>
               <SelectContent>
                 {projects.length === 0 && (
-                  <SelectItem value="_none" disabled>Keine aktiven Projekte</SelectItem>
+                  <SelectItem value="_none" disabled>Keine Projekte gefunden</SelectItem>
                 )}
                 {projects.map((p) => (
                   <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>

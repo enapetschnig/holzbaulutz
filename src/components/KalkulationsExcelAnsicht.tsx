@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, memo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,12 @@ interface Props {
   onDataChanged?: () => void;
   /** Neue Position in einer Kategorie anlegen (öffnet den Kalkulations-Editor). */
   onAddPosition?: (kategorie: string) => void;
+  /** Zähler vom Parent: bei Änderung werden die Komponenten neu geladen (z.B.
+   *  nach einem Save im Editor-Dialog) — verhindert Lost-Updates durch einen
+   *  veralteten Komponenten-Stand in dieser Ansicht. */
+  reloadKey?: number;
+  /** Meldet dem Parent, ob ungespeicherte Änderungen vorliegen (Tab-Guard). */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 type EditComp = PositionComponent & { liveEk: number | null };
@@ -51,7 +57,15 @@ const num = (v: string) => {
 const zellInput =
   "h-8 w-full border-0 rounded-none bg-transparent text-right text-xs font-mono tabular-nums shadow-none focus-visible:ring-1 focus-visible:ring-primary px-1";
 
-export function KalkulationsExcelAnsicht({ positionen, onEdit, onDataChanged, onAddPosition }: Props) {
+/** Beim Laden gemerkte Werte einer Komponente — Basis für den Save-Diff. */
+interface CompSnapshot {
+  menge_pro_einheit: number;
+  preis: number;
+  verschnitt_prozent: number;
+  aufschlag_prozent: number;
+}
+
+export function KalkulationsExcelAnsicht({ positionen, onEdit, onDataChanged, onAddPosition, reloadKey, onDirtyChange }: Props) {
   const { toast } = useToast();
   const [componentsByPos, setComponentsByPos] = useState<Record<string, EditComp[]>>({});
   const [ekLookup, setEkLookup] = useState<Record<string, number>>({});
@@ -61,6 +75,10 @@ export function KalkulationsExcelAnsicht({ positionen, onEdit, onDataChanged, on
   const [suche, setSuche] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Snapshot der geladenen Komponenten-Werte (je Komponenten-ID): beim Save
+  // wird nur geschrieben, was sich gegenüber dem Laden tatsächlich geändert
+  // hat — sonst überschreibt ein alter Stand zwischenzeitliche Dialog-Saves.
+  const snapshotRef = useRef<Record<string, CompSnapshot>>({});
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -90,6 +108,20 @@ export function KalkulationsExcelAnsicht({ positionen, onEdit, onDataChanged, on
         liveEk,
       });
     }
+    // Snapshot für den Save-Diff merken (siehe snapshotRef)
+    const snap: Record<string, CompSnapshot> = {};
+    for (const comps of Object.values(map)) {
+      for (const c of comps) {
+        if (!c.id) continue;
+        snap[c.id] = {
+          menge_pro_einheit: c.menge_pro_einheit,
+          preis: c.preis,
+          verschnitt_prozent: c.verschnitt_prozent,
+          aufschlag_prozent: c.aufschlag_prozent,
+        };
+      }
+    }
+    snapshotRef.current = snap;
     setComponentsByPos(map);
     setEkLookup(eks);
     setManualVk({});
@@ -98,11 +130,13 @@ export function KalkulationsExcelAnsicht({ positionen, onEdit, onDataChanged, on
     setLoading(false);
   }, []);
 
+  // reloadKey: Parent signalisiert Datenänderungen (Editor-Dialog-Save/Delete)
+  // → frisch laden, damit der nächste Save hier keinen alten Stand zurückschreibt.
   useEffect(() => {
     let cancelled = false;
     (async () => { if (!cancelled) await reload(); })();
     return () => { cancelled = true; };
-  }, [reload]);
+  }, [reload, reloadKey]);
 
   const updateComp = useCallback((posId: string, idx: number, patch: Partial<PositionComponent>) => {
     setComponentsByPos(prev => ({
@@ -139,30 +173,87 @@ export function KalkulationsExcelAnsicht({ positionen, onEdit, onDataChanged, on
 
   const dirtyCount = dirtyComp.size + dirtyVk.size;
 
+  // Parent über ungespeicherte Änderungen informieren (Tab-Wechsel-Guard);
+  // Cleanup meldet beim Unmount wieder "sauber".
+  useEffect(() => {
+    onDirtyChange?.(dirtyCount > 0);
+    return () => { onDirtyChange?.(false); };
+  }, [dirtyCount, onDirtyChange]);
+
   const handleSave = async () => {
-    setSaving(true);
-    try {
-      // 1) Komponenten-Positionen: geänderte Komponenten aktualisieren.
-      for (const posId of dirtyComp) {
-        for (const c of (componentsByPos[posId] || [])) {
-          if (!c.id) continue;
-          const { error } = await (supabase as any)
-            .from("position_components")
-            .update({
-              menge_pro_einheit: c.menge_pro_einheit,
-              preis: c.preis,
-              verschnitt_prozent: c.verschnitt_prozent,
-              aufschlag_prozent: c.aufschlag_prozent,
-            })
-            .eq("id", c.id);
-          if (error) throw new Error(error.message);
+    // Validierung VOR dem Schreiben: keine negativen Werte (die DB würde sonst
+    // nur eine technische Constraint-Meldung werfen bzw. Unsinn speichern).
+    for (const posId of dirtyComp) {
+      const posName = positionen.find(p => p.id === posId)?.name || "Position";
+      for (const c of (componentsByPos[posId] || [])) {
+        if (c.menge_pro_einheit < 0 || c.preis < 0 || c.verschnitt_prozent < 0 || c.aufschlag_prozent < 0) {
+          toast({
+            variant: "destructive",
+            title: "Ungültiger Wert",
+            description: `Negative Werte sind nicht erlaubt („${posName}" / ${c.bezeichnung || "Komponente"}).`,
+          });
+          return;
         }
       }
-      // 2) Positionen ohne Komponenten: manuellen VK direkt schreiben (kein
-      //    Trigger — Brutto selbst mitrechnen).
+    }
+    for (const posId of dirtyVk) {
+      const vk = manualVk[posId];
+      if (vk != null && vk < 0) {
+        const posName = positionen.find(p => p.id === posId)?.name || "Position";
+        toast({ variant: "destructive", title: "Ungültiger Wert", description: `Negativer VK ist nicht erlaubt („${posName}").` });
+        return;
+      }
+    }
+
+    setSaving(true);
+    // Erfolgreich gespeicherte Positionen sofort aus den Dirty-Sets nehmen —
+    // auch wenn eine spätere Position fehlschlägt, geht ihr Status nicht verloren.
+    const restComp = new Set(dirtyComp);
+    const restVk = new Set(dirtyVk);
+    let fehler: string | null = null;
+    let gespeichert = 0;
+
+    // 1) Komponenten-Positionen: NUR tatsächlich geänderte Felder schreiben
+    //    (Diff gegen den Lade-Snapshot — Lost-Update-Schutz gegenüber
+    //    zwischenzeitlichen Saves aus dem Editor-Dialog).
+    for (const posId of dirtyComp) {
+      try {
+        for (const c of (componentsByPos[posId] || [])) {
+          if (!c.id) continue;
+          const snap = snapshotRef.current[c.id];
+          const patch: Record<string, number> = {};
+          if (!snap || snap.menge_pro_einheit !== c.menge_pro_einheit) patch.menge_pro_einheit = c.menge_pro_einheit;
+          if (!snap || snap.preis !== c.preis) patch.preis = c.preis;
+          if (!snap || snap.verschnitt_prozent !== c.verschnitt_prozent) patch.verschnitt_prozent = c.verschnitt_prozent;
+          if (!snap || snap.aufschlag_prozent !== c.aufschlag_prozent) patch.aufschlag_prozent = c.aufschlag_prozent;
+          if (Object.keys(patch).length === 0) continue;
+          const { error } = await (supabase as any)
+            .from("position_components")
+            .update(patch)
+            .eq("id", c.id);
+          if (error) throw new Error(error.message);
+          // Snapshot nachziehen: dieser Stand ist jetzt der gespeicherte.
+          snapshotRef.current[c.id] = {
+            menge_pro_einheit: c.menge_pro_einheit,
+            preis: c.preis,
+            verschnitt_prozent: c.verschnitt_prozent,
+            aufschlag_prozent: c.aufschlag_prozent,
+          };
+        }
+        restComp.delete(posId);
+        gespeichert++;
+      } catch (e: any) {
+        fehler = e?.message || "Unbekannter Fehler";
+        break;
+      }
+    }
+
+    // 2) Positionen ohne Komponenten: manuellen VK direkt schreiben (kein
+    //    Trigger — Brutto selbst mitrechnen).
+    if (!fehler) {
       for (const posId of dirtyVk) {
         const vk = manualVk[posId];
-        if (vk == null) continue;
+        if (vk == null) { restVk.delete(posId); continue; }
         const ust = positionen.find(p => p.id === posId)?.ust_satz ?? 20;
         const { error } = await (supabase as any)
           .from("invoice_templates")
@@ -173,18 +264,28 @@ export function KalkulationsExcelAnsicht({ positionen, onEdit, onDataChanged, on
             brutto_preis: Math.round(vk * (1 + ust / 100) * 100) / 100,
           })
           .eq("id", posId);
-        if (error) throw new Error(error.message);
+        if (error) { fehler = error.message; break; }
+        restVk.delete(posId);
+        gespeichert++;
       }
-      toast({ title: "Gespeichert", description: `${dirtyCount} Position${dirtyCount === 1 ? "" : "en"} aktualisiert.` });
-      setDirtyComp(new Set());
-      setDirtyVk(new Set());
-      setManualVk({});
-      onDataChanged?.();
-    } catch (e: any) {
-      toast({ variant: "destructive", title: "Speichern fehlgeschlagen", description: e?.message || "Unbekannter Fehler" });
-    } finally {
-      setSaving(false);
     }
+
+    setDirtyComp(restComp);
+    setDirtyVk(restVk);
+    setSaving(false);
+    if (fehler) {
+      toast({
+        variant: "destructive",
+        title: "Speichern fehlgeschlagen",
+        description: gespeichert > 0
+          ? `${fehler} — ${gespeichert} Position${gespeichert === 1 ? "" : "en"} davor wurde${gespeichert === 1 ? "" : "n"} gespeichert.`
+          : fehler,
+      });
+    } else {
+      toast({ title: "Gespeichert", description: `${gespeichert} Position${gespeichert === 1 ? "" : "en"} aktualisiert.` });
+      setManualVk({});
+    }
+    if (gespeichert > 0) onDataChanged?.();
   };
 
   if (loading) return <p className="text-center py-8 text-muted-foreground">Lädt Kalkulation...</p>;

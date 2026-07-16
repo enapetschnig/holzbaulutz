@@ -71,10 +71,10 @@ const statusLabels: Record<string, string> = {
 const rechnungStatuses = ["offen", "teilbezahlt", "bezahlt"];
 const angebotStatuses = ["entwurf", "offen", "angenommen", "abgelehnt", "verrechnet"];
 // Auftragsbestätigung IST das angenommene Angebot → angenommen/abgelehnt sind redundant.
-const abStatuses = ["offen", "verrechnet"];
+const abStatuses = ["entwurf", "offen", "verrechnet"];
 // Gutschrift = Auszahlung an Kunden. "teilbezahlt/bezahlt" passt nicht;
 // "verrechnet" markiert, dass die Gutschrift mit einer Rechnung verrechnet wurde.
-const gutschriftStatuses = ["offen", "verrechnet"];
+const gutschriftStatuses = ["entwurf", "offen", "verrechnet"];
 // Zahlbare Rechnungstypen (Kunde → wir). Gutschrift bewusst ausgeschlossen.
 const PAYABLE_INVOICE_TYPES = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung"]);
 // Alle rechnungs-artigen Typen (inkl. Gutschrift) für Umsatz-/Liste-Filter.
@@ -479,22 +479,6 @@ export default function Invoices() {
 
   const storniertCount = invoices.filter(i => i.status === "storniert").length;
 
-  const totalRechnungen = invoices.filter(i => INVOICE_LIKE_TYPES.has(i.typ) && i.status !== "storniert").length;
-  const totalAngebote = invoices.filter(i => ANGEBOT_LIKE_TYPES.has(i.typ) && i.status !== "storniert").length;
-  // Offen: nur echte Forderungen (keine Gutschriften — die sind aus
-  // unserer Sicht "wir schulden dem Kunden", also negative Forderung).
-  const offeneSumme = invoices
-    .filter(i => PAYABLE_INVOICE_TYPES.has(i.typ) && (i.status === "offen" || i.status === "teilbezahlt"))
-    .reduce((sum, i) => sum + Number(i.brutto_summe) - i.bezahlt_betrag, 0);
-  // Bezahlt = vereinnahmt minus an Kunden zurückerstattete Gutschriften.
-  const bezahltEingenommen = invoices
-    .filter(i => PAYABLE_INVOICE_TYPES.has(i.typ) && (i.status === "bezahlt" || i.status === "teilbezahlt"))
-    .reduce((sum, i) => sum + i.bezahlt_betrag, 0);
-  const verrechnete_gutschriften = invoices
-    .filter(i => i.typ === "gutschrift" && i.status === "verrechnet")
-    .reduce((sum, i) => sum + Number(i.brutto_summe), 0);
-  const bezahlteSumme = bezahltEingenommen - verrechnete_gutschriften;
-
   // Status options for the filter depend on selected typ
   const statusFilterOptions = filterTyp === "rechnung"
     ? rechnungStatuses
@@ -529,7 +513,13 @@ export default function Invoices() {
               </div>
             );
           }
-          const visibleInvoices = invoices.filter(i => i.typ === filterTyp && i.status !== "storniert");
+          // Gleiche Typ-Sets wie die Tabelle (Rechnungs-Tab inkl. AR/SR/GS,
+          // Angebots-Tab inkl. AB) plus Archiv-Filter — sonst zählen die
+          // Kacheln anders als die Liste darunter.
+          const visibleInvoices = invoices.filter(i =>
+            (filterTyp === "rechnung" ? INVOICE_LIKE_TYPES.has(i.typ) : ANGEBOT_LIKE_TYPES.has(i.typ)) &&
+            i.status !== "storniert" &&
+            (showArchive || !i.archiviert));
           const count = visibleInvoices.length;
           const openBrutto = visibleInvoices.filter(i => PAYABLE_INVOICE_TYPES.has(i.typ) && (i.status === "offen" || i.status === "teilbezahlt")).reduce((s, i) => s + (Number(i.brutto_summe) - Number(i.bezahlt_betrag || 0)), 0);
           const overdue = visibleInvoices.filter(i => isOverdue(i)).length;
@@ -685,6 +675,7 @@ export default function Invoices() {
                     { val: "rechnung",            label: "Rechnung",           cls: "bg-green-100 text-green-800 border-green-300" },
                     { val: "anzahlungsrechnung",  label: "Anzahlungsrechnung", cls: "bg-orange-100 text-orange-800 border-orange-300" },
                     { val: "schlussrechnung",    label: "Schlussrechnung",    cls: "bg-emerald-100 text-emerald-900 border-emerald-400" },
+                    { val: "gutschrift",          label: "Gutschrift",          cls: "bg-purple-100 text-purple-800 border-purple-300" },
                   ]
                 : [
                     { val: "alle",                label: "Alle",               cls: "bg-muted text-foreground" },
@@ -952,9 +943,14 @@ export default function Invoices() {
                                         <SelectValue />
                                       </SelectTrigger>
                                       <SelectContent>
-                                        {availableStatuses.map(s => (
-                                          <SelectItem key={s} value={s}>{statusLabels[s]}</SelectItem>
-                                        ))}
+                                        {/* "verrechnet" wird nur über die Verrechnungslogik gesetzt
+                                            (irreversibel) — hier nicht wählbar, nur anzeigen (disabled),
+                                            wenn der Status bereits gesetzt ist. */}
+                                        {availableStatuses
+                                          .filter(s => s !== "verrechnet" || inv.status === "verrechnet")
+                                          .map(s => (
+                                            <SelectItem key={s} value={s} disabled={s === "verrechnet"}>{statusLabels[s]}</SelectItem>
+                                          ))}
                                       </SelectContent>
                                     </Select>
                                   )}
@@ -982,11 +978,10 @@ export default function Invoices() {
                                 {PAYABLE_INVOICE_TYPES.has(inv.typ) && isOverdue(inv) && (
                                   <DropdownMenuItem
                                     className="text-red-600 focus:text-red-700"
+                                    disabled={Number(inv.mahnstufe || 0) >= 3}
                                     onClick={async (e) => {
                                       e.stopPropagation();
                                       try {
-                                        const logoUri = await loadInvoiceLogo();
-                                        const bank = { kontoinhaber: bankKontoinhaber, iban: bankIban, bic: bankBic };
                                         const stufe = Number(inv.mahnstufe || 0) + 1;
                                         if (stufe > 3) {
                                           toast({
@@ -996,17 +991,32 @@ export default function Invoices() {
                                           });
                                           return;
                                         }
+                                        // Rechnung frisch laden — die Listen-Row enthält keine
+                                        // Kundenadresse (kunde_adresse/plz/ort nicht im Select).
+                                        const { data: fullInv, error: loadErr } = await supabase
+                                          .from("invoices").select("*").eq("id", inv.id).single();
+                                        if (loadErr || !fullInv) throw new Error("Rechnung konnte nicht geladen werden");
+                                        // Mahnstufe zuerst persistieren — PDF nur nach erfolgreichem Update
+                                        const { error: updErr } = await supabase.from("invoices").update({ mahnstufe: stufe }).eq("id", inv.id);
+                                        if (updErr) {
+                                          toast({ variant: "destructive", title: "Mahnstufe nicht gespeichert", description: updErr.message });
+                                          return;
+                                        }
+                                        const logoUri = await loadInvoiceLogo();
+                                        const bank = { kontoinhaber: bankKontoinhaber, iban: bankIban, bic: bankBic };
                                         const { generateMahnungPdf } = await import("@/lib/pdfGenerator");
+                                        // Admin-Einstellungen (Mahntexte/-gebühren) wie im Detail-Pfad laden
+                                        const { loadMahnungSettings } = await import("@/lib/mahnungSettings");
+                                        const mahnSettings = await loadMahnungSettings();
                                         const pdfBlob = generateMahnungPdf(
                                           {
-                                            nummer: inv.nummer, datum: inv.datum, faellig_am: inv.faellig_am || "",
-                                            kunde_name: inv.kunde_name, kunde_adresse: inv.kunde_adresse,
-                                            kunde_plz: inv.kunde_plz, kunde_ort: inv.kunde_ort,
-                                            brutto_summe: Number(inv.brutto_summe), bezahlt_betrag: Number(inv.bezahlt_betrag || 0),
+                                            nummer: fullInv.nummer, datum: fullInv.datum, faellig_am: fullInv.faellig_am || "",
+                                            kunde_name: fullInv.kunde_name, kunde_adresse: fullInv.kunde_adresse,
+                                            kunde_plz: fullInv.kunde_plz, kunde_ort: fullInv.kunde_ort,
+                                            brutto_summe: Number(fullInv.brutto_summe), bezahlt_betrag: Number(fullInv.bezahlt_betrag || 0),
                                           },
-                                          stufe, 0, bank, logoUri, invoiceLayout
+                                          stufe, 0, bank, logoUri, invoiceLayout, mahnSettings
                                         );
-                                        await supabase.from("invoices").update({ mahnstufe: stufe }).eq("id", inv.id);
                                         const url = URL.createObjectURL(pdfBlob);
                                         const a = document.createElement("a"); a.href = url;
                                         a.download = `Mahnung_${stufe}_${inv.nummer}.pdf`; a.click();
@@ -1018,7 +1028,8 @@ export default function Invoices() {
                                       }
                                     }}
                                   >
-                                    <AlertTriangle className="h-4 w-4 mr-2" /> Mahnung {Number(inv.mahnstufe || 0) + 1} erstellen
+                                    <AlertTriangle className="h-4 w-4 mr-2" />
+                                    {Number(inv.mahnstufe || 0) >= 3 ? "Maximale Mahnstufe erreicht" : `Mahnung ${Number(inv.mahnstufe || 0) + 1} erstellen`}
                                   </DropdownMenuItem>
                                 )}
                                 {isDeletable(inv) && (
@@ -1087,7 +1098,9 @@ export default function Invoices() {
             {(() => {
               const inv = invoices.find(i => i.id === paymentInvoiceId);
               const brutto = inv?.brutto_summe || 0;
-              const bereitsGezahlt = existingPayments.reduce((s, p) => s + Number(p.betrag), 0);
+              // Basis ist bezahlt_betrag (wie im Detail-Dialog) — der enthält
+              // auch Gutschrift-Verrechnungen ohne invoice_payments-Zeile.
+              const bereitsGezahlt = Number(inv?.bezahlt_betrag) || 0;
               const offen = brutto - bereitsGezahlt;
               return (
                 <div className="border rounded-lg p-3 bg-muted/30 space-y-2">
@@ -1128,7 +1141,7 @@ export default function Invoices() {
             {/* New payment */}
             {(() => {
               const inv = invoices.find(i => i.id === paymentInvoiceId);
-              const maxBetrag = (inv?.brutto_summe || 0) - existingPayments.reduce((s, p) => s + Number(p.betrag), 0);
+              const maxBetrag = (inv?.brutto_summe || 0) - (Number(inv?.bezahlt_betrag) || 0);
               return (
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
@@ -1177,13 +1190,17 @@ export default function Invoices() {
                   toast({ variant: "destructive", title: "Ungültiger Betrag" });
                   return;
                 }
+                if (!paymentDatum) {
+                  toast({ variant: "destructive", title: "Bitte Zahlungsdatum angeben" });
+                  return;
+                }
 
                 const inv = invoices.find(i => i.id === paymentInvoiceId);
-                // Einzige Quelle der Wahrheit = Summe der erfassten Zahlungen
-                // (NICHT das denormalisierte bezahlt_betrag, das durch
-                // Gutschrift/Storno abweichen kann — sonst werden gültige
-                // Beträge abgelehnt oder Überzahlung zugelassen).
-                const bereitsGezahlt = existingPayments.reduce((s, p) => s + Number(p.betrag), 0);
+                // Basis ist bezahlt_betrag (wie im Detail-Dialog): Gutschrift-
+                // Verrechnungen erhöhen bezahlt_betrag ohne payments-Zeile —
+                // Σ invoice_payments wäre zu niedrig (Überzahlung möglich,
+                // Gutschrift würde beim Überschreiben "verschwinden").
+                const bereitsGezahlt = Number(inv?.bezahlt_betrag) || 0;
                 const maxBetrag = Math.round(((inv?.brutto_summe || 0) - bereitsGezahlt) * 100) / 100;
                 if (betrag > maxBetrag) {
                   toast({ variant: "destructive", title: "Betrag zu hoch", description: `Maximaler Betrag: €${maxBetrag.toFixed(2)}` });

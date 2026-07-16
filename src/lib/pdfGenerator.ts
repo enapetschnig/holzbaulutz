@@ -733,8 +733,12 @@ export async function generateInvoicePdf(
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
     pdf.setTextColor(0, 0, 0);
-    pdf.text(`Anmerkung: ${invoice.notizen}`, ml, y, { maxWidth: contentWidth });
-    y += 8;
+    // Tatsächliche Texthöhe messen (Muster wie renderMultilineText weiter
+    // unten) — sonst überlappen lange Anmerkungen die Folgeblöcke.
+    const notizLines = pdf.splitTextToSize(`Anmerkung: ${invoice.notizen}`, contentWidth) as string[];
+    pdf.text(notizLines, ml, y);
+    const notizDims = pdf.getTextDimensions(notizLines.join("\n"));
+    y += Math.max(notizDims.h, notizLines.length * 3.5) + 4;
   }
 
   // ======= REVERSE CHARGE HINWEIS (nur bei Rechnungsbelegen) =======

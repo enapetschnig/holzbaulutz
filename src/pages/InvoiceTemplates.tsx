@@ -29,6 +29,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface Template {
   id: string;
@@ -107,6 +117,17 @@ export default function InvoiceTemplates() {
   const [posComponents, setPosComponents] = useState<PositionComponent[]>([]);
   // Merker: welche Komponenten-Row-IDs waren beim Öffnen da? Für Diff beim Save.
   const [originalComponentIds, setOriginalComponentIds] = useState<string[]>([]);
+  // Solange die Komponenten einer Position noch laden, darf nicht gespeichert
+  // werden — sonst würde z.B. arbeitszeit_minuten=0 persistiert (leere Liste).
+  const [componentsLoading, setComponentsLoading] = useState(false);
+  // Excel-Ansicht: Zähler → bei Änderung lädt die Ansicht ihre Komponenten neu
+  // (nach Dialog-Save/Delete), damit ihr nächster Save keinen alten Stand schreibt.
+  const [excelReloadKey, setExcelReloadKey] = useState(0);
+  // Ungespeicherte Änderungen in der Excel-Ansicht (Guard vor Tab-/Ansicht-Wechsel)
+  const [excelDirty, setExcelDirty] = useState(false);
+  // Lösch-Bestätigung: Ziel + Anzahl verknüpfter Komponenten (bei Material)
+  const [deleteTarget, setDeleteTarget] = useState<Template | null>(null);
+  const [deleteUsageCount, setDeleteUsageCount] = useState<number | null>(null);
   const [fotoUploading, setFotoUploading] = useState(false);
   const [editFotoUrl, setEditFotoUrl] = useState<string | null>(null);
   const { toast } = useToast();
@@ -227,6 +248,7 @@ export default function InvoiceTemplates() {
     });
     setPosComponents([]);
     setOriginalComponentIds([]);
+    setComponentsLoading(false);
     setEditFotoUrl(null);
     setDialogOpen(true);
   };
@@ -259,8 +281,14 @@ export default function InvoiceTemplates() {
     setEditFotoUrl(t.foto_path ? (fotoUrls[t.id] || null) : null);
     setDialogOpen(true);
 
-    // Komponenten der Position laden (Material/Lohn/Sonstiges)
+    // Komponenten der Position laden (Material/Lohn/Sonstiges).
+    // Während des Ladens ist Speichern gesperrt (componentsLoading) — ein Save
+    // mit noch leerer Komponentenliste würde sonst arbeitszeit_minuten=0 und
+    // einen falschen VK persistieren.
     if (t.art === "position") {
+      setComponentsLoading(true);
+      setPosComponents([]);
+      setOriginalComponentIds([]);
       const { data } = await (supabase as any)
         .from("position_components")
         .select("id, material_template_id, typ, bezeichnung, einheit, menge_pro_einheit, preis, verschnitt_prozent, aufschlag_prozent, sort_order")
@@ -280,9 +308,11 @@ export default function InvoiceTemplates() {
       })) as PositionComponent[];
       setPosComponents(rows);
       setOriginalComponentIds(rows.map(r => r.id!).filter(Boolean));
+      setComponentsLoading(false);
     } else {
       setPosComponents([]);
       setOriginalComponentIds([]);
+      setComponentsLoading(false);
     }
   };
 
@@ -324,6 +354,14 @@ export default function InvoiceTemplates() {
     const effectiveName = (form.kurzbezeichnung || form.name || "").trim();
     if (!effectiveName) {
       toast({ variant: "destructive", title: "Fehler", description: "Kurzbezeichnung ist erforderlich" });
+      return;
+    }
+
+    // Komponenten noch nicht geladen → Speichern würde eine leere Liste
+    // (arbeitszeit_minuten=0, falscher VK) persistieren. Button ist zwar
+    // disabled, aber hier nochmal absichern.
+    if (componentsLoading) {
+      toast({ title: "Bitte warten", description: "Komponenten werden noch geladen…" });
       return;
     }
 
@@ -439,8 +477,15 @@ export default function InvoiceTemplates() {
           sort_order: i,
         };
         if (c.id) {
-          const { error } = await (supabase as any).from("position_components").update(row).eq("id", c.id);
+          // .select('id'): ein Update auf eine (z.B. in anderem Tab) gelöschte
+          // ID trifft 0 Zeilen OHNE Fehler — das wäre stiller Datenverlust.
+          const { data: upd, error } = await (supabase as any)
+            .from("position_components").update(row).eq("id", c.id).select("id");
           if (error) { komponentenFehler(error.message); return; }
+          if (!upd || (upd as any[]).length === 0) {
+            komponentenFehler("Komponente wurde zwischenzeitlich gelöscht — bitte Dialog neu öffnen.");
+            return;
+          }
         } else {
           const { error } = await (supabase as any).from("position_components")
             .insert({ ...row, position_template_id: templateId });
@@ -452,6 +497,9 @@ export default function InvoiceTemplates() {
     toast({ title: editId ? "Gespeichert" : "Erstellt" });
     setDialogOpen(false);
     fetchTemplates();
+    // Excel-Ansicht neu laden lassen — sonst schreibt ihr nächster Save den
+    // hier gerade überschriebenen (alten) Komponenten-Stand zurück.
+    setExcelReloadKey(k => k + 1);
   };
 
   const handleInlinePrice = async (id: string, newPrice: number) => {
@@ -461,11 +509,43 @@ export default function InvoiceTemplates() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    const { error } = await supabase.from("invoice_templates").delete().eq("id", id);
+  // Löschen anfragen: öffnet den Bestätigungs-Dialog. Bei Materialien wird
+  // vorher gezählt, in wie vielen Positions-Komponenten es verwendet wird —
+  // der FK (SET NULL) + Recompute-Trigger würden deren VK sonst STILL ändern.
+  const requestDelete = async (t: Template) => {
+    setDeleteTarget(t);
+    if (t.art === "material") {
+      setDeleteUsageCount(null); // lädt…
+      const { count } = await (supabase as any)
+        .from("position_components")
+        .select("id", { count: "exact", head: true })
+        .eq("material_template_id", t.id);
+      setDeleteUsageCount(count ?? 0);
+    } else {
+      setDeleteUsageCount(0);
+    }
+  };
+
+  const handleDelete = async (t: Template) => {
+    // Material: EK in allen verknüpften Komponenten auf den letzten Stand
+    // einfrieren, damit der VK der Positionen nach dem Löschen (FK SET NULL
+    // + Trigger) unverändert bleibt.
+    if (t.art === "material") {
+      const { error: freezeErr } = await (supabase as any)
+        .from("position_components")
+        .update({ preis: t.ek_netto })
+        .eq("material_template_id", t.id);
+      if (freezeErr) {
+        toast({ variant: "destructive", title: "Fehler", description: `EK konnte nicht eingefroren werden: ${freezeErr.message}` });
+        return;
+      }
+    }
+    const { error } = await supabase.from("invoice_templates").delete().eq("id", t.id);
     if (error) { toast({ variant: "destructive", title: "Fehler", description: error.message }); return; }
     toast({ title: "Gelöscht" });
     fetchTemplates();
+    // Excel-Ansicht neu laden lassen (Komponenten/EKs können sich geändert haben)
+    setExcelReloadKey(k => k + 1);
   };
 
   // Positionen mit Komponenten (und Legacy-Kalkulation) leiten ihren VK aus dem
@@ -477,6 +557,15 @@ export default function InvoiceTemplates() {
     ? calcPositionPreis(posComponents, Object.fromEntries(materialOptions.map(m => [m.id, m.ek_netto]))).einzelpreis
     : (Number(form.vk_netto) || Number(form.netto_preis) || 0);
 
+  // Guard: die Excel-Ansicht hält ungespeicherte Zell-Änderungen lokal — ein
+  // Tab-/Ansicht-Wechsel würde sie kommentarlos verwerfen. Vorher nachfragen.
+  const confirmExcelLeave = () => {
+    if (!(activeArt === "position" && posAnsicht === "excel" && excelDirty)) return true;
+    const ok = window.confirm("Ungespeicherte Änderungen in der Excel-Ansicht gehen verloren. Trotzdem wechseln?");
+    if (ok) setExcelDirty(false);
+    return ok;
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8 max-w-[1400px]">
@@ -485,7 +574,11 @@ export default function InvoiceTemplates() {
         {/* Zwei Ebenen nach Excel-Vorlage: Positionen (kalkulierte Leistungen)
             bestehen aus Materialien (Einkaufspreis-Liste inkl. Stundensätze). */}
         <div className="flex flex-wrap items-center gap-3 mb-4">
-          <Tabs value={activeArt} onValueChange={(v) => { setActiveArt(v as "position" | "material"); setFilterKategorie("alle"); }}>
+          <Tabs value={activeArt} onValueChange={(v) => {
+            if (!confirmExcelLeave()) return;
+            setActiveArt(v as "position" | "material");
+            setFilterKategorie("alle");
+          }}>
             <TabsList className="grid w-full max-w-md grid-cols-2">
               <TabsTrigger value="position" className="gap-1.5">
                 <Calculator className="w-4 h-4" />
@@ -503,7 +596,11 @@ export default function InvoiceTemplates() {
                 <button
                   key={val}
                   type="button"
-                  onClick={() => setPosAnsicht(val)}
+                  onClick={() => {
+                    if (val === posAnsicht) return;
+                    if (!confirmExcelLeave()) return;
+                    setPosAnsicht(val);
+                  }}
                   className={`px-3 py-1.5 text-sm transition-colors ${posAnsicht === val ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
                 >
                   {lbl}
@@ -585,6 +682,8 @@ export default function InvoiceTemplates() {
             }}
             onAddPosition={(kategorie) => openNew(kategorie, "position")}
             onDataChanged={fetchTemplates}
+            reloadKey={excelReloadKey}
+            onDirtyChange={setExcelDirty}
           />
         ) : Object.keys(grouped).length === 0 ? (
           <Card>
@@ -664,7 +763,7 @@ export default function InvoiceTemplates() {
                         <TableCell className="text-right font-mono text-sm text-muted-foreground">{t.brutto_preis > 0 ? `€ ${t.brutto_preis.toFixed(2)}` : "–"}</TableCell>
                         <TableCell>{t.ist_lagerartikel ? <Badge variant="outline" className="text-xs">Lager</Badge> : ""}</TableCell>
                         <TableCell>
-                          <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }}>
+                          <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); requestDelete(t); }}>
                             <Trash2 className="w-4 h-4 text-destructive" />
                           </Button>
                         </TableCell>
@@ -1025,13 +1124,45 @@ export default function InvoiceTemplates() {
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Abbrechen</Button>
-              <Button onClick={handleSave} disabled={!form.kurzbezeichnung?.trim()} className="gap-2">
+              <Button onClick={handleSave} disabled={!form.kurzbezeichnung?.trim() || componentsLoading} className="gap-2">
                 <Save className="w-4 h-4" />
-                Speichern
+                {componentsLoading ? "Lädt Komponenten…" : "Speichern"}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Lösch-Bestätigung — Material-Löschen würde sonst per FK SET NULL +
+            Trigger STILL die VK-Preise verknüpfter Positionen ändern. */}
+        <AlertDialog open={!!deleteTarget} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {deleteTarget?.art === "material" ? "Material löschen?" : "Position löschen?"}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                „{deleteTarget ? (deleteTarget.kurzbezeichnung || deleteTarget.name) : ""}" wird endgültig gelöscht.
+                {deleteTarget?.art === "material" && deleteUsageCount === null && (
+                  <> Verwendung in Positionen wird geprüft…</>
+                )}
+                {deleteTarget?.art === "material" && (deleteUsageCount ?? 0) > 0 && (
+                  <> Wird in {deleteUsageCount} Position{deleteUsageCount === 1 ? "" : "en"} verwendet —
+                  der EK wird dort auf den letzten Stand (€ {deleteTarget.ek_netto.toFixed(2)}) eingefroren.</>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={deleteTarget?.art === "material" && deleteUsageCount === null}
+                onClick={() => { if (deleteTarget) handleDelete(deleteTarget); setDeleteTarget(null); }}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Löschen
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <MaterialFileImport
           open={importOpen}

@@ -56,7 +56,10 @@ export async function generateMaterialbedarfFromAngebot(invoiceId: string, proje
     .select("beschreibung, kurztext, menge, einheit, einzelpreis, ek_preis, arbeitszeit_minuten, ist_kalkuliert, kalkulation_template_id")
     .eq("invoice_id", invoiceId)
     .order("position");
-  if (!items || items.length === 0) return 0;
+  // Nur bei Ladefehler (items === null) nichts anfassen. Bei 0 Positionen
+  // NICHT early-returnen: der alte Soll der Kette muss trotzdem gelöscht
+  // werden (Angebot wurde leergeräumt) — der Insert entfällt dann von selbst.
+  if (!items) return 0;
 
   // Komponenten aller verknüpften Positionen in einem Rutsch laden
   const templateIds = Array.from(new Set(

@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
-import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2, Users } from "lucide-react";
+import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { MultiEmployeeSelect } from "@/components/MultiEmployeeSelect";
 import { PageHeader } from "@/components/PageHeader";
 import { format, startOfWeek } from "date-fns";
 import { de } from "date-fns/locale";
@@ -61,7 +60,6 @@ interface TimeBlock {
   pauseStart: string;
   pauseEnd: string;
   pauseDuration: number; // 0, 30, 45, 60 minutes
-  selectedEmployees: string[];
   manualHours: string;
   disturbanceId: string;
   selectedDisturbanceIds: string[];
@@ -90,7 +88,6 @@ const createDefaultBlock = (startTime = "", endTime = "", pauseStart = "", pause
   // ausschließlich pauseDuration) — sonst zählt der vorbefüllte Mo–Do-Block
   // 10,5h statt 10h.
   pauseDuration,
-  selectedEmployees: [],
   manualHours: "",
   disturbanceId: "",
   selectedDisturbanceIds: [],
@@ -114,7 +111,6 @@ const TimeTracking = () => {
   const [vehicles, setVehicles] = useState<{ id: string; bezeichnung: string; kennzeichen: string | null }[]>([]);
   const [taetigkeitOptions, setTaetigkeitOptions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
   const [saving, setSaving] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const [submittingAbsence, setSubmittingAbsence] = useState(false);
@@ -142,11 +138,16 @@ const TimeTracking = () => {
   
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([createDefaultBlock()]);
+  // Hat der Nutzer die Blöcke bereits verändert? Dann beim Datumswechsel
+  // nicht überschreiben (nur die Tagesliste neu laden).
+  const [blocksTouched, setBlocksTouched] = useState(false);
   const [disturbances, setDisturbances] = useState<Disturbance[]>([]);
   const entryMode = "zeitraum" as const;
 
   // Fetch existing entries for selected date
-  const fetchExistingDayEntries = async (date: string) => {
+  // resetBlocks=false: nur die Tagesliste laden, ohne die Formular-Blöcke
+  // zu überschreiben (z.B. nach Teil-Speicherung oder bei befüllten Blöcken)
+  const fetchExistingDayEntries = async (date: string, resetBlocks = true) => {
     setLoadingDayEntries(true);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
@@ -181,16 +182,19 @@ const TimeTracking = () => {
         pause_start: entry.pause_start || null,
       }));
       setExistingDayEntries(entries);
-      
+
       // If entries exist, suggest next time slot for first block
-      if (entries.length > 0 && !entries.some(e => ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit))) {
+      if (resetBlocks && entries.length > 0 && !entries.some(e => ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit))) {
         const lastEntry = entries[entries.length - 1];
         const [lastEndHours, lastEndMinutes] = lastEntry.end_time.split(':').map(Number);
         const nextStartMinutes = lastEndHours * 60 + lastEndMinutes + 30;
-        const suggestedStart = `${String(Math.floor(nextStartMinutes / 60)).padStart(2, '0')}:${String(nextStartMinutes % 60).padStart(2, '0')}`;
-        
+        // Kein Vorschlag, wenn der nächste Start hinter Mitternacht läge ("24:15")
+        const suggestedStart = nextStartMinutes >= 24 * 60
+          ? ""
+          : `${String(Math.floor(nextStartMinutes / 60)).padStart(2, '0')}:${String(nextStartMinutes % 60).padStart(2, '0')}`;
+
         setTimeBlocks([createDefaultBlock(suggestedStart)]);
-      } else if (!entries.some(e => ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit))) {
+      } else if (resetBlocks && !entries.some(e => ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit))) {
         // Auto-fill default work times for the selected date
         const dateObj = new Date(date);
         const defaults = getDefaultWorkTimes(dateObj);
@@ -203,14 +207,18 @@ const TimeTracking = () => {
     } else {
       setExistingDayEntries([]);
       // Reset to empty default for new day
-      setTimeBlocks([createDefaultBlock()]);
+      if (resetBlocks) setTimeBlocks([createDefaultBlock()]);
     }
+    // Frisch zurückgesetzte Blöcke gelten wieder als unberührt
+    if (resetBlocks) setBlocksTouched(false);
     setLoadingDayEntries(false);
   };
 
   // Load existing entries when date changes
   useEffect(() => {
-    fetchExistingDayEntries(selectedDate);
+    // Benutzerveränderte Blöcke beim Datumswechsel behalten —
+    // dann nur die bestehenden Tageseinträge neu laden
+    fetchExistingDayEntries(selectedDate, !blocksTouched);
   }, [selectedDate]);
 
   useEffect(() => {
@@ -232,15 +240,6 @@ const TimeTracking = () => {
       ]);
       if (vehData) setVehicles(vehData as any);
       if (taetData) setTaetigkeitOptions(((taetData as any[]) || []).map(o => o.label));
-    })();
-
-    // Check if user is admin
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: roleData } = await supabase.from("user_roles").select("role").eq("user_id", user.id).single();
-        setIsAdmin(roleData?.role === "administrator");
-      }
     })();
 
     const channel = supabase
@@ -355,7 +354,9 @@ const TimeTracking = () => {
 
   // Update a specific block
   const updateBlock = (blockId: string, updates: Partial<TimeBlock>) => {
-    setTimeBlocks(prev => prev.map(block => 
+    // Jede Änderung über die UI markiert die Blöcke als benutzerverändert
+    setBlocksTouched(true);
+    setTimeBlocks(prev => prev.map(block =>
       block.id === blockId ? { ...block, ...updates } : block
     ));
   };
@@ -364,26 +365,23 @@ const TimeTracking = () => {
   const addTimeBlock = () => {
     const lastBlock = timeBlocks[timeBlocks.length - 1];
     let suggestedStart = "";
-    
+
     if (lastBlock.endTime) {
       const [endH, endM] = lastBlock.endTime.split(':').map(Number);
       const nextMinutes = endH * 60 + endM + 30; // 30 min after last block ends
-      suggestedStart = `${String(Math.floor(nextMinutes / 60)).padStart(2, '0')}:${String(nextMinutes % 60).padStart(2, '0')}`;
+      // Kein Vorschlag, wenn der nächste Start hinter Mitternacht läge ("24:15")
+      if (nextMinutes < 24 * 60) {
+        suggestedStart = `${String(Math.floor(nextMinutes / 60)).padStart(2, '0')}:${String(nextMinutes % 60).padStart(2, '0')}`;
+      }
     }
-    
+
+    setBlocksTouched(true);
     setTimeBlocks(prev => [...prev, createDefaultBlock(suggestedStart)]);
   };
 
   // Remove a time block
   const removeBlock = (blockId: string) => {
     setTimeBlocks(prev => prev.filter(block => block.id !== blockId));
-  };
-
-  // Update selected employees for a block
-  const updateBlockEmployees = (blockId: string, employees: string[]) => {
-    setTimeBlocks(prev => prev.map(block =>
-      block.id === blockId ? { ...block, selectedEmployees: employees } : block
-    ));
   };
 
   // Calculate pause minutes for a block
@@ -400,8 +398,9 @@ const TimeTracking = () => {
     const pauseMinutes = calculateBlockPauseMinutes(block);
 
     let totalMinutes = (endH * 60 + endM) - (startH * 60 + startM);
-    // Overnight shift: Endzeit vor Startzeit → über Mitternacht
-    if (totalMinutes < 0) totalMinutes += 24 * 60;
+    // Ende <= Start ist ungültig (Validierung verbietet das Speichern) —
+    // Vorschau zeigt 0 statt irreführender Overnight-Stunden
+    if (totalMinutes <= 0) return 0;
     totalMinutes -= pauseMinutes;
     // Pause darf Arbeitszeit nicht übersteigen
     return Math.max(0, totalMinutes / 60);
@@ -511,7 +510,10 @@ const TimeTracking = () => {
       entryPauseMinutes = pause;
     }
 
-    // ZA: Check and deduct from time account
+    // ZA: Zeitkonto nur PRÜFEN — abgebucht wird erst NACH erfolgreichem
+    // time_entries-Insert, damit bei fehlgeschlagenem Insert kein
+    // Guthaben verloren geht (Retry würde sonst doppelt abbuchen).
+    let zaAccount: { id: string; balance_hours: number } | null = null;
     if (absenceData.type === "za") {
       const { data: timeAccount, error: taError } = await supabase
         .from("time_accounts")
@@ -531,34 +533,12 @@ const TimeTracking = () => {
         return;
       }
 
-      const balanceBefore = Number(timeAccount.balance_hours);
-      const balanceAfter = balanceBefore - workingHours;
-
-      const { error: updateErr } = await supabase
-        .from("time_accounts")
-        .update({ balance_hours: balanceAfter, updated_at: new Date().toISOString() })
-        .eq("id", timeAccount.id);
-
-      if (updateErr) {
-        toast({ variant: "destructive", title: "Fehler", description: "ZA-Stunden konnten nicht abgebucht werden" });
-        setSubmittingAbsence(false);
-        return;
-      }
-
-      await supabase.from("time_account_transactions").insert({
-        user_id: user.id,
-        changed_by: user.id,
-        change_type: "za_abzug",
-        hours: -workingHours,
-        balance_before: balanceBefore,
-        balance_after: balanceAfter,
-        reason: `Zeitausgleich am ${absenceData.date}`,
-      });
+      zaAccount = timeAccount;
     }
 
     const absenceLabel = absenceData.type === "urlaub" ? "Urlaub" : absenceData.type === "krankenstand" ? "Krankenstand" : absenceData.type === "weiterbildung" ? "Weiterbildung" : absenceData.type === "za" ? "Zeitausgleich" : "Feiertag";
 
-    const { error } = await supabase.from("time_entries").insert({
+    const { data: insertedEntry, error } = await supabase.from("time_entries").insert({
       user_id: user.id,
       datum: absenceData.date,
       project_id: null,
@@ -570,7 +550,43 @@ const TimeTracking = () => {
       location_type: "baustelle",
       notizen: documentPath ? `Krankmeldung: ${documentPath}` : null,
       week_type: null,
-    });
+    }).select("id").single();
+
+    // ZA: erst jetzt vom Zeitkonto abbuchen
+    if (!error && zaAccount) {
+      const balanceBefore = Number(zaAccount.balance_hours);
+      const balanceAfter = balanceBefore - workingHours;
+
+      const { error: updateErr } = await supabase
+        .from("time_accounts")
+        .update({ balance_hours: balanceAfter, updated_at: new Date().toISOString() })
+        .eq("id", zaAccount.id);
+
+      if (updateErr) {
+        // Kompensieren: den gerade erzeugten Eintrag wieder löschen, damit
+        // kein ZA-Eintrag ohne Abbuchung stehen bleibt
+        if (insertedEntry?.id) {
+          await supabase.from("time_entries").delete().eq("id", insertedEntry.id);
+        }
+        toast({ variant: "destructive", title: "Fehler", description: "ZA-Stunden konnten nicht abgebucht werden — der Eintrag wurde nicht gespeichert" });
+        setSubmittingAbsence(false);
+        return;
+      }
+
+      const { error: logErr } = await supabase.from("time_account_transactions").insert({
+        user_id: user.id,
+        changed_by: user.id,
+        change_type: "za_abzug",
+        hours: -workingHours,
+        balance_before: balanceBefore,
+        balance_after: balanceAfter,
+        reason: `Zeitausgleich am ${absenceData.date}`,
+      });
+      if (logErr) {
+        // Abbuchung war erfolgreich — fehlendes Protokoll nur als Warnung melden
+        toast({ title: "Warnung", description: "ZA abgebucht, aber der Protokoll-Eintrag konnte nicht gespeichert werden" });
+      }
+    }
 
     if (!error) {
       toast({ title: "Erfolg", description: `${absenceLabel} erfasst` });
@@ -601,6 +617,14 @@ const TimeTracking = () => {
       toast({ variant: "destructive", title: "Fehler", description: "Sie müssen angemeldet sein" });
       setSaving(false);
       return;
+    }
+
+    // Arbeitszeit in der Zukunft: nachfragen (Abwesenheiten sind ausgenommen)
+    if (selectedDate > format(new Date(), "yyyy-MM-dd")) {
+      if (!window.confirm("Das Datum liegt in der Zukunft — trotzdem buchen?")) {
+        setSaving(false);
+        return;
+      }
     }
 
     // Validate all blocks
@@ -639,6 +663,33 @@ const TimeTracking = () => {
         toast({ variant: "destructive", title: "Fehler", description: `Block ${blockNum}: Bitte ein Projekt auswählen` });
         setSaving(false);
         return;
+      }
+
+      // KFZ-Kilometer: negative bzw. unsinnige Werte ablehnen
+      for (const kfz of block.kfzEntries) {
+        if (!kfz.vehicleId) continue;
+        if (kfz.modus === "gefahren" && kfz.kmGefahren !== "") {
+          const gef = parseInt(kfz.kmGefahren, 10);
+          if (!Number.isFinite(gef) || gef <= 0) {
+            toast({ variant: "destructive", title: "Fehler", description: `Block ${blockNum}: Gefahrene km müssen größer als 0 sein` });
+            setSaving(false);
+            return;
+          }
+        }
+        if (kfz.modus === "start_ende" && (kfz.kmStart !== "" || kfz.kmEnde !== "")) {
+          const s = kfz.kmStart !== "" ? parseInt(kfz.kmStart, 10) : null;
+          const e2 = kfz.kmEnde !== "" ? parseInt(kfz.kmEnde, 10) : null;
+          if ((s != null && s < 0) || (e2 != null && e2 < 0)) {
+            toast({ variant: "destructive", title: "Fehler", description: `Block ${blockNum}: Kilometerstände dürfen nicht negativ sein` });
+            setSaving(false);
+            return;
+          }
+          if (s != null && e2 != null && e2 <= s) {
+            toast({ variant: "destructive", title: "Fehler", description: `Block ${blockNum}: km Ende muss größer als km Start sein` });
+            setSaving(false);
+            return;
+          }
+        }
       }
     }
 
@@ -710,11 +761,15 @@ const TimeTracking = () => {
       }
     }
 
-    // Insert all blocks with team members via Edge Function
+    // Insert all blocks via Edge Function
     let totalEntriesCreated = 0;
-    let hasError = false;
+    // Für präzise Fehlermeldung bei Teil-Speicherung: gespeicherte Block-IDs
+    // und fehlgeschlagene Blocknummern mitführen
+    const savedBlockIds: string[] = [];
+    const failedBlockNums: number[] = [];
 
-    for (const block of timeBlocks) {
+    for (let blockIdx = 0; blockIdx < timeBlocks.length; blockIdx++) {
+      const block = timeBlocks[blockIdx];
       const pauseMinutes = calculateBlockPauseMinutes(block);
       const blockHours = calculateBlockHours(block);
 
@@ -756,38 +811,20 @@ const TimeTracking = () => {
         km_ende: null,
       };
 
-      // Prepare team entries
-      const teamEntries = block.selectedEmployees.map(workerId => ({
-        user_id: workerId,
-        datum: selectedDate,
-        project_id: block.locationType === "werkstatt" || block.locationType === "regie" ? null : (block.projectId || null),
-        taetigkeit: block.taetigkeit,
-        stunden: blockHours,
-        start_time: block.startTime,
-        end_time: block.endTime,
-        pause_minutes: pauseMinutes,
-        pause_start: null,
-        pause_end: null,
-        location_type: dbLocationType,
-        notizen: regieNotizen,
-        week_type: null,
-        wetterschicht_stunden: wetterschichtVal,
-      }));
-
-      // Call Edge Function to create entries (bypasses RLS for team members)
+      // Call Edge Function to create entries (Team-Buchung entfernt — nur eigener Eintrag)
       const { data: result, error: functionError } = await supabase.functions.invoke(
         "create-team-time-entries",
         {
           body: {
             mainEntry,
-            teamEntries,
+            teamEntries: [],
             createWorkerLinks: true,
           },
         }
       );
 
       if (functionError || !result?.success) {
-        hasError = true;
+        failedBlockNums.push(blockIdx + 1);
         console.error("Error creating time entries:", functionError || result?.error);
         continue;
       }
@@ -813,23 +850,39 @@ const TimeTracking = () => {
           });
         if (kfzRows.length > 0) {
           const { error: kfzErr } = await (supabase.from("time_entry_vehicles" as never) as any).insert(kfzRows);
-          if (kfzErr) console.error("KFZ-Einträge konnten nicht gespeichert werden:", kfzErr);
+          if (kfzErr) {
+            console.error("KFZ-Einträge konnten nicht gespeichert werden:", kfzErr);
+            toast({ variant: "destructive", title: "KFZ-Daten nicht gespeichert", description: `Block ${blockIdx + 1}: Zeiten gespeichert, KFZ-Daten NICHT gespeichert — bitte nachtragen` });
+          }
         }
       }
 
+      savedBlockIds.push(block.id);
       totalEntriesCreated += result.totalCreated || 1;
     }
 
-    if (!hasError) {
-      const teamInfo = timeBlocks.some(b => b.selectedEmployees.length > 0)
-        ? ` (inkl. Team-Mitglieder)`
-        : "";
-      toast({ title: "Erfolg", description: `${totalEntriesCreated} Eintrag/Einträge gespeichert${teamInfo}` });
-      
+    if (failedBlockNums.length === 0) {
+      toast({ title: "Erfolg", description: `${totalEntriesCreated} Eintrag/Einträge gespeichert` });
+
       // Refresh existing entries
       await fetchExistingDayEntries(selectedDate);
     } else {
-      toast({ variant: "destructive", title: "Fehler", description: "Einige Einträge konnten nicht gespeichert werden" });
+      // Teil-Speicherung: erfolgreich gespeicherte Blöcke aus dem Formular
+      // entfernen, damit ein Retry sie nicht doppelt bucht …
+      if (savedBlockIds.length > 0) {
+        setTimeBlocks(prev => prev.filter(b => !savedBlockIds.includes(b.id)));
+      }
+      // … und die Tagesliste refreshen, OHNE die verbliebenen Blöcke zu
+      // überschreiben (sonst wäre der Overlap-Check beim Retry stale)
+      await fetchExistingDayEntries(selectedDate, false);
+      const failedList = failedBlockNums.join(", ");
+      toast({
+        variant: "destructive",
+        title: "Fehler",
+        description: savedBlockIds.length > 0
+          ? `${savedBlockIds.length} Block/Blöcke gespeichert, Block ${failedList} fehlgeschlagen — bitte nur diese${failedBlockNums.length === 1 ? "n" : ""} erneut speichern`
+          : `Block ${failedList} konnte nicht gespeichert werden — bitte erneut versuchen`,
+      });
     }
     setSaving(false);
   };
@@ -886,7 +939,7 @@ const TimeTracking = () => {
                     {getWeeklyTargetHours()}h Wochensoll
                   </Badge>
                   <span className="text-xs text-muted-foreground">
-                    Mo-Do: 8,5h • Fr: 5h (inkl. 0,5h Überstunde/ZA)
+                    Mo–Do: 10h (07:00–17:30, 30 Min Pause) • Fr–So: arbeitsfrei
                   </span>
                 </div>
               </div>
@@ -1554,9 +1607,8 @@ const TimeTracking = () => {
                     {(() => {
                       const absenceDateObj = new Date(absenceData.date);
                       const dayOfWeek = absenceDateObj.getDay();
-                      if (dayOfWeek === 0 || dayOfWeek === 6) return "Wochenende: 0 Stunden";
-                      if (dayOfWeek === 5) return "Freitag: 4,5 Stunden (07:00 - 12:00)";
-                      return "Mo-Do: 8,5 Stunden (07:00 - 16:00, 30min Pause)";
+                      if (dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6) return "Fr–So: arbeitsfrei (0 Stunden)";
+                      return "Mo–Do: 10 Stunden (07:00 – 17:30, 30 Min Pause)";
                     })()}
                   </div>
                   <div className="pt-2 border-t">

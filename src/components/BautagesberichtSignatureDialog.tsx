@@ -106,13 +106,13 @@ export const BautagesberichtSignatureDialog = ({
     setSending(true);
 
     try {
-      // Save signature to bautagesbericht
+      // Unterschrift speichern — Status bleibt "offen", bis der Versand
+      // wirklich geklappt hat (sonst hängt der Bericht ohne Retry-Weg in "gesendet")
       const { error: updateError } = await (supabase as any)
         .from("bautagesberichte")
         .update({
           unterschrift_kunde: signature,
           unterschrift_am: new Date().toISOString(),
-          status: "gesendet",
         })
         .eq("id", bautagesbericht.id);
 
@@ -176,18 +176,47 @@ export const BautagesberichtSignatureDialog = ({
         },
       });
 
-      if (sendError || sendData?.error) {
-        console.error("Email send error:", sendError || sendData?.error);
-        toast({
-          title: "Unterschrift gespeichert",
-          description: `E-Mail konnte nicht gesendet werden: ${sendData?.error || sendError?.message || "Unbekannter Fehler"}`,
-          variant: "destructive",
-        });
-      } else {
+      if (sendData?.success) {
+        // Erst NACH erfolgreichem Versand auf "gesendet" setzen
+        await (supabase as any)
+          .from("bautagesberichte")
+          .update({ status: "gesendet" })
+          .eq("id", bautagesbericht.id);
         toast({
           title: "Bautagesbericht gesendet",
           description: "Der Bericht wurde erfolgreich per E-Mail versendet.",
         });
+      } else {
+        // Echte Fehlermeldung extrahieren: bei FunctionsHttpError steckt sie im Response-Body
+        let errorMessage = "Unbekannter Fehler";
+        let pdfStored = false;
+        let projectStored = false;
+        if (sendError) {
+          const body = await (sendError as any).context?.json?.().catch(() => null);
+          errorMessage = body?.error || sendError.message || errorMessage;
+          pdfStored = body?.pdfStored === true;
+          projectStored = body?.projectStored === true;
+        } else if (sendData?.error) {
+          errorMessage = sendData.error;
+          pdfStored = sendData?.pdfStored === true;
+          projectStored = sendData?.projectStored === true;
+        }
+        console.error("Email send error:", sendError || sendData?.error);
+
+        // Status bleibt "offen" (Unterschrift ist gespeichert) → erneuter Versand möglich
+        if (pdfStored) {
+          // PDF ist archiviert, nur die Mail fehlt → Info statt Fehler
+          toast({
+            title: "PDF gespeichert",
+            description: `Das PDF wurde gespeichert${projectStored ? " und im Projektordner abgelegt" : ""} — E-Mail: ${errorMessage}`,
+          });
+        } else {
+          toast({
+            variant: "destructive",
+            title: "Versand fehlgeschlagen",
+            description: `E-Mail konnte nicht gesendet werden: ${errorMessage}`,
+          });
+        }
       }
 
       onSuccess();

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -220,6 +220,8 @@ export default function InvoiceDetail() {
 
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
+  // Synchrones Reentrancy-Guard für handleSave (setState ist async)
+  const savingRef = useRef(false);
   const [isDirty, setIsDirty] = useState(false);
 
   // Warnung bei Schließen/Reload mit ungespeicherten Änderungen
@@ -560,7 +562,7 @@ export default function InvoiceDetail() {
               // Einzelpreise nur für mwst_exempt-Zeilen (SR-Brutto-Abzüge).
               nextItems.push({
                 position: i + 2,
-                beschreibung: `abzüglich ${i + 1}. Anzahlungsrechnung ${abz.nummer} vom ${abz.datum} (netto)`,
+                beschreibung: `abzüglich ${i + 1}. Anzahlungsrechnung ${abz.nummer} vom ${new Date(abz.datum + "T12:00:00").toLocaleDateString("de-AT")} (netto)`,
                 kurztext: `Abzug ${abz.nummer}`,
                 langtext: "",
                 menge: -1,
@@ -595,7 +597,7 @@ export default function InvoiceDetail() {
           const brutto = Number(abz.brutto_summe) || 0;
           nextItems.push({
             position: nextItems.length + 1,
-            beschreibung: `Abzug Anzahlung ${abz.nummer} vom ${abz.datum} (brutto, MwSt-frei)`,
+            beschreibung: `Abzug Anzahlung ${abz.nummer} vom ${new Date(abz.datum + "T12:00:00").toLocaleDateString("de-AT")} (brutto, MwSt-frei)`,
             kurztext: `Abzug ${abz.nummer}`,
             langtext: "",
             menge: 1,
@@ -997,106 +999,13 @@ export default function InvoiceDetail() {
       rabatt_prozent: 0,
       gesamtpreis: 0,
     }]);
+    if (!loading) setIsDirty(true);
   };
 
-  const addFromTemplate = async (t: TemplateItem) => {
-    // Set (Stückliste) — Summary-Mode: EINE Zeile pro Set in der Rechnung,
-    // mit dem Set-VK als Einzelpreis. Die Komponenten-Stückliste wird als
-    // JSON-Snapshot gespeichert, damit sie später für interne Nach-
-    // kalkulation noch verfügbar ist — auch wenn das Set im Katalog
-    // geändert oder gelöscht wird.
-    if ((t as any).ist_set) {
-      const setMenge = Number(templateMengen[t.id]) > 0 ? Number(templateMengen[t.id]) : 1;
-      const { data: comps } = await (supabase as any)
-        .from("invoice_template_components")
-        .select("menge, sort_order, component:invoice_templates!component_template_id(id, name, kurzbezeichnung, einheit, einzelpreis, ek_netto, vk_netto)")
-        .eq("parent_template_id", t.id)
-        .order("sort_order");
-      const rows = ((comps as any[]) || []);
-      if (rows.length === 0) {
-        toast({ variant: "destructive", title: "Position ist leer", description: `${t.name} hat keine Komponenten.` });
-        return;
-      }
-      const vkNetto = Number((t as any).vk_netto ?? (t as any).netto_preis ?? t.einzelpreis) || 0;
-      const bezugseinheit = (t as any).bezugseinheit || t.einheit || "Stk.";
-      const aufschlag = Number((t as any).aufschlag_prozent) || 0;
-      const komponenten = rows.map(r => {
-        const c = r.component || {};
-        const cvk = Number(c.vk_netto ?? c.einzelpreis) || 0;
-        return {
-          name: c.kurzbezeichnung || c.name || "?",
-          einheit: c.einheit || "Stk.",
-          menge: Number(r.menge) || 1,  // pro 1 Bezugseinheit
-          ek: Number(c.ek_netto ?? cvk) || 0,
-          vk: cvk,
-        };
-      });
-      const summaryRow: InvoiceItem = {
-        position: 1,
-        beschreibung: (t as any).kurzbezeichnung || t.name,
-        kurztext: (t as any).kurzbezeichnung || t.name,
-        langtext: ((t as any).langbezeichnung && (t as any).langbezeichnung !== ((t as any).kurzbezeichnung || t.name))
-          ? (t as any).langbezeichnung
-          : "",
-        menge: setMenge,
-        einheit: bezugseinheit,
-        einzelpreis: vkNetto,
-        rabatt_prozent: 0,
-        produktnummer: (t as any).produktnummer || "",
-        gesamtpreis: Math.round(setMenge * vkNetto * 100) / 100,
-        set_template_id: t.id,
-        set_snapshot: {
-          bezugseinheit,
-          aufschlag_prozent: aufschlag,
-          komponenten,
-        },
-      };
-      setItems(prev => mergeItems(prev, [summaryRow]));
-      toast({
-        title: `Set hinzugefügt: ${t.name}`,
-        description: `${setMenge} × ${bezugseinheit} (${komponenten.length} Komponenten im Snapshot).`,
-      });
-      return;
-    }
-
-    const netto = Number((t as any).vk_netto ?? (t as any).netto_preis) || t.einzelpreis;
-    // Kalkuliertes Material → Kalkulation in die Position übernehmen, damit
-    // Aufschlag/Stundensatz im Angebot anpassbar sind (Excel-Modell).
-    const isKalk = !!(t as any).ist_kalkuliert;
-    const kalk: KalkulationInput | null = isKalk ? {
-      ek_preis: Number((t as any).ek_netto) || 0,
-      verschnitt_prozent: Number((t as any).verschnitt_prozent) || 0,
-      aufschlag_prozent: Number((t as any).aufschlag_prozent) || 0,
-      befestigung_preis: Number((t as any).befestigung_preis) || 0,
-      sonstiges_preis: Number((t as any).sonstiges_preis) || 0,
-      arbeitszeit_minuten: Number((t as any).arbeitszeit_minuten) || 0,
-      stundensatz: Number((t as any).stundensatz) || 52,
-    } : null;
-    const einzelpreis = kalk
-      ? calcEinzelpreis({ ...kalk, aufschlag_prozent: docAufschlagOverride ?? kalk.aufschlag_prozent })
-      : netto;
-    const newItem: InvoiceItem = {
-      position: 1,
-      beschreibung: (t as any).kurzbezeichnung || t.name || t.beschreibung,
-      kurztext: (t as any).kurzbezeichnung || t.name,
-      langtext: ((t as any).langbezeichnung && (t as any).langbezeichnung !== ((t as any).kurzbezeichnung || t.name)) ? (t as any).langbezeichnung : "",
-      menge: 1,
-      einheit: t.einheit,
-      einzelpreis,
-      rabatt_prozent: 0,
-      produktnummer: (t as any).produktnummer || "",
-      gesamtpreis: einzelpreis,
-      ist_kalkuliert: isKalk,
-      kalkulation_template_id: isKalk ? t.id : null,
-      ...(kalk || {}),
-    };
-    setItems(prev => mergeItems(prev, [newItem]));
-    // Dialog bleibt offen
-    toast({ title: "Position hinzugefügt", description: t.name });
-  };
 
   const removeItem = (index: number) => {
     setItems(prev => prev.filter((_, i) => i !== index).map((item, i) => ({ ...item, position: i + 1 })));
+    if (!loading) setIsDirty(true);
   };
 
   const moveItem = (index: number, direction: "up" | "down") => {
@@ -1107,9 +1016,13 @@ export default function InvoiceDetail() {
       [arr[index], arr[targetIndex]] = [arr[targetIndex], arr[index]];
       return arr.map((item, i) => ({ ...item, position: i + 1 }));
     });
+    if (!loading) setIsDirty(true);
   };
 
   const updateItem = (index: number, field: keyof InvoiceItem, value: any) => {
+    // Positionsänderungen sind die häufigste Bearbeitung — ohne Dirty-Flag
+    // gäbe es beim Verlassen keine "Ungespeicherte Änderungen"-Warnung.
+    if (!loading) setIsDirty(true);
     setItems(prev => {
       const updated = [...prev];
       // Sanitize numeric fields: NaN, Infinity, negative → 0
@@ -1395,8 +1308,11 @@ export default function InvoiceDetail() {
   const canCancel = !isNew && !!invoiceId && id !== "new" && _cancelableTypes.has(form.typ) && form.status !== "storniert";
 
   const handleSave = async (): Promise<boolean> => {
-    // Double-click protection — SOFORT setzen um Race-Condition bei schnellen Klicks zu verhindern
-    if (saving) return false;
+    // Double-click protection: setState ist NICHT synchron — zusätzlich ein
+    // Ref als echtes Reentrancy-Guard, sonst könnten zwei schnelle Klicks zwei
+    // next_document_number-RPCs (= zwei Belegnummern) auslösen.
+    if (saving || savingRef.current) return false;
+    savingRef.current = true;
     setSaving(true);
     try {
 
@@ -1409,6 +1325,14 @@ export default function InvoiceDetail() {
     const validItems = items.filter(item => item.beschreibung.trim());
     if (validItems.length === 0) {
       toast({ variant: "destructive", title: "Fehler", description: "Mindestens eine Position mit Beschreibung ist erforderlich" });
+      return false;
+    }
+    // INTEGRITÄT: Zeilen ohne Beschreibung werden beim Speichern verworfen —
+    // hätte so eine Zeile einen Betrag, stünde auf dem Beleg eine Summe, die
+    // nicht der Positionssumme entspricht (und der Zahlungs-QR wäre falsch).
+    const phantomIdx = items.findIndex(item => !item.beschreibung.trim() && Math.abs(Number(item.gesamtpreis) || 0) > 0.005);
+    if (phantomIdx >= 0) {
+      toast({ variant: "destructive", title: "Position ohne Beschreibung", description: `Position ${phantomIdx + 1} hat einen Betrag, aber keine Beschreibung — bitte Beschreibung ergänzen oder Zeile löschen.` });
       return false;
     }
 
@@ -1434,6 +1358,12 @@ export default function InvoiceDetail() {
       return false;
     }
 
+    // Rabatt-Betrag: negativ wäre ein UNSICHTBARER Aufschlag (die Rabatt-Zeile
+    // im Footer erscheint nur bei > 0) — ablehnen.
+    if ((form.rabatt_betrag ?? 0) < 0) {
+      toast({ variant: "destructive", title: "Ungültiger Rabatt", description: "Rabatt-Betrag darf nicht negativ sein" });
+      return false;
+    }
     // Rabatt-Betrag (Global-Rabatt €) darf die nicht-steuerbefreite Positions-
     // Netto-Summe nicht überschreiten. positionenNetto (oben) schließt
     // mwst_exempt-Zeilen bereits aus.
@@ -1818,6 +1748,7 @@ export default function InvoiceDetail() {
     } finally {
       // Garantie: der Speichern-Button bleibt NIE hängen — auch wenn eine
       // Validierung oben früh mit `return false` abbricht.
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -1926,7 +1857,14 @@ export default function InvoiceDetail() {
 
   const addPayment = async () => {
     if (!invoiceId) return;
-    let betrag = Math.round((Number(newPaymentAmount) || restBetrag) * 100) / 100;
+    // Leereingabe = voller Restbetrag; eine EXPLIZITE "0" darf NICHT zum
+    // Restbetrag werden (Number('0') ist falsy!), sondern wird abgelehnt.
+    const raw = String(newPaymentAmount ?? "").trim();
+    let betrag = Math.round((raw === "" ? restBetrag : Number(raw)) * 100) / 100;
+    if (!Number.isFinite(betrag)) {
+      toast({ variant: "destructive", title: "Ungültiger Betrag", description: "Bitte einen gültigen Zahlungsbetrag eingeben." });
+      return;
+    }
     // M-7: Negative oder 0-Zahlungen ablehnen mit Toast (nicht silent)
     if (betrag < 0) {
       toast({ variant: "destructive", title: "Ungültiger Betrag", description: "Zahlungsbetrag darf nicht negativ sein." });
@@ -2294,6 +2232,13 @@ export default function InvoiceDetail() {
   ) => {
     const sourceId = options?.from_doc_id || invoiceId;
     if (!sourceId) return;
+    // Die Umwandlung lädt die GESPEICHERTE Version aus der DB — ungespeicherte
+    // Änderungen (z.B. gerade angepasste Preise) würden im neuen Beleg fehlen.
+    // react-router löst kein beforeunload aus, daher hier explizit warnen.
+    if (isDirty) {
+      const ok = window.confirm("Es gibt ungespeicherte Änderungen — sie würden im neuen Dokument FEHLEN.\n\nZuerst speichern (Abbrechen) oder ohne die Änderungen umwandeln (OK)?");
+      if (!ok) return;
+    }
     const params = new URLSearchParams({ typ: targetTyp, from_doc: sourceId });
     if (options?.anzahlung_prozent != null) params.set("anzahlung_prozent", String(options.anzahlung_prozent));
     if (options?.anzahlung_betrag != null) params.set("anzahlung_betrag", String(options.anzahlung_betrag));
@@ -2461,7 +2406,14 @@ export default function InvoiceDetail() {
           if (targetInv) {
             const gutschriftBrutto = Math.abs(Number(bruttoSumme) || 0);
             const altBezahlt = Number((targetInv as any).bezahlt_betrag) || 0;
-            const neuBezahlt = Math.max(0, Math.round((altBezahlt - gutschriftBrutto) * 100) / 100);
+            // Die Verrechnung hat höchstens min(GS-Brutto, damaliger Rest)
+            // angerechnet — echte Zahlungseingänge (invoice_payments) dürfen
+            // beim Rollback NIE mit ausradiert werden: Untergrenze = Σ payments.
+            const { data: pays } = await supabase
+              .from("invoice_payments").select("betrag")
+              .eq("invoice_id", form.verrechnet_mit_invoice_id);
+            const paymentsSum = Math.round(((pays as any[]) || []).reduce((s, p) => s + (Number(p.betrag) || 0), 0) * 100) / 100;
+            const neuBezahlt = Math.max(paymentsSum, Math.max(0, Math.round((altBezahlt - gutschriftBrutto) * 100) / 100));
             const targetBrutto = Number((targetInv as any).brutto_summe) || 0;
             const altStatus = (targetInv as any).status;
             // Status nur neu berechnen wenn nicht storniert
@@ -2624,8 +2576,10 @@ export default function InvoiceDetail() {
   // LKW/Hiab, Maschine …) — zum Verrechnen importierter Projektzeiten.
   const stundensaetze = templates
     .filter(t => (t as any).art === "material" && (
+      // Primär über die Stunden-EINHEIT; Namens-Match nur mit Wortgrenzen,
+      // damit z.B. ein Material "Maschinenschrauben" nicht als Satz auftaucht.
       /^(h|std|std\.|stunde|stunden)$/i.test(t.einheit || "") ||
-      /stunde|regie|facharbeiter|lehrling|meister|kran(fahrer)?|hiab|maschine|fahrer/i.test(((t as any).kurzbezeichnung || t.name || ""))
+      /\b(stunde|regiestunde|facharbeiter|lehrling|baumeister|kranfahrer|hiab|maschinenstunde)\b/i.test(((t as any).kurzbezeichnung || t.name || ""))
     ))
     .map(t => ({
       id: t.id,
@@ -3894,8 +3848,10 @@ export default function InvoiceDetail() {
                     type="number"
                     value={form.rabatt_betrag}
                     onChange={(e) => {
-                      updateField("rabatt_betrag", Number(e.target.value));
-                      if (Number(e.target.value) > 0) updateField("rabatt_prozent", 0);
+                      // Negativ wäre ein unsichtbarer Aufschlag → clampen
+                      const val = Math.max(0, Number(e.target.value));
+                      updateField("rabatt_betrag", val);
+                      if (val > 0) updateField("rabatt_prozent", 0);
                     }}
                     min={0}
                     step={0.01}
@@ -4152,7 +4108,9 @@ export default function InvoiceDetail() {
                     <Package className="w-4 h-4" />
                     Aus Katalog
                   </Button>
-                  {items.some(it => it.ist_kalkuliert && it.kalkulation_template_id) && (
+                  {/* Katalog-Verknüpfung reicht — Komponenten-Positionen haben
+                      ist_kalkuliert=false, sollen aber genauso aktualisierbar sein. */}
+                  {items.some(it => it.kalkulation_template_id) && (
                     <Button onClick={refreshKalkulationFromCatalog} disabled={kalkRefreshing} variant="outline" size="sm"
                       className={`gap-1 ${staleKalkCount > 0 ? "border-amber-400 text-amber-700" : ""}`}
                       title="Kalkulierte Positionen mit den aktuellen Material-/EK-Preisen aus dem Katalog neu berechnen">
@@ -4209,8 +4167,13 @@ export default function InvoiceDetail() {
                       }).slice(0, 20) : [];
 
                       const isExempt = !!(item as any).mwst_exempt;
+                      // Auto-Abzugszeilen (kumulierte AR: negative Menge) wie
+                      // exempt-Zeilen sperren — der Mengen-Clamp (min 0) würde
+                      // aus -1 sonst irreparabel 0/positiv machen.
+                      const istAbzug = Number(item.menge) < 0;
+                      const zeileGesperrt = isExempt || istAbzug;
                       return (
-                      <TableRow key={idx} className={isExempt ? "bg-rose-50/60 border-l-4 border-l-rose-300" : ""}>
+                      <TableRow key={idx} className={isExempt ? "bg-rose-50/60 border-l-4 border-l-rose-300" : istAbzug ? "bg-amber-50/50 border-l-4 border-l-amber-300" : ""}>
                         <TableCell className="text-muted-foreground text-xs align-top">
                           <div className="flex items-center gap-1">
                             <span>{idx + 1}</span>
@@ -4233,7 +4196,7 @@ export default function InvoiceDetail() {
                               onFocus={() => setAutocompleteIdx(idx)}
                               onBlur={() => setTimeout(() => setAutocompleteIdx(null), 200)}
                               placeholder="Kurzbezeichnung"
-                              disabled={isExempt}
+                              disabled={zeileGesperrt}
                               title={isExempt ? "Automatischer Anzahlungs-Abzug — nicht manuell editierbar. Entferne die Zeile, wenn die Anzahlung nicht abgezogen werden soll." : undefined}
                             />
                             {/* Autocomplete dropdown */}
@@ -4246,8 +4209,11 @@ export default function InvoiceDetail() {
                                     className="w-full text-left px-3 py-1.5 text-sm hover:bg-accent flex justify-between gap-2"
                                     onMouseDown={(e) => {
                                       e.preventDefault();
-                                      // Gleicher Preis-Vorrang wie im Picker: vk_netto zuerst
-                                      const netto = Number((t as any).vk_netto ?? (t as any).netto_preis) || t.einzelpreis;
+                                      // EXAKT dieselbe Preisquelle wie Picker & Stale-Check
+                                      // (inkl. Dokument-Aufschlag-Override bei kalkulierten
+                                      // Positionen) — sonst liefert das Autocomplete einen
+                                      // anderen Preis und die Zeile gilt sofort als "stale".
+                                      const netto = expectedEpFromCatalog({ ist_kalkuliert: !!(t as any).ist_kalkuliert }, t);
                                       updateItem(idx, "beschreibung", (t as any).kurzbezeichnung || t.name);
                                       updateItem(idx, "kurztext", (t as any).kurzbezeichnung || t.name);
                                       const lang = (t as any).langbezeichnung || "";
@@ -4276,7 +4242,7 @@ export default function InvoiceDetail() {
                                     <span className="truncate">{(t as any).kurzbezeichnung || t.name}</span>
                                     <span className="text-xs text-muted-foreground shrink-0">
                                       {(t as any).produktnummer && <span className="mr-2">{(t as any).produktnummer}</span>}
-                                      € {(Number((t as any).netto_preis) || t.einzelpreis).toFixed(2)}
+                                      € {(Number((t as any).vk_netto ?? (t as any).netto_preis) || t.einzelpreis).toFixed(2)}
                                     </span>
                                   </button>
                                 ))}
@@ -4303,10 +4269,10 @@ export default function InvoiceDetail() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <Input type="number" value={item.menge} onChange={(e) => updateItem(idx, "menge", Number(e.target.value))} min={0} step={1} className="text-right h-10 md:h-9" disabled={isExempt} title="Pfeile zählen in ganzen Schritten; Kommawerte (z.B. 2,5) kannst du direkt eintippen." />
+                          <Input type="number" value={item.menge} onChange={(e) => updateItem(idx, "menge", Number(e.target.value))} min={0} step={1} className="text-right h-10 md:h-9" disabled={zeileGesperrt} title="Pfeile zählen in ganzen Schritten; Kommawerte (z.B. 2,5) kannst du direkt eintippen." />
                         </TableCell>
                         <TableCell>
-                          <Select value={item.einheit || "Stk."} onValueChange={(v) => updateItem(idx, "einheit", v)} disabled={isExempt}>
+                          <Select value={item.einheit || "Stk."} onValueChange={(v) => updateItem(idx, "einheit", v)} disabled={zeileGesperrt}>
                             <SelectTrigger className="w-[90px] h-10 md:h-9"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               {einheiten.map(e => (
@@ -4319,14 +4285,20 @@ export default function InvoiceDetail() {
                           <Input type="number" value={item.einzelpreis} onChange={(e) => updateItem(idx, "einzelpreis", Number(e.target.value))} step={0.01} className="text-right h-10 md:h-9" disabled={isExempt || !!item.ist_kalkuliert} title={item.ist_kalkuliert ? "Preis wird kalkuliert — über das Rechner-Symbol anpassen" : undefined} />
                         </TableCell>
                         <TableCell>
-                          <Input type="number" value={item.rabatt_prozent || ""} onChange={(e) => updateItem(idx, "rabatt_prozent", Number(e.target.value))} min={0} max={100} step={0.5} className="text-right h-10 md:h-9" placeholder="0" disabled={isExempt} />
+                          <Input type="number" value={item.rabatt_prozent || ""} onChange={(e) => updateItem(idx, "rabatt_prozent", Number(e.target.value))} min={0} max={100} step={0.5} className="text-right h-10 md:h-9" placeholder="0" disabled={zeileGesperrt} />
                         </TableCell>
                         <TableCell className="text-right font-medium">
                           € {item.gesamtpreis.toFixed(2)}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-0.5">
-                            {!isLocked && (
+                            {/* Kalkulations-Popover NICHT für: gesperrte Belege,
+                                MwSt-freie/Abzugszeilen (ein Tastendruck würde den
+                                negativen Abzug durch einen positiven Preis ersetzen)
+                                und Komponenten-Positionen aus dem Katalog (deren
+                                Preis kommt aus den Komponenten, nicht aus der
+                                Legacy-Formel). */}
+                            {!isLocked && !zeileGesperrt && (item.ist_kalkuliert || !item.kalkulation_template_id) && (
                               <Popover>
                                 <PopoverTrigger asChild>
                                   <Button variant="ghost" size="icon" className={`h-10 w-10 md:h-8 md:w-8 ${item.ist_kalkuliert ? "text-primary" : "text-muted-foreground"}`} title="Kalkulation (EK, Verschnitt, Aufschlag, Lohn)">
@@ -4778,11 +4750,15 @@ export default function InvoiceDetail() {
                     const netto = kalk
                       ? calcEinzelpreis({ ...kalk, aufschlag_prozent: docAufschlagOverride ?? kalk.aufschlag_prozent })
                       : (Number((t as any).vk_netto ?? (t as any).netto_preis) || t.einzelpreis);
+                    // Langtext nur wenn er sich vom Kurztext unterscheidet —
+                    // sonst steht derselbe Text doppelt auf dem PDF.
+                    const _kurz = (t as any).kurzbezeichnung || t.name || "";
+                    const _lang = (t as any).langbezeichnung || t.beschreibung || "";
                     return {
                       position: 1,
                       beschreibung: (t as any).kurzbezeichnung || t.name || t.beschreibung,
                       kurztext: (t as any).kurzbezeichnung || t.name,
-                      langtext: (t as any).langbezeichnung || t.beschreibung || "",
+                      langtext: _lang && _lang !== _kurz ? _lang : "",
                       menge,
                       einheit: t.einheit,
                       einzelpreis: netto,
@@ -5341,7 +5317,13 @@ export default function InvoiceDetail() {
                     if (targetInv) {
                       const gutschriftBrutto = Math.abs(Number(bruttoSumme) || 0);
                       const altBezahlt = Number((targetInv as any).bezahlt_betrag) || 0;
-                      const neuBezahlt = Math.max(0, Math.round((altBezahlt - gutschriftBrutto) * 100) / 100);
+                      // Echte Zahlungen (invoice_payments) als Untergrenze —
+                      // der Rollback darf nur den angerechneten GS-Anteil entfernen.
+                      const { data: pays } = await supabase
+                        .from("invoice_payments").select("betrag")
+                        .eq("invoice_id", form.verrechnet_mit_invoice_id);
+                      const paymentsSum = Math.round(((pays as any[]) || []).reduce((s, p) => s + (Number(p.betrag) || 0), 0) * 100) / 100;
+                      const neuBezahlt = Math.max(paymentsSum, Math.max(0, Math.round((altBezahlt - gutschriftBrutto) * 100) / 100));
                       const targetBrutto = Number((targetInv as any).brutto_summe) || 0;
                       const altStatus = (targetInv as any).status;
                       const neuStatus = altStatus === "storniert" ? "storniert"
