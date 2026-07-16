@@ -2,7 +2,10 @@ import { Resend } from "https://esm.sh/resend@2.0.0";
 import { jsPDF } from "https://esm.sh/jspdf@2.5.2";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
+// Lazy: new Resend(undefined) WIRFT sofort beim Modul-Load ("Missing API key")
+// und crasht die ganze Function — dann würde auch die PDF-Ablage nie laufen.
+const resendApiKey = Deno.env.get("RESEND_API_KEY");
+const resend = resendApiKey ? new Resend(resendApiKey) : null;
 
 // Supabase Admin Client for reading settings
 const supabaseAdmin = createClient(
@@ -475,6 +478,67 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     const subject = `Bautagesbericht - ${bautagesbericht.kunde_name} - ${formatDateShort(bautagesbericht.datum)}`;
 
+    // WICHTIG: PDF-Ablage ZUERST (Berichts-Bucket + Projektordner), Mail danach.
+    // So liegt der unterschriebene Bericht auch dann im Projekt, wenn der
+    // Mail-Versand fehlschlägt oder (noch) nicht konfiguriert ist.
+    let pdfStored = false;
+    let projectStored = false;
+    try {
+      const pdfBytes = Uint8Array.from(atob(pdfBase64), c => c.charCodeAt(0));
+      const storagePath = `${bautagesbericht.id}/${pdfFilename}`;
+
+      const { error: uploadError } = await supabaseAdmin.storage
+        .from("bautagesbericht-pdfs")
+        .upload(storagePath, pdfBytes, {
+          contentType: "application/pdf",
+          upsert: true,
+        });
+
+      if (uploadError) {
+        console.error("PDF upload error:", uploadError);
+      } else {
+        pdfStored = true;
+        // Save PDF path on the bautagesbericht record
+        await supabaseAdmin
+          .from("bautagesberichte")
+          .update({ pdf_path: storagePath, pdf_gesendet_am: new Date().toISOString() })
+          .eq("id", bautagesbericht.id);
+        console.log("PDF stored at:", storagePath);
+      }
+
+      // Zusätzlich im Projekt-Ordner ablegen, wenn Projekt zugeordnet
+      if ((bautagesbericht as any).project_id) {
+        const sanitizedName = pdfFilename.replace(/[\\/:*?"<>|]/g, "_").replace(/\s+/g, "_");
+        const projectPath = `${(bautagesbericht as any).project_id}/bautagesberichte/${sanitizedName}`;
+        const { error: projErr } = await supabaseAdmin.storage
+          .from("project-reports")
+          .upload(projectPath, pdfBytes, {
+            contentType: "application/pdf",
+            upsert: true,
+          });
+        if (projErr) {
+          console.error("Bautagesbericht-PDF-Upload in Projektordner fehlgeschlagen:", projErr);
+        } else {
+          projectStored = true;
+          console.log("Bautagesbericht-PDF im Projektordner abgelegt:", projectPath);
+        }
+      }
+    } catch (storageErr) {
+      console.error("PDF storage failed:", storageErr);
+    }
+
+    // E-Mail-Versand — klare Meldung, wenn Resend (noch) nicht konfiguriert ist.
+    if (!Deno.env.get("RESEND_API_KEY")) {
+      console.error("RESEND_API_KEY fehlt — E-Mail-Versand nicht konfiguriert.");
+      return new Response(
+        JSON.stringify({
+          error: "E-Mail-Versand ist noch nicht konfiguriert (RESEND_API_KEY fehlt). Das PDF wurde gespeichert" + (projectStored ? " und im Projektordner abgelegt." : "."),
+          pdfStored, projectStored,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
     console.log("Sending email with PDF attachment to:", recipients);
 
     // Use Resend test domain if holzbau-lutz.at is not verified yet
@@ -483,7 +547,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     console.log("Sending from:", fromAddress);
 
-    const emailResponse = await resend.emails.send({
+    const emailResponse = await resend!.emails.send({
       from: fromAddress,
       reply_to: officeEmail,
       to: recipients,
@@ -499,63 +563,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     console.log("Resend response:", JSON.stringify(emailResponse));
 
-    // Check for Resend errors
+    // Check for Resend errors — PDF ist zu diesem Zeitpunkt bereits gespeichert.
     if (emailResponse?.error) {
       console.error("Resend error:", JSON.stringify(emailResponse.error));
       return new Response(
-        JSON.stringify({ error: emailResponse.error.message || "E-Mail konnte nicht gesendet werden", details: emailResponse.error }),
+        JSON.stringify({
+          error: (emailResponse.error.message || "E-Mail konnte nicht gesendet werden") + (pdfStored ? " — das PDF wurde gespeichert." : ""),
+          details: emailResponse.error, pdfStored, projectStored,
+        }),
         { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
 
     console.log("Email sent successfully:", JSON.stringify(emailResponse));
 
-    // Store PDF in Supabase Storage for project access
-    try {
-      const pdfBytes = Uint8Array.from(atob(pdfBase64), c => c.charCodeAt(0));
-      const storagePath = `${bautagesbericht.id}/${pdfFilename}`;
-
-      const { error: uploadError } = await supabaseAdmin.storage
-        .from("bautagesbericht-pdfs")
-        .upload(storagePath, pdfBytes, {
-          contentType: "application/pdf",
-          upsert: true,
-        });
-
-      if (uploadError) {
-        console.error("PDF upload error:", uploadError);
-      } else {
-        // Save PDF path on the bautagesbericht record
-        await supabaseAdmin
-          .from("bautagesberichte")
-          .update({ pdf_path: storagePath, pdf_gesendet_am: new Date().toISOString() })
-          .eq("id", bautagesbericht.id);
-        console.log("PDF stored at:", storagePath);
-      }
-
-      // Zusätzlich im Projekt-Ordner ablegen, wenn Projekt zugeordnet
-      // (analog zu BTB/Ersttermin/Protokoll)
-      if ((bautagesbericht as any).project_id) {
-        const sanitizedName = pdfFilename.replace(/[\\/:*?"<>|]/g, "_").replace(/\s+/g, "_");
-        const projectPath = `${(bautagesbericht as any).project_id}/bautagesberichte/${sanitizedName}`;
-        const { error: projErr } = await supabaseAdmin.storage
-          .from("project-reports")
-          .upload(projectPath, pdfBytes, {
-            contentType: "application/pdf",
-            upsert: true,
-          });
-        if (projErr) {
-          console.error("Bautagesbericht-PDF-Upload in Projektordner fehlgeschlagen:", projErr);
-        } else {
-          console.log("Bautagesbericht-PDF im Projektordner abgelegt:", projectPath);
-        }
-      }
-    } catch (storageErr) {
-      console.error("PDF storage failed (non-critical):", storageErr);
-    }
-
     return new Response(
-      JSON.stringify({ success: true, emailResponse }),
+      JSON.stringify({ success: true, emailResponse, pdfStored, projectStored }),
       { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
     );
   } catch (error: unknown) {

@@ -40,6 +40,8 @@ type DisturbanceFormProps = {
     kunde_telefon: string | null;
     beschreibung: string;
     notizen: string | null;
+    project_id?: string | null;
+    customer_id?: string | null;
   } | null;
   /** Wenn gesetzt: Projekt beim Öffnen des Formulars vorselektieren (Quick-Action aus ProjectOverview) */
   prefillProjectId?: string | null;
@@ -130,6 +132,11 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
         beschreibung: editData.beschreibung,
         notizen: editData.notizen || "",
       });
+      // Projekt-/Kundenverknüpfung aus dem Bericht übernehmen — sonst nullt
+      // jede Bearbeitung project_id/customer_id, und das PDF landet nie mehr
+      // im Projektordner.
+      setSelectedProjectId(editData.project_id ?? null);
+      setSelectedCustomerId(editData.customer_id ?? null);
       // Load existing workers and materials when editing
       loadExistingWorkers(editData.id);
       loadExistingMaterials(editData.id);
@@ -291,7 +298,9 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
         stunden,
         taetigkeit: `Regiearbeit: ${formData.beschreibung.trim().substring(0, 100)}`,
         location_type: "baustelle",
-        project_id: null,
+        // Projektbezug übernehmen, damit die gespiegelten Stunden in der
+        // Projekt-Zeitauswertung/dem Stundenabgleich auftauchen.
+        project_id: selectedProjectId || null,
         disturbance_id: editData.id,
         notizen: `Regie-Zuordnung: ${editData.id}`,
       }));
@@ -357,7 +366,8 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
         stunden,
         taetigkeit: `Regiearbeit: ${formData.beschreibung.trim().substring(0, 100)}`,
         location_type: "baustelle",
-        project_id: null,
+        // Projektbezug übernehmen (siehe Update-Pfad oben)
+        project_id: selectedProjectId || null,
         disturbance_id: newDisturbance.id,
         notizen: `Regie-Zuordnung: ${newDisturbance.id}`,
       }));
