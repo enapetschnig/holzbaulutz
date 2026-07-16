@@ -1170,11 +1170,20 @@ export default function InvoiceDetail() {
         return;
       }
       let changed = 0;
+      let uebersprungen = 0;
       let oldTotal = 0, newTotal = 0;
       const next = items.map(it => {
         if (!it.kalkulation_template_id || !map[it.kalkulation_template_id]) return it;
         const t = map[it.kalkulation_template_id];
         const ep = expectedEpFromCatalog(it, t);
+        // VERHANDELTE Preise schützen: Weicht der aktuelle Zeilenpreis vom
+        // Katalog-Snapshot (katalog_vk = Preis beim Einfügen/letzten Update)
+        // ab, hat der Nutzer ihn bewusst geändert — NICHT überschreiben.
+        // Nur Zeilen nachziehen, die noch auf ihrem Katalogpreis stehen.
+        const snapshot = Number((it as any).katalog_vk);
+        const manuellVerhandelt = Number.isFinite(snapshot) && snapshot > 0
+          && Math.abs((Number(it.einzelpreis) || 0) - snapshot) > 0.005;
+        if (manuellVerhandelt) { uebersprungen++; return it; }
         oldTotal += Number(it.einzelpreis) || 0;
         newTotal += ep;
         if (Math.abs(ep - (Number(it.einzelpreis) || 0)) > 0.005) changed++;
@@ -1188,12 +1197,13 @@ export default function InvoiceDetail() {
       });
       setItems(next);
       setStaleKalkCount(0);
+      const skippedHint = uebersprungen > 0 ? ` ${uebersprungen} manuell angepasste Position(en) unverändert gelassen.` : "";
       if (changed === 0) {
-        toast({ title: "Preise sind aktuell", description: "Alle kalkulierten Positionen entsprechen bereits dem Materialkatalog." });
+        toast({ title: "Preise sind aktuell", description: `Alle Katalog-Positionen entsprechen bereits dem Materialkatalog.${skippedHint}` });
       } else {
         toast({
           title: `${changed} Position(en) aktualisiert`,
-          description: `Einzelpreise gesamt: € ${oldTotal.toFixed(2)} → € ${newTotal.toFixed(2)}. Zum Übernehmen speichern.`,
+          description: `Einzelpreise gesamt: € ${oldTotal.toFixed(2)} → € ${newTotal.toFixed(2)}. Zum Übernehmen speichern.${skippedHint}`,
         });
       }
     } finally {
