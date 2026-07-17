@@ -4795,17 +4795,9 @@ export default function InvoiceDetail() {
                       <TableCell className="text-right">€ {mwstBetrag.toFixed(2)}</TableCell>
                       <TableCell />
                     </TableRow>
-                    {exemptBrutto !== 0 && (
-                      <TableRow>
-                        <TableCell colSpan={6} className="text-right text-red-600">
-                          Anzahlungs-Abzug (brutto, MwSt-frei)
-                        </TableCell>
-                        <TableCell className="text-right text-red-600 font-medium">
-                          € {exemptBrutto.toFixed(2)}
-                        </TableCell>
-                        <TableCell />
-                      </TableRow>
-                    )}
+                    {/* Kein eigener Anzahlungs-Abzug-Block mehr — der Abzug steht
+                        als Position oben (mit AR-Nummer, Datum und USt-Ausweis);
+                        hier nur noch "Zu zahlen". */}
                     <TableRow>
                       <TableCell colSpan={6} className="text-right font-bold text-lg">
                         {exemptBrutto < 0 ? "Zu zahlen" : "Brutto"}

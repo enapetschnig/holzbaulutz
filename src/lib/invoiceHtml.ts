@@ -222,11 +222,8 @@ export function buildInvoiceHtml(
   }
   totalsHtml += `<tr><td style="padding:5px 0;color:#666;font-size:9.5pt;">Nettobetrag</td><td style="padding:5px 0;text-align:right;color:#333;font-size:9.5pt;">${fmtCurrency(Number(invoice.netto_summe))}</td></tr>`;
   totalsHtml += `<tr><td style="padding:5px 0;color:#666;font-size:9.5pt;">USt. ${Number(invoice.mwst_satz).toFixed(0)}%</td><td style="padding:5px 0;text-align:right;color:#333;font-size:9.5pt;">${fmtCurrency(Number(invoice.mwst_betrag))}</td></tr>`;
-  if (hasExempt) {
-    const bruttoVorAbzug = Number(invoice.netto_summe) + Number(invoice.mwst_betrag || 0);
-    totalsHtml += `<tr><td style="padding:5px 0;color:#666;font-size:9.5pt;">Zwischensumme brutto</td><td style="padding:5px 0;text-align:right;color:#333;font-size:9.5pt;">${fmtCurrency(bruttoVorAbzug)}</td></tr>`;
-    totalsHtml += `<tr><td style="padding:5px 0;color:${accent};font-size:9.5pt;">Anzahlungs-Abzug (brutto)</td><td style="padding:5px 0;text-align:right;color:${accent};font-size:9.5pt;">${fmtCurrency(exemptBrutto)}</td></tr>`;
-  }
+  // Anzahlungs-Abzug steht als Position (mit AR-Nummer + USt-Ausweis) —
+  // im Summenblock keine Doppel-Anzeige mehr.
   totalsHtml += `<tr><td colspan="2" style="padding:0;"><div style="border-top:2px solid ${accent};margin:6px 0;"></div></td></tr>`;
   totalsHtml += `<tr><td style="padding:6px 0;font-size:14pt;font-weight:800;color:#1a1a1a;">${hasExempt ? "Zu zahlen" : "Gesamtbetrag"}</td><td style="padding:6px 0;text-align:right;font-size:14pt;font-weight:800;color:#1a1a1a;">${fmtCurrency(Number(invoice.brutto_summe))}</td></tr>`;
   if (showPaymentInfo) {
