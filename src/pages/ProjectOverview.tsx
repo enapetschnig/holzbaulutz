@@ -63,12 +63,9 @@ const ProjectOverview = () => {
   const [purchaseInvoices, setPurchaseInvoices] = useState<{id: string; lieferant: string; rechnungsdatum: string | null; betrag_brutto: number; status: string; kategorie: string | null}[]>([]);
   const [projectData, setProjectData] = useState<any>(null);
   const [projectHours, setProjectHours] = useState<{user_id: string, name: string, total: number}[]>([]);
-  const [angebotPositionen, setAngebotPositionen] = useState<{position: number; beschreibung: string; menge: number; einheit: string; stunden?: number}[]>([]);
+  const [angebotPositionen, setAngebotPositionen] = useState<{position: number; beschreibung: string; menge: number; einheit: string; stunden?: number; stundenQuelle?: "stunden" | "kalkulation"}[]>([]);
   // Stundenabgleich: im Angebot kalkulierte Lohnstunden (Σ arbeitszeit_minuten × Menge)
   const [angeboteneStunden, setAngeboteneStunden] = useState<number | null>(null);
-  // Kalkulierte Arbeitszeit in den Positionen (Info) — zählt nicht ins Soll,
-  // wenn explizite Stunden-Posten existieren.
-  const [kalkulierteInfoStunden, setKalkulierteInfoStunden] = useState<number | null>(null);
   const [categories, setCategories] = useState<DocumentCategory[]>([
     {
       type: "photos",
@@ -131,33 +128,34 @@ const ProjectOverview = () => {
       const { data: items } = await supabase.from("invoice_items")
         .select("position, beschreibung, kurztext, menge, einheit, arbeitszeit_minuten")
         .eq("invoice_id", referenz.id).order("position");
-      // Stunden-Soll in zwei Stufen:
-      //   1) Gibt es EXPLIZIT angebotene Arbeitsstunden (z.B. "Facharbeiter-
-      //      stunde × 25 Std")? → NUR die zählen als Soll. Die Arbeitszeit-
-      //      Minuten in kalkulierten Positionen sind interne Preiskalkulation,
-      //      keine angebotenen Stunden.
-      //   2) Sonst (kein expliziter Stunden-Posten): Fallback auf die
-      //      kalkulierte Arbeitszeit der Positionen — besser als kein Soll.
+      // Stunden-Soll = GESAMTE Arbeitszeit des Angebots:
+      //   explizite Stunden-Positionen (Facharbeiterstunde × 44) PLUS die in
+      //   den kalkulierten Positionen steckende Arbeitszeit (z.B. Baukran
+      //   36 h/Pa). Die Aufschlüsselung unten zeigt je Position, woher die
+      //   Stunden kommen.
       const zeilen = (items || []) as any[];
       const nameVon = (i: any) => (i.kurztext || i.beschreibung || "");
-      const explizit = zeilen.filter(i => istArbeitszeitZeile(nameVon(i), i.einheit));
-      const explizitStd = explizit.reduce((s, i) => s + (Number(i.menge) || 0), 0);
-      const kalkStd = zeilen.reduce((s, i) =>
-        s + ((Number(i.arbeitszeit_minuten) || 0) * (Number(i.menge) || 0)) / 60, 0);
-      const nutzeExplizit = explizitStd > 0;
-      setAngebotPositionen(zeilen.map(i => ({
-        position: i.position, beschreibung: nameVon(i),
-        menge: Number(i.menge), einheit: i.einheit || "Stk.",
-        stunden: nutzeExplizit
-          ? (istArbeitszeitZeile(nameVon(i), i.einheit) ? Math.round((Number(i.menge) || 0) * 10) / 10 : 0)
-          : Math.round(((Number(i.arbeitszeit_minuten) || 0) * (Number(i.menge) || 0)) / 60 * 10) / 10,
-      })));
-      setAngeboteneStunden(Math.round((nutzeExplizit ? explizitStd : kalkStd) * 10) / 10);
-      // Info fürs Aufklappmenü: kalkulierte Arbeitszeit, die NICHT ins Soll zählt
-      setKalkulierteInfoStunden(nutzeExplizit && kalkStd > 0 ? Math.round(kalkStd * 10) / 10 : null);
+      setAngebotPositionen(zeilen.map(i => {
+        const istStdZeile = istArbeitszeitZeile(nameVon(i), i.einheit);
+        const stunden = istStdZeile
+          ? Math.round((Number(i.menge) || 0) * 10) / 10
+          : Math.round(((Number(i.arbeitszeit_minuten) || 0) * (Number(i.menge) || 0)) / 60 * 10) / 10;
+        return {
+          position: i.position, beschreibung: nameVon(i),
+          menge: Number(i.menge), einheit: i.einheit || "Stk.",
+          stunden,
+          stundenQuelle: (istStdZeile ? "stunden" : "kalkulation") as "stunden" | "kalkulation",
+        };
+      }));
+      const gesamt = zeilen.reduce((s, i) => {
+        const istStdZeile = istArbeitszeitZeile(nameVon(i), i.einheit);
+        return s + (istStdZeile
+          ? (Number(i.menge) || 0)
+          : ((Number(i.arbeitszeit_minuten) || 0) * (Number(i.menge) || 0)) / 60);
+      }, 0);
+      setAngeboteneStunden(Math.round(gesamt * 10) / 10);
     } else {
       setAngeboteneStunden(null);
-      setKalkulierteInfoStunden(null);
     }
   };
 
@@ -671,16 +669,30 @@ const ProjectOverview = () => {
                               <span className="truncate text-muted-foreground">
                                 {p.beschreibung.length > 55 ? p.beschreibung.slice(0, 55) + "…" : p.beschreibung}
                                 <span className="opacity-70"> · {p.menge} {p.einheit}</span>
+                                {p.stundenQuelle === "kalkulation" && (
+                                  <span className="ml-1.5 text-[10px] rounded bg-muted px-1 py-0.5 text-muted-foreground/80"
+                                    title="Arbeitszeit aus der Kalkulation dieser Position (Std/Einheit × Menge)">
+                                    aus Kalkulation
+                                  </span>
+                                )}
                               </span>
                               <span className="font-mono tabular-nums shrink-0">{(p.stunden || 0).toFixed(1)} h</span>
                             </li>
                           ))}
-                          {kalkulierteInfoStunden !== null && (
-                            <li className="pt-1 mt-1 border-t border-border/50 text-muted-foreground/80">
-                              ℹ️ In den übrigen Positionen stecken {kalkulierteInfoStunden.toFixed(1)} h
-                              interne Kalkulations-Arbeitszeit (Preisbasis) — zählt nicht als angebotene Stunden.
-                            </li>
-                          )}
+                          {(() => {
+                            const std = angebotPositionen.filter(p => p.stundenQuelle === "stunden").reduce((s, p) => s + (p.stunden || 0), 0);
+                            const kalk = angebotPositionen.filter(p => p.stundenQuelle === "kalkulation").reduce((s, p) => s + (p.stunden || 0), 0);
+                            return (std > 0 || kalk > 0) ? (
+                              <li className="flex justify-between gap-2 pt-1 mt-1 border-t border-border/50 font-medium">
+                                <span className="text-muted-foreground">
+                                  {std > 0 && <>Stunden-Positionen {std.toFixed(1)} h</>}
+                                  {std > 0 && kalk > 0 && " · "}
+                                  {kalk > 0 && <>aus Kalkulationen {kalk.toFixed(1)} h</>}
+                                </span>
+                                <span className="font-mono tabular-nums shrink-0">{(std + kalk).toFixed(1)} h</span>
+                              </li>
+                            ) : null;
+                          })()}
                         </ul>
                       </details>
                     )}

@@ -79,24 +79,19 @@ export function StundenabgleichWidget() {
             .from("invoice_items")
             .select("invoice_id, menge, einheit, arbeitszeit_minuten, kurztext, beschreibung")
             .in("invoice_id", angebotIds);
-          // Zwei Stufen (wie in der Projekt-Ansicht): explizite Stunden-Posten
-          // (z.B. "Facharbeiterstunde × 25 Std") zählen als Soll; nur wenn es
-          // keine gibt, fällt das Soll auf die kalkulierte Arbeitszeit der
-          // Positionen zurück (interne Preisbasis).
-          const explizitByInvoice: Record<string, number> = {};
-          const kalkMinByInvoice: Record<string, number> = {};
+          // Soll = GESAMTE Arbeitszeit des Angebots (wie in der Projekt-
+          // Ansicht): explizite Stunden-Positionen PLUS die Arbeitszeit aus
+          // den Kalkulationen der übrigen Positionen.
+          const stundenByInvoice: Record<string, number> = {};
           for (const it of ((items || []) as any[])) {
             const menge = Number(it.menge) || 0;
-            if (istArbeitszeitZeile(it.kurztext || it.beschreibung, it.einheit)) {
-              explizitByInvoice[it.invoice_id] = (explizitByInvoice[it.invoice_id] || 0) + menge;
-            }
-            kalkMinByInvoice[it.invoice_id] = (kalkMinByInvoice[it.invoice_id] || 0)
-              + (Number(it.arbeitszeit_minuten) || 0) * menge;
+            const stunden = istArbeitszeitZeile(it.kurztext || it.beschreibung, it.einheit)
+              ? menge
+              : ((Number(it.arbeitszeit_minuten) || 0) * menge) / 60;
+            stundenByInvoice[it.invoice_id] = (stundenByInvoice[it.invoice_id] || 0) + stunden;
           }
           for (const [pid, ref] of Object.entries(angebotByProject)) {
-            const explizit = explizitByInvoice[ref.id] || 0;
-            const kalk = (kalkMinByInvoice[ref.id] || 0) / 60;
-            angebotenMap[pid] = Math.round((explizit > 0 ? explizit : kalk) * 10) / 10;
+            angebotenMap[pid] = Math.round((stundenByInvoice[ref.id] || 0) * 10) / 10;
           }
         }
 
