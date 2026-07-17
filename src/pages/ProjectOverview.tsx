@@ -56,6 +56,9 @@ const ProjectOverview = () => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [invoiceCount, setInvoiceCount] = useState(0);
   const [regieCount, setRegieCount] = useState(0);
+  // Regiestunden = EIGENER Topf (aus den Regieberichten) — zählt NICHT zu
+  // den Projektstunden aus der Zeiterfassung.
+  const [regieStunden, setRegieStunden] = useState(0);
   const [regiePdfs, setRegiePdfs] = useState<{id: string; datum: string; kunde_name: string; pdf_path: string}[]>([]);
   const [purchaseInvoices, setPurchaseInvoices] = useState<{id: string; lieferant: string; rechnungsdatum: string | null; betrag_brutto: number; status: string; kategorie: string | null}[]>([]);
   const [projectData, setProjectData] = useState<any>(null);
@@ -367,11 +370,15 @@ const ProjectOverview = () => {
       }
     }
 
-    // Fetch Regie count (filtered by project)
+    // Fetch Regie count + Regiestunden (filtered by project)
     (supabase.from("disturbances" as never) as any)
-      .select("id", { count: "exact", head: true })
+      .select("id, stunden")
       .eq("project_id", projectId)
-      .then(({ count }: any) => setRegieCount(count || 0));
+      .then(({ data }: any) => {
+        const rows = (data as any[]) || [];
+        setRegieCount(rows.length);
+        setRegieStunden(Math.round(rows.reduce((s: number, d: any) => s + (Number(d.stunden) || 0), 0) * 10) / 10);
+      });
 
     // Fetch Regiebericht PDFs for this project
     (supabase.from("disturbances" as never) as any)
@@ -781,7 +788,10 @@ const ProjectOverview = () => {
               <FileText className="h-5 w-5 text-yellow-600" />
               <div className="flex-1">
                 <p className="font-medium">Regieberichte</p>
-                <p className="text-xs text-muted-foreground">{regieCount} Berichte</p>
+                <p className="text-xs text-muted-foreground">
+                  {regieCount} Bericht{regieCount === 1 ? "" : "e"}
+                  {regieStunden > 0 && <> · <b className="text-foreground">{regieStunden.toLocaleString("de-AT")} Regiestunden</b></>}
+                </p>
               </div>
             </CardContent>
           </Card>

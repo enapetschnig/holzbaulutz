@@ -47,6 +47,9 @@ export function ImportFromProjectDialog({
 }: ImportFromProjectDialogProps) {
   const [items, setItems] = useState<ImportItem[]>([]);
   const [loading, setLoading] = useState(false);
+  // Regiestunden des Projekts (eigener Topf!) — nur zur Info, verrechnet
+  // wird Regie über den eigenen "Aus Regiebericht"-Import.
+  const [regieInfo, setRegieInfo] = useState<{ stunden: number; anzahl: number; unverrechnet: number } | null>(null);
   const [tab, setTab] = useState<"zeit" | "material">(mode === "material" ? "material" : "zeit");
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [localProjectId, setLocalProjectId] = useState<string | null>(projectId ?? null);
@@ -80,10 +83,20 @@ export function ImportFromProjectDialog({
     if (!localProjectId) return;
     setLoading(true);
 
-    const [timeItems, materialItems] = await Promise.all([
+    const [timeItems, materialItems, regieRes] = await Promise.all([
       mode === "material" ? Promise.resolve([]) : fetchTimeEntries(localProjectId),
       mode === "zeit" ? Promise.resolve([]) : fetchMaterialEntries(localProjectId),
+      mode === "material"
+        ? Promise.resolve({ data: null })
+        : (supabase as any).from("disturbances").select("stunden, is_verrechnet").eq("project_id", localProjectId),
     ]);
+
+    const regieRows = ((regieRes as any)?.data as any[]) || [];
+    setRegieInfo(regieRows.length > 0 ? {
+      stunden: Math.round(regieRows.reduce((s, d) => s + (Number(d.stunden) || 0), 0) * 10) / 10,
+      anzahl: regieRows.length,
+      unverrechnet: regieRows.filter(d => !d.is_verrechnet).length,
+    } : null);
 
     setItems([...timeItems, ...materialItems]);
     setLoading(false);
@@ -472,6 +485,16 @@ export function ImportFromProjectDialog({
             </span>
             <span className="font-bold tabular-nums">€ {total.toFixed(2)}</span>
           </div>
+        )}
+
+        {/* Regiestunden sind ein EIGENER Topf — hier nur zur Übersicht,
+            verrechnet werden sie über „Aus Regiebericht". */}
+        {mode !== "material" && localProjectId && regieInfo && (
+          <p className="text-xs text-muted-foreground rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5">
+            ⏱️ Zusätzlich auf diesem Projekt: <b className="text-foreground">{regieInfo.stunden.toLocaleString("de-AT")} Regiestunden</b> aus {regieInfo.anzahl} Regiebericht{regieInfo.anzahl === 1 ? "" : "en"}
+            {regieInfo.unverrechnet > 0 && <> — davon <b className="text-amber-800">{regieInfo.unverrechnet} noch nicht verrechnet</b></>}.
+            Regieleistungen importierst du über den Knopf „Aus Regiebericht".
+          </p>
         )}
 
         {!localProjectId ? (

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Zap, Plus, Calendar, Clock, User, Mail, Phone, MapPin, Filter, Search, ArrowLeft, X } from "lucide-react";
+import { Zap, Plus, Calendar, Clock, User, Mail, Phone, MapPin, Filter, Search, ArrowLeft, X, Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -70,6 +70,45 @@ const Disturbances = () => {
   const clearProjectFilter = () => {
     searchParams.delete("project");
     setSearchParams(searchParams, { replace: true });
+  };
+
+  // Alle Regiebericht-PDFs des gefilterten Projekts als ZIP herunterladen
+  const [zipLoading, setZipLoading] = useState(false);
+  const downloadAlleAlsZip = async () => {
+    const mitPdf = disturbances.filter(d => (d as any).pdf_path);
+    if (mitPdf.length === 0) {
+      toast({ variant: "destructive", title: "Keine PDFs vorhanden", description: "Für diese Regieberichte wurden noch keine PDFs erstellt." });
+      return;
+    }
+    setZipLoading(true);
+    try {
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      let ok = 0;
+      for (const d of mitPdf) {
+        const { data: signed } = await supabase.storage
+          .from("regiebericht-pdfs")
+          .createSignedUrl((d as any).pdf_path, 120);
+        if (!signed?.signedUrl) continue;
+        const res = await fetch(signed.signedUrl);
+        if (!res.ok) continue;
+        const datum = d.datum ? new Date(d.datum).toISOString().slice(0, 10) : "ohne-datum";
+        const name = `Regiebericht_${datum}_${(d.kunde_name || "unbenannt").replace(/[^\wäöüÄÖÜß-]+/g, "_")}.pdf`;
+        zip.file(name, await res.arrayBuffer());
+        ok++;
+      }
+      if (ok === 0) throw new Error("Keine der PDF-Dateien konnte geladen werden.");
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "Regieberichte.zip"; a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Download gestartet", description: `${ok} Regiebericht${ok === 1 ? "" : "e"} als ZIP.${ok < mitPdf.length ? ` ${mitPdf.length - ok} PDFs konnten nicht geladen werden.` : ""}` });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "ZIP-Download fehlgeschlagen", description: e?.message || "Unbekannter Fehler" });
+    } finally {
+      setZipLoading(false);
+    }
   };
 
   const checkAuth = async () => {
@@ -279,6 +318,59 @@ const Disturbances = () => {
             )}
           </CardContent>
         </Card>
+
+        {/* Projekt-Übersicht: Regiestunden je Person + Arbeiten + Sammel-Download.
+            Regiestunden sind ein EIGENER Topf — sie zählen nicht zu den
+            Projektstunden aus der Zeiterfassung. */}
+        {projectFilter && disturbances.length > 0 && (() => {
+          const gesamt = disturbances.reduce((s, d) => s + (Number(d.stunden) || 0), 0);
+          const jePerson = new Map<string, { name: string; stunden: number; arbeiten: string[] }>();
+          for (const d of disturbances) {
+            const name = `${(d as any).profile_vorname || ""} ${(d as any).profile_nachname || ""}`.trim() || "Unbekannt";
+            if (!jePerson.has(name)) jePerson.set(name, { name, stunden: 0, arbeiten: [] });
+            const g = jePerson.get(name)!;
+            g.stunden += Number(d.stunden) || 0;
+            const arbeit = (d.beschreibung || "").split("\n")[0].trim();
+            if (arbeit && !g.arbeiten.includes(arbeit)) g.arbeiten.push(arbeit);
+          }
+          return (
+            <Card className="mb-4">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-primary" />
+                    Regiestunden auf diesem Projekt: {gesamt.toLocaleString("de-AT", { maximumFractionDigits: 1 })} Std.
+                    <span className="text-sm font-normal text-muted-foreground">({disturbances.length} Bericht{disturbances.length === 1 ? "" : "e"})</span>
+                  </span>
+                  <Button size="sm" variant="outline" className="gap-1.5 shrink-0" onClick={downloadAlleAlsZip} disabled={zipLoading}>
+                    {zipLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                    Alle PDFs (ZIP)
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <div className="space-y-1.5">
+                  {[...jePerson.values()].sort((a, b) => b.stunden - a.stunden).map(p => (
+                    <div key={p.name} className="flex items-baseline justify-between gap-3 text-sm border-b border-border/50 last:border-0 pb-1.5 last:pb-0">
+                      <div className="min-w-0">
+                        <span className="font-medium">{p.name}</span>
+                        {p.arbeiten.length > 0 && (
+                          <span className="text-xs text-muted-foreground ml-2">
+                            {p.arbeiten.slice(0, 3).join(" · ").slice(0, 90)}{p.arbeiten.length > 3 ? " …" : ""}
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-mono tabular-nums shrink-0">{p.stunden.toLocaleString("de-AT", { maximumFractionDigits: 1 })} Std.</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-2">
+                  Regiestunden zählen nicht zu den Projektstunden aus der Zeiterfassung — verrechnet werden sie über „Aus Regiebericht" in der Rechnung.
+                </p>
+              </CardContent>
+            </Card>
+          );
+        })()}
 
         {/* Disturbances List */}
         {filteredDisturbances.length === 0 ? (
