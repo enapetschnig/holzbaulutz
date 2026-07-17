@@ -64,6 +64,7 @@ export function CustomerSelect({
 }: CustomerSelectProps) {
   const [customers, setCustomers] = useState<CustomerData[]>([]);
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const [suchtext, setSuchtext] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [customerForm, setCustomerForm] = useState<CustomerFormData>(EMPTY_CUSTOMER_FORM);
   const [saving, setSaving] = useState(false);
@@ -173,7 +174,7 @@ export function CustomerSelect({
 
   return (
     <>
-      <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+      <Popover open={popoverOpen} onOpenChange={(o) => { setPopoverOpen(o); if (!o) setSuchtext(""); }}>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
@@ -205,7 +206,7 @@ export function CustomerSelect({
         </PopoverTrigger>
         <PopoverContent className="w-[320px] p-0" align="start">
           <Command>
-            <CommandInput placeholder="Kunde suchen..." />
+            <CommandInput placeholder="Kunde suchen..." value={suchtext} onValueChange={setSuchtext} />
             <CommandList>
               <CommandEmpty>Kein Kunde gefunden</CommandEmpty>
               <CommandGroup>
@@ -242,18 +243,29 @@ export function CustomerSelect({
                   </CommandItem>
                 ))}
               </CommandGroup>
-              <CommandGroup>
+              <CommandGroup forceMount>
+                {/* forceMount: bleibt auch sichtbar, wenn die Suche keinen
+                    Kunden findet — genau dann will man ja neu anlegen. */}
                 <CommandItem
                   value="__neuer_kunde__"
+                  forceMount
                   onSelect={() => {
                     setPopoverOpen(false);
-                    setCustomerForm(EMPTY_CUSTOMER_FORM);
+                    // Getippten Namen direkt ins Formular übernehmen
+                    const t = suchtext.trim();
+                    const teile = t.split(/\s+/);
+                    setCustomerForm({
+                      ...EMPTY_CUSTOMER_FORM,
+                      vorname: teile.length > 1 ? teile.slice(0, -1).join(" ") : "",
+                      nachname: teile.length > 0 ? teile[teile.length - 1] : "",
+                      firmenname: t,
+                    });
                     setDialogOpen(true);
                   }}
                   className="text-primary"
                 >
                   <Plus className="w-4 h-4 mr-2" />
-                  Neuer Kunde
+                  {suchtext.trim() ? `Neuen Kunden „${suchtext.trim()}" anlegen` : "Neuer Kunde"}
                 </CommandItem>
               </CommandGroup>
             </CommandList>

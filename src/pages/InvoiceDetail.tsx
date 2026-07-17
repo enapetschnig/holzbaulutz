@@ -251,7 +251,7 @@ export default function InvoiceDetail() {
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [templateSearch, setTemplateSearch] = useState("");
   // Picker-Filter: Positionen (Standard) / Materialien / Alle
-  const [templateArtFilter, setTemplateArtFilter] = useState<"position" | "material" | "alle">("position");
+  const [templateArtFilter, setTemplateArtFilter] = useState<"position" | "material" | "arbeitszeit" | "alle">("position");
   const [templateFilter, setTemplateFilter] = useState("alle");
   const [autocompleteIdx, setAutocompleteIdx] = useState<number | null>(null);
   const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
@@ -4958,7 +4958,7 @@ export default function InvoiceDetail() {
               />
               {/* Positionen (kalkulierte Leistungen) vs. Materialien (EK-Liste) */}
               <div className="flex rounded-md border overflow-hidden">
-                {([["position", "Positionen"], ["material", "Materialien"], ["alle", "Alle"]] as const).map(([val, lbl]) => (
+                {([["position", "Positionen"], ["material", "Materialien"], ["arbeitszeit", "Arbeitszeiten"], ["alle", "Alle"]] as const).map(([val, lbl]) => (
                   <button
                     key={val}
                     type="button"
@@ -4985,7 +4985,8 @@ export default function InvoiceDetail() {
                 const filtered = templates.filter(t => {
                   const matchSearch = !s || t.name.toLowerCase().includes(s) || (t.beschreibung && t.beschreibung.toLowerCase().includes(s)) || ((t as any).kurzbezeichnung && (t as any).kurzbezeichnung.toLowerCase().includes(s));
                   const matchFilter = templateFilter === "alle" || t.kategorie === templateFilter;
-                  const tArt = (t as any).art === "material" ? "material" : "position";
+                  const istArbeitszeit = (t as any).art === "material" && (t as any).ist_stundensatz === true;
+                  const tArt = istArbeitszeit ? "arbeitszeit" : ((t as any).art === "material" ? "material" : "position");
                   const matchArt = templateArtFilter === "alle" || tArt === templateArtFilter;
                   return matchSearch && matchFilter && matchArt;
                 });
