@@ -428,6 +428,18 @@ export default function Index() {
           </Card>
           )}
 
+          {/* 4c. Bautagesberichte — jeder Mitarbeiter soll sie sehen */}
+          {canView('bautagesberichte') && (
+          <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/bautagesberichte")}>
+            <CardHeader className="space-y-2 pb-3">
+              <div className="h-12 w-12 rounded-lg bg-orange-500/10 flex items-center justify-center"><FileText className="h-6 w-6 text-orange-600" /></div>
+              <CardTitle className="text-lg sm:text-xl">Bautagesberichte</CardTitle>
+              <CardDescription className="text-sm">Bautagesberichte erfassen & einsehen</CardDescription>
+            </CardHeader>
+            <CardContent><Button className="bg-orange-600 hover:bg-orange-700 w-full" size="sm">Bautagesberichte öffnen</Button></CardContent>
+          </Card>
+          )}
+
           {/* 5. Materialien */}
           {canView('materialien') && (
             <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/materials")}>

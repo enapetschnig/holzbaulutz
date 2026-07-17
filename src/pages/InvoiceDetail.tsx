@@ -1068,8 +1068,30 @@ export default function InvoiceDetail() {
   const mergeItems = (prev: InvoiceItem[], newItems: InvoiceItem[]): InvoiceItem[] => {
     // Check if first row is empty (default state)
     const firstEmpty = prev.length === 1 && !prev[0].beschreibung.trim() && prev[0].einzelpreis === 0;
-    const base = firstEmpty ? [] : prev;
-    return [...base, ...newItems].map((item, idx) => ({ ...item, position: idx + 1 }));
+    const base = firstEmpty ? [] : [...prev];
+    // Gleiche Position schon vorhanden? Dann MENGE addieren statt eine
+    // Doppel-Zeile anzulegen (z.B. 8× "Facharbeiterstunde" aus dem Katalog
+    // → EINE Zeile mit Menge 8). Gleich = selbe Katalog-Verknüpfung bzw.
+    // selber Text + Einheit + Einzelpreis; Abzugs-/gesperrte Zeilen nie.
+    const passtZusammen = (a: InvoiceItem, b: InvoiceItem) =>
+      !a.mwst_exempt && !b.mwst_exempt &&
+      (a.kalkulation_template_id && b.kalkulation_template_id
+        ? a.kalkulation_template_id === b.kalkulation_template_id
+        : (a.kurztext || a.beschreibung || "").trim().toLowerCase() === (b.kurztext || b.beschreibung || "").trim().toLowerCase()
+          && (a.einheit || "") === (b.einheit || "")
+          && Math.abs((Number(a.einzelpreis) || 0) - (Number(b.einzelpreis) || 0)) < 0.005
+          && !!(a.kurztext || a.beschreibung || "").trim());
+    for (const neu of newItems) {
+      const vorhanden = base.find(x => passtZusammen(x, neu));
+      if (vorhanden) {
+        vorhanden.menge = Math.round(((Number(vorhanden.menge) || 0) + (Number(neu.menge) || 0)) * 100) / 100;
+        const r = Number(vorhanden.rabatt_prozent) || 0;
+        vorhanden.gesamtpreis = Math.round(vorhanden.menge * (Number(vorhanden.einzelpreis) || 0) * (1 - r / 100) * 100) / 100;
+      } else {
+        base.push(neu);
+      }
+    }
+    return base.map((item, idx) => ({ ...item, position: idx + 1 }));
   };
 
   const addItem = () => {
@@ -1092,6 +1114,14 @@ export default function InvoiceDetail() {
   // Satz-Art und Menge danach direkt in der Zeile anpassbar.
   const addArbeitszeit = () => {
     const bevorzugt = stundensaetze.find(s => /facharbeiter/i.test(s.name)) || stundensaetze[0];
+    // Gibt es die Stunden-Zeile schon? Dann +1 Stunde statt Doppel-Zeile.
+    const bestehendIdx = bevorzugt
+      ? items.findIndex(it => it.kalkulation_template_id === bevorzugt.id && !it.mwst_exempt)
+      : -1;
+    if (bestehendIdx >= 0) {
+      updateItem(bestehendIdx, "menge", (Number(items[bestehendIdx].menge) || 0) + 1);
+      return;
+    }
     setItems(prev => [...prev, {
       position: prev.length + 1,
       beschreibung: bevorzugt?.name || "Facharbeiterstunde",
@@ -4449,9 +4479,10 @@ export default function InvoiceDetail() {
                       </Button>
                     </>
                   )}
-                  <Button onClick={() => setImportTimeOpen(true)} variant="outline" size="sm" className="gap-1">
+                  <Button onClick={() => setImportTimeOpen(true)} variant="outline" size="sm" className="gap-1"
+                    title="Gebuchte Zeiten aus dem Projekt als Positionen übernehmen">
                     <FileText className="w-4 h-4" />
-                    Arbeitszeiten
+                    Arbeitszeiten importieren
                   </Button>
                   <Button onClick={() => setTemplateDialogOpen(true)} variant="outline" size="sm" className="gap-1">
                     <Package className="w-4 h-4" />
@@ -4467,11 +4498,6 @@ export default function InvoiceDetail() {
                       Preise aktualisieren
                     </Button>
                   )}
-                  <Button onClick={addArbeitszeit} variant="outline" size="sm" className="gap-1"
-                    title="Neue Arbeitszeit-Position (Stunden-Zeile mit Stundensatz aus dem Katalog)">
-                    <Clock3 className="w-4 h-4" />
-                    Arbeitszeit
-                  </Button>
                   <Button onClick={addItem} variant="outline" size="sm" className="gap-1">
                     <Plus className="w-4 h-4" />
                     Position
@@ -4765,6 +4791,11 @@ export default function InvoiceDetail() {
                           <Button onClick={addItem} variant="ghost" size="sm" className="gap-1 text-muted-foreground">
                             <Plus className="w-3.5 h-3.5" />
                             Position hinzufügen
+                          </Button>
+                          <Button onClick={addArbeitszeit} variant="ghost" size="sm" className="gap-1 text-muted-foreground"
+                            title="Stunden-Zeile mit Stundensatz aus dem Katalog anlegen (bei erneutem Klick: +1 Stunde)">
+                            <Clock3 className="w-3.5 h-3.5" />
+                            Arbeitszeit (Stundensatz) hinzufügen
                           </Button>
                         </TableCell>
                       </TableRow>
