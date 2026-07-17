@@ -4443,10 +4443,6 @@ export default function InvoiceDetail() {
                         <FileText className="w-4 h-4" />
                         Aus Angebot
                       </Button>
-                      <Button onClick={() => setImportRegieOpen(true)} variant="outline" size="sm" className="gap-1">
-                        <FileText className="w-4 h-4" />
-                        Aus Regiebericht
-                      </Button>
                     </>
                   )}
                   {/* Projektzeiten gehören in die (Schluss-)Rechnung — beim
@@ -5638,10 +5634,17 @@ export default function InvoiceDetail() {
               gesamtpreis: item.menge * item.einzelpreis,
             }));
             setItems(prev => mergeItems(prev, newItems));
+            // Importierte Regieberichte als verrechnet markieren — verhindert,
+            // dass dieselben Regiestunden ein zweites Mal fakturiert werden.
+            const regieIds = [...new Set(importedItems.map(i => (i as any).disturbanceId).filter(Boolean))] as string[];
+            if (regieIds.length > 0) {
+              supabase.from("disturbances").update({ is_verrechnet: true } as any).in("id", regieIds)
+                .then(({ error }) => { if (error) console.warn("is_verrechnet setzen fehlgeschlagen:", error.message); });
+            }
             setImportTimeOpen(false);
             toast({
-              title: "Arbeitszeiten importiert",
-              description: `${newItems.length} Position${newItems.length === 1 ? "" : "en"} hinzugefügt`,
+              title: "Projektzeiten importiert",
+              description: `${newItems.length} Position${newItems.length === 1 ? "" : "en"} hinzugefügt${regieIds.length > 0 ? ` · ${regieIds.length} Regiebericht${regieIds.length === 1 ? "" : "e"} als verrechnet markiert` : ""}`,
             });
           }}
         />

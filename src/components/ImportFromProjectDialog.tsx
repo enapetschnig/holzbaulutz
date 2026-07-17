@@ -15,8 +15,10 @@ interface ImportItem {
   einheit: string;
   einzelpreis: number;
   selected: boolean;
-  source: "zeit" | "material";
+  source: "zeit" | "material" | "regie";
   detail?: string;
+  /** Regie-Zeilen: zugehöriger Regiebericht (wird beim Import als verrechnet markiert) */
+  disturbanceId?: string;
   /** Gewählte Stundensatz-Art (Facharbeiter/Regie/Lehrling …) für Zeit-Zeilen */
   satzId?: string;
   /** Zeit-Zeilen: die einzelnen Zeitbuchungen dahinter — jede einzeln
@@ -39,7 +41,7 @@ interface ImportFromProjectDialogProps {
   /** Stundensätze aus dem Katalog (Facharbeiter, Regie, Lehrling …) zum
    *  Verrechnen der importierten Zeiten. */
   stundensaetze?: Stundensatz[];
-  onImport: (items: { beschreibung: string; menge: number; einheit: string; einzelpreis: number }[]) => void;
+  onImport: (items: { beschreibung: string; menge: number; einheit: string; einzelpreis: number; disturbanceId?: string }[]) => void;
 }
 
 export function ImportFromProjectDialog({
@@ -88,7 +90,10 @@ export function ImportFromProjectDialog({
       mode === "zeit" ? Promise.resolve([]) : fetchMaterialEntries(localProjectId),
       mode === "material"
         ? Promise.resolve({ data: null })
-        : (supabase as any).from("disturbances").select("stunden, is_verrechnet").eq("project_id", localProjectId),
+        : (supabase as any).from("disturbances")
+            .select("id, datum, kunde_name, stunden, beschreibung, is_verrechnet")
+            .eq("project_id", localProjectId)
+            .order("datum", { ascending: true }),
     ]);
 
     const regieRows = ((regieRes as any)?.data as any[]) || [];
@@ -98,7 +103,26 @@ export function ImportFromProjectDialog({
       unverrechnet: regieRows.filter(d => !d.is_verrechnet).length,
     } : null);
 
-    setItems([...timeItems, ...materialItems]);
+    // Nicht verrechnete Regieberichte als importierbare Zeilen — Stundensatz
+    // "Regiestunde Facharbeiter" ist fest vorausgewählt.
+    const regieSatz = stundensaetze.find(x => /regiestunde/i.test(x.name) && /facharbeiter/i.test(x.name))
+      || stundensaetze.find(x => /regiestunde/i.test(x.name))
+      || null;
+    const regieItems: ImportItem[] = regieRows
+      .filter(d => !d.is_verrechnet && (Number(d.stunden) || 0) > 0)
+      .map(d => ({
+        beschreibung: regieSatz?.name || "Regiestunde Facharbeiter",
+        menge: Math.round((Number(d.stunden) || 0) * 100) / 100,
+        einheit: "Std.",
+        einzelpreis: regieSatz?.satz || 0,
+        selected: true,
+        source: "regie" as const,
+        satzId: regieSatz?.id,
+        disturbanceId: d.id,
+        detail: `Regiebericht vom ${d.datum ? new Date(d.datum).toLocaleDateString("de-AT") : "–"} · ${d.kunde_name || ""} · ${(d.beschreibung || "").slice(0, 60)}`,
+      }));
+
+    setItems([...timeItems, ...regieItems, ...materialItems]);
     setLoading(false);
   };
 
@@ -325,11 +349,13 @@ export function ImportFromProjectDialog({
         menge: m.menge,
         einheit: m.einheit,
         einzelpreis: m.einzelpreis,
+        disturbanceId: m.disturbanceId,
       }));
     onImport(selected);
   };
 
   const zeitItems = items.filter(i => i.source === "zeit");
+  const regieItems = items.filter(i => i.source === "regie");
   const matItems = items.filter(i => i.source === "material");
   const selected = items.filter(i => i.selected);
   const total = selected.reduce((s, i) => s + i.menge * i.einzelpreis, 0);
@@ -367,7 +393,7 @@ export function ImportFromProjectDialog({
           )}
           {/* Stundensatz-Art wählen (Facharbeiter / Regie / Lehrling …) —
               setzt Preis + Bezeichnung passend zum Katalog. */}
-          {item.source === "zeit" && stundensaetze.length > 0 && (
+          {(item.source === "zeit" || item.source === "regie") && stundensaetze.length > 0 && (
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground w-24 shrink-0">Verrechnen als</span>
               <Select
@@ -491,9 +517,10 @@ export function ImportFromProjectDialog({
             verrechnet werden sie über „Aus Regiebericht". */}
         {mode !== "material" && localProjectId && regieInfo && (
           <p className="text-xs text-muted-foreground rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5">
-            ⏱️ Zusätzlich auf diesem Projekt: <b className="text-foreground">{regieInfo.stunden.toLocaleString("de-AT")} Regiestunden</b> aus {regieInfo.anzahl} Regiebericht{regieInfo.anzahl === 1 ? "" : "en"}
-            {regieInfo.unverrechnet > 0 && <> — davon <b className="text-amber-800">{regieInfo.unverrechnet} noch nicht verrechnet</b></>}.
-            Regieleistungen importierst du über den Knopf „Aus Regiebericht".
+            ⏱️ Auf diesem Projekt: <b className="text-foreground">{regieInfo.stunden.toLocaleString("de-AT")} Regiestunden</b> aus {regieInfo.anzahl} Regiebericht{regieInfo.anzahl === 1 ? "" : "en"}
+            {regieInfo.unverrechnet > 0
+              ? <> — die <b className="text-amber-800">{regieInfo.unverrechnet} nicht verrechneten</b> stehen unten zur Auswahl.</>
+              : <> — alle bereits verrechnet.</>}
           </p>
         )}
 
@@ -554,6 +581,20 @@ export function ImportFromProjectDialog({
                   const globalIdx = items.indexOf(item);
                   return renderItem(item, globalIdx);
                 })}
+                {mode === "zeit" && regieItems.length > 0 && (
+                  <>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2">
+                      ⏱ Regiestunden aus Regieberichten
+                    </p>
+                    {regieItems.map((item) => {
+                      const globalIdx = items.indexOf(item);
+                      return renderItem(item, globalIdx);
+                    })}
+                    <p className="text-[11px] text-muted-foreground">
+                      Importierte Regieberichte werden automatisch als „verrechnet" markiert.
+                    </p>
+                  </>
+                )}
               </div>
             )}
 
