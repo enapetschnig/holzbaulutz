@@ -335,12 +335,12 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
     }
   }
 
-  // === UNTERSCHRIFT ===
-  if (yPos > 210) { doc.addPage(); yPos = margin; }
-
-  sectionTitle("Kundenunterschrift");
-
+  // === UNTERSCHRIFT (optional — Abschnitt entfällt ohne Unterschrift) ===
   if (bautagesbericht.unterschrift_kunde) {
+    if (yPos > 210) { doc.addPage(); yPos = margin; }
+
+    sectionTitle("Kundenunterschrift");
+
     try {
       doc.addImage(bautagesbericht.unterschrift_kunde, "PNG", margin + 5, yPos, 55, 22);
       yPos += 26;
@@ -352,12 +352,12 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
       doc.text("[Unterschrift konnte nicht geladen werden]", margin + 5, yPos + 8);
       yPos += 16;
     }
-  }
 
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(7.5);
-  doc.setTextColor(130, 130, 130);
-  doc.text("Der Kunde bestätigt die ordnungsgemäße Durchführung der oben genannten Arbeiten.", margin + 5, yPos);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(130, 130, 130);
+    doc.text("Der Kunde bestätigt die ordnungsgemäße Durchführung der oben genannten Arbeiten.", margin + 5, yPos);
+  }
   yPos += 10;
 
   // === FOOTER (einheitlich mit anderen PDFs) ===
@@ -451,15 +451,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
         { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
 
-    const { bautagesbericht, materials, technicianNames, technicianName, photos }: ReportRequest = await req.json();
+    const body = await req.json();
+    const { bautagesbericht, materials, technicianNames, technicianName, photos }: ReportRequest = body;
+    // pdfOnly: nur PDF erzeugen + ablegen (Bericht + Projektordner), KEINE E-Mail —
+    // für das automatische Speichern beim Erstellen (ohne Unterschrift).
+    const pdfOnly: boolean = body.pdfOnly === true;
 
     // Backward compatibility + fallback
     const technicians = technicianNames?.length ? technicianNames :
                         technicianName ? [technicianName] : ["Techniker"];
 
-    if (!bautagesbericht || !bautagesbericht.unterschrift_kunde) {
+    // Unterschrift ist OPTIONAL — Bautagesberichte werden auch ohne
+    // Kundenunterschrift als PDF erzeugt und abgelegt.
+    if (!bautagesbericht) {
       return new Response(
-        JSON.stringify({ error: "Bautagesbericht data and signature required" }),
+        JSON.stringify({ error: "Bautagesbericht data required" }),
         { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
@@ -554,6 +560,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
     } catch (storageErr) {
       console.error("PDF storage failed:", storageErr);
+    }
+
+    // pdfOnly: fertig — Bericht-PDF ist gespeichert (und ggf. im Projektordner).
+    if (pdfOnly) {
+      return new Response(
+        JSON.stringify({ success: true, pdfStored, projectStored }),
+        { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
     }
 
     // E-Mail-Versand — klare Meldung, wenn Resend (noch) nicht konfiguriert ist.

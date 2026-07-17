@@ -81,6 +81,10 @@ Deno.serve(async (req: Request) => {
 
     // Support new simplified format: { entries: [...], deleteDisturbanceId?: string }
     let mainEntry: TimeEntryData;
+    // bestEffort: einzelne fehlgeschlagene Einträge (z.B. Duplikat, weil der
+    // Zeitblock schon in der Zeiterfassung steht) überspringen statt 500 —
+    // genutzt von der Bautagesbericht-Spiegelung.
+    let bestEffort = false;
     let teamEntries: TimeEntryData[];
     let createWorkerLinks = true;
     let skipMainEntry = false;
@@ -110,6 +114,7 @@ Deno.serve(async (req: Request) => {
       mainEntry = entries[0];
       teamEntries = entries.slice(1);
       createWorkerLinks = false;
+      bestEffort = body.bestEffort === true;
     } else {
       // Original format
       mainEntry = body.mainEntry;
@@ -185,14 +190,18 @@ Deno.serve(async (req: Request) => {
 
       if (mainError) {
         console.error("Error inserting main entry:", mainError);
-        return new Response(
-          JSON.stringify({ success: false, error: `Failed to create main entry: ${mainError.message}` }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        if (!bestEffort) {
+          return new Response(
+            JSON.stringify({ success: false, error: `Failed to create main entry: ${mainError.message}` }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        // bestEffort: überspringen (z.B. Zeitblock existiert schon) und
+        // mit den übrigen Einträgen weitermachen.
+      } else {
+        mainEntryResult = mainResult;
+        totalCreated = 1;
       }
-
-      mainEntryResult = mainResult;
-      totalCreated = 1;
     }
 
     const teamEntryIds: string[] = [];

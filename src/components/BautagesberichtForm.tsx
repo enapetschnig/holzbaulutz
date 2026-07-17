@@ -219,6 +219,34 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
    * ("Bautagesbericht-Zuordnung: <id>") identifiziert und beim
    * Aktualisieren zunächst (best effort, RLS-beschränkt) entfernt.
    */
+  // PDF sofort erzeugen und ablegen (Bericht + Projektordner) — OHNE
+  // Unterschrift und OHNE E-Mail. Fehler sind nicht fatal (Bericht ist da).
+  const erzeugePdf = async (bericht: any, userId: string) => {
+    try {
+      const ids = [userId, ...selectedEmployees];
+      const { data: profs } = await supabase.from("profiles").select("id, vorname, nachname").in("id", ids);
+      const nameVon = (id: string) => {
+        const p = (profs || []).find((x: any) => x.id === id);
+        return p ? `${p.vorname} ${p.nachname}`.trim() : "";
+      };
+      const technicianNames = ids.map(nameVon).filter(Boolean);
+      const { error } = await supabase.functions.invoke("send-bautagesbericht-report", {
+        body: {
+          bautagesbericht: bericht,
+          materials: materials.filter(m => m.material.trim()).map(m => ({
+            material: m.material.trim(), menge: m.menge?.trim?.() || m.menge || null, einheit: m.einheit || "Stk.",
+          })),
+          technicianNames,
+          photos: [],
+          pdfOnly: true,
+        },
+      });
+      if (error) console.warn("Bautagesbericht-PDF konnte nicht erzeugt werden:", error.message);
+    } catch (e: any) {
+      console.warn("Bautagesbericht-PDF konnte nicht erzeugt werden:", e?.message);
+    }
+  };
+
   const buildTimeEntries = (bautagesberichtId: string, userId: string, stunden: number) => {
     const allWorkerIds = [userId, ...selectedEmployees];
     return allWorkerIds.map(workerId => ({
@@ -241,6 +269,12 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Ende muss nach dem Start liegen — sonst scheitert später die
+    // Zeiten-Spiegelung an der DB (check_time_order) mit kryptischem Fehler.
+    if (formData.startTime && formData.endTime && formData.endTime <= formData.startTime) {
+      toast({ variant: "destructive", title: "Zeiten prüfen", description: "Die Endzeit muss nach der Startzeit liegen." });
+      return;
+    }
     setSaving(true);
 
     const { data: { user } } = await supabase.auth.getUser();
@@ -321,19 +355,21 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
         body: {
           entries: timeEntries,
           deleteByNotizen: `Bautagesbericht-Zuordnung: ${editData.id}`,
+          bestEffort: true,
         },
       });
       if (syncError || (syncData as any)?.success === false) {
+        // Nicht fatal: der Bericht IST gespeichert — nur die gespiegelten
+        // Zeiten fehlen (z.B. weil der Zeitblock schon erfasst war).
         toast({
-          variant: "destructive",
-          title: "Zeiten nicht vollständig gespeichert",
-          description: (syncData as any)?.error || syncError?.message || "Die gespiegelten Zeiteinträge konnten nicht aktualisiert werden.",
+          title: "Bericht gespeichert — Hinweis zu den Zeiten",
+          description: (syncData as any)?.error || "Die Zeiten konnten nicht (vollständig) gespiegelt werden — ggf. sind sie bereits in der Zeiterfassung erfasst.",
         });
-        setSaving(false);
-        return;
+      } else {
+        toast({ title: "Erfolg", description: "Bautagesbericht wurde aktualisiert" });
       }
-
-      toast({ title: "Erfolg", description: "Bautagesbericht wurde aktualisiert" });
+      // PDF mit dem neuen Stand ablegen
+      await erzeugePdf({ ...berichtData, id: editData.id }, user.id);
     } else {
       // Create new bautagesbericht
       const { data: newBericht, error } = await (supabase as any)
@@ -382,29 +418,26 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
       // Nutzt Edge Function (Service Role) damit auch für andere User inserted werden kann
       const timeEntries = buildTimeEntries(newBericht.id, user.id, stunden);
       const { data: syncData, error: syncError } = await supabase.functions.invoke("create-team-time-entries", {
-        body: { entries: timeEntries },
+        body: { entries: timeEntries, bestEffort: true },
       });
       if (syncError || (syncData as any)?.success === false) {
-        // Bericht ist angelegt, aber die Zeiten fehlen (z.B. inaktiver
-        // Mitarbeiter) — nicht stillschweigend Erfolg melden.
+        // Nicht fatal: der Bericht IST angelegt — nur die gespiegelten
+        // Zeiten fehlen (z.B. Zeitblock bereits in der Zeiterfassung).
         toast({
-          variant: "destructive",
-          title: "Bericht erstellt, Zeiten fehlen",
-          description: (syncData as any)?.error || syncError?.message || "Die gespiegelten Zeiteinträge konnten nicht angelegt werden.",
+          title: "Bericht erstellt — Hinweis zu den Zeiten",
+          description: (syncData as any)?.error || "Die Zeiten konnten nicht (vollständig) gespiegelt werden — ggf. sind sie bereits in der Zeiterfassung erfasst.",
         });
-        setSaving(false);
-        onOpenChange(false);
-        navigate(`/bautagesberichte/${newBericht.id}?openSignature=true`);
-        return;
+      } else {
+        toast({ title: "Erfolg", description: "Bautagesbericht wurde erfasst" });
       }
 
-      toast({ title: "Erfolg", description: "Bautagesbericht wurde erfasst" });
+      // PDF erzeugen + im Bericht/Projektordner ablegen — ohne Unterschrift.
+      await erzeugePdf({ ...berichtData, id: newBericht.id }, user.id);
 
       setSaving(false);
       onOpenChange(false);
-
-      // Navigate to detail page with signature dialog open
-      navigate(`/bautagesberichte/${newBericht.id}?openSignature=true`);
+      // Keine Unterschrift nötig — direkt zur Detailansicht.
+      navigate(`/bautagesberichte/${newBericht.id}`);
       return;
     }
 
