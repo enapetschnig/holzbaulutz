@@ -173,6 +173,9 @@ export function StundenlohnAnpassenDialog({ open, onClose, items, onApply }: Pro
           Ändert die Stundensätze <b>nur in diesem Angebot/dieser Rechnung</b> — überall dort,
           wo der jeweilige Satz verwendet wird (Stunden-Zeilen, Kalkulationen, Lohnanteile in
           Katalog-Positionen). Der Katalog selbst bleibt unverändert.
+          <br />
+          <b>Wichtig:</b> Zuerst alle Positionen/Kalkulationen ins Dokument einfügen, dann den
+          Stundenlohn anpassen — später eingefügte Positionen kommen mit dem normalen Katalog-Satz.
         </p>
 
         {gruppen.length === 0 ? (

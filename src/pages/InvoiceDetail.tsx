@@ -4449,11 +4449,15 @@ export default function InvoiceDetail() {
                       </Button>
                     </>
                   )}
-                  <Button onClick={() => setImportTimeOpen(true)} variant="outline" size="sm" className="gap-1"
-                    title="Gebuchte Zeiten aus dem Projekt als Positionen übernehmen">
-                    <FileText className="w-4 h-4" />
-                    Arbeitszeiten importieren
-                  </Button>
+                  {/* Projektzeiten gehören in die (Schluss-)Rechnung — beim
+                      Angebot gibt es noch keine gebuchten Zeiten. */}
+                  {["rechnung", "schlussrechnung"].includes(form.typ) && (
+                    <Button onClick={() => setImportTimeOpen(true)} variant="outline" size="sm" className="gap-1"
+                      title="Gebuchte Zeiten aus dem Projekt als Positionen übernehmen">
+                      <FileText className="w-4 h-4" />
+                      Projektzeiten importieren
+                    </Button>
+                  )}
                   <Button onClick={() => setTemplateDialogOpen(true)} variant="outline" size="sm" className="gap-1">
                     <Package className="w-4 h-4" />
                     Aus Katalog

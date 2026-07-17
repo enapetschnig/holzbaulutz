@@ -423,7 +423,7 @@ export function ImportFromProjectDialog({
   );
 
   const title = mode === "zeit"
-    ? "Arbeitszeiten aus Projekt importieren"
+    ? "Projektzeiten importieren"
     : mode === "material"
       ? "Material aus Projekt importieren"
       : "Aus Projekt importieren";
