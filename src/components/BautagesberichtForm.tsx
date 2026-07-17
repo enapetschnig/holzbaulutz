@@ -578,7 +578,10 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
 
           {/* Projekt-Zuordnung */}
           <div className="space-y-2">
-            <Label>Projekt (optional)</Label>
+            <p className="text-xs rounded-md border border-blue-200 bg-blue-50 text-blue-900 px-2 py-1.5">
+              💡 Bitte zuerst das <b>Projekt auswählen</b> — der Kunde wird dann automatisch übernommen.
+            </p>
+            <Label>Projekt</Label>
             <Select value={selectedProjectId || "none"} onValueChange={async (v) => {
               const projId = v === "none" ? null : v;
               setSelectedProjectId(projId);

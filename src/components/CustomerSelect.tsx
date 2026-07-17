@@ -209,6 +209,31 @@ export function CustomerSelect({
             <CommandInput placeholder="Kunde suchen..." value={suchtext} onValueChange={setSuchtext} />
             <CommandList>
               <CommandEmpty>Kein Kunde gefunden</CommandEmpty>
+              {/* "Neuer Kunde" IMMER ganz oben — sichtbar ohne Scrollen und
+                  auch dann, wenn die Suche nichts findet (forceMount). */}
+              <CommandGroup forceMount>
+                <CommandItem
+                  value="__neuer_kunde__"
+                  forceMount
+                  onSelect={() => {
+                    setPopoverOpen(false);
+                    // Getippten Namen direkt ins Formular übernehmen
+                    const t = suchtext.trim();
+                    const teile = t.split(/\s+/);
+                    setCustomerForm({
+                      ...EMPTY_CUSTOMER_FORM,
+                      vorname: teile.length > 1 ? teile.slice(0, -1).join(" ") : "",
+                      nachname: teile.length > 0 ? teile[teile.length - 1] : "",
+                      firmenname: t,
+                    });
+                    setDialogOpen(true);
+                  }}
+                  className="text-primary font-medium"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  {suchtext.trim() ? `Neuen Kunden „${suchtext.trim()}" anlegen` : "+ Neuen Kunden anlegen"}
+                </CommandItem>
+              </CommandGroup>
               <CommandGroup>
                 {!required && (
                   <CommandItem
@@ -243,31 +268,7 @@ export function CustomerSelect({
                   </CommandItem>
                 ))}
               </CommandGroup>
-              <CommandGroup forceMount>
-                {/* forceMount: bleibt auch sichtbar, wenn die Suche keinen
-                    Kunden findet — genau dann will man ja neu anlegen. */}
-                <CommandItem
-                  value="__neuer_kunde__"
-                  forceMount
-                  onSelect={() => {
-                    setPopoverOpen(false);
-                    // Getippten Namen direkt ins Formular übernehmen
-                    const t = suchtext.trim();
-                    const teile = t.split(/\s+/);
-                    setCustomerForm({
-                      ...EMPTY_CUSTOMER_FORM,
-                      vorname: teile.length > 1 ? teile.slice(0, -1).join(" ") : "",
-                      nachname: teile.length > 0 ? teile[teile.length - 1] : "",
-                      firmenname: t,
-                    });
-                    setDialogOpen(true);
-                  }}
-                  className="text-primary"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  {suchtext.trim() ? `Neuen Kunden „${suchtext.trim()}" anlegen` : "Neuer Kunde"}
-                </CommandItem>
-              </CommandGroup>
+
             </CommandList>
           </Command>
         </PopoverContent>
