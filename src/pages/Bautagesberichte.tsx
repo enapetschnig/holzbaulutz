@@ -37,7 +37,9 @@ type Bautagesbericht = {
 
 const Bautagesberichte = () => {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Projekt-Link vom Projektordner: /bautagesberichte?project=<id> → Liste filtern
+  const projectFilter = searchParams.get("project");
   const { toast } = useToast();
   const [berichte, setBerichte] = useState<Bautagesbericht[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,10 +81,12 @@ const Bautagesberichte = () => {
   const fetchBerichte = async () => {
     setLoading(true);
 
-    const { data, error } = await (supabase as any)
+    let query = (supabase as any)
       .from("bautagesberichte")
       .select("*")
       .order("datum", { ascending: false });
+    if (projectFilter) query = query.eq("project_id", projectFilter);
+    const { data, error } = await query;
 
     if (error) {
       toast({
@@ -127,6 +131,8 @@ const Bautagesberichte = () => {
       return <Badge className="bg-emerald-600 text-white">Verrechnet</Badge>;
     }
     switch (status) {
+      case "erstellt":
+        return <Badge variant="secondary">Erstellt</Badge>;
       case "offen":
         return <Badge variant="secondary">Offen</Badge>;
       case "gesendet":

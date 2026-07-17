@@ -374,7 +374,7 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
       // Create new bautagesbericht
       const { data: newBericht, error } = await (supabase as any)
         .from("bautagesberichte")
-        .insert(berichtData)
+        .insert({ ...berichtData, status: "erstellt" })
         .select()
         .single();
 

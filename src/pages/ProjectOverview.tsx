@@ -60,6 +60,10 @@ const ProjectOverview = () => {
   // den Projektstunden aus der Zeiterfassung.
   const [regieStunden, setRegieStunden] = useState(0);
   const [regiePdfs, setRegiePdfs] = useState<{id: string; datum: string; kunde_name: string; pdf_path: string}[]>([]);
+  // Bautagesberichte des Projekts: Anzahl + Stunden + erzeugte PDFs
+  const [btbCount, setBtbCount] = useState(0);
+  const [btbStunden, setBtbStunden] = useState(0);
+  const [btbPdfs, setBtbPdfs] = useState<{id: string; datum: string; kunde_name: string; pdf_path: string}[]>([]);
   const [purchaseInvoices, setPurchaseInvoices] = useState<{id: string; lieferant: string; rechnungsdatum: string | null; betrag_brutto: number; status: string; kategorie: string | null}[]>([]);
   const [projectData, setProjectData] = useState<any>(null);
   const [projectHours, setProjectHours] = useState<{user_id: string, name: string, total: number}[]>([]);
@@ -385,6 +389,18 @@ const ProjectOverview = () => {
       .not("pdf_path", "is", null)
       .order("datum", { ascending: false })
       .then(({ data: pdfData }: any) => setRegiePdfs(pdfData || []));
+
+    // Fetch Bautagesberichte (Anzahl + Stunden + PDFs) for this project
+    (supabase.from("bautagesberichte" as never) as any)
+      .select("id, datum, kunde_name, stunden, pdf_path")
+      .eq("project_id", projectId)
+      .order("datum", { ascending: false })
+      .then(({ data }: any) => {
+        const rows = (data as any[]) || [];
+        setBtbCount(rows.length);
+        setBtbStunden(Math.round(rows.reduce((s: number, b: any) => s + (Number(b.stunden) || 0), 0) * 10) / 10);
+        setBtbPdfs(rows.filter((b: any) => b.pdf_path));
+      });
 
     // Fetch Eingangsrechnungen for this project
     supabase.from("purchase_invoices")
@@ -823,6 +839,47 @@ const ProjectOverview = () => {
                       className="flex items-center gap-2 text-sm w-full text-left hover:bg-muted rounded px-2 py-1.5 transition-colors"
                       onClick={async () => {
                         const { data } = await supabase.storage.from("regiebericht-pdfs").createSignedUrl(pdf.pdf_path, 300);
+                        if (data?.signedUrl) window.open(data.signedUrl, "_blank");
+                      }}
+                    >
+                      <FileText className="h-4 w-4 text-red-500 shrink-0" />
+                      <span className="truncate">{pdf.kunde_name} - {new Date(pdf.datum).toLocaleDateString("de-AT")}</span>
+                    </button>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Bautagesberichte */}
+          <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/bautagesberichte?project=${projectId}`)}>
+            <CardContent className="flex items-center gap-3 p-4">
+              <FileText className="h-5 w-5 text-orange-600" />
+              <div className="flex-1">
+                <p className="font-medium">Bautagesberichte</p>
+                <p className="text-xs text-muted-foreground">
+                  {btbCount} Bericht{btbCount === 1 ? "" : "e"}
+                  {btbStunden > 0 && <> · <b className="text-foreground">{btbStunden.toLocaleString("de-AT")} Stunden</b></>}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Bautagesbericht-PDFs */}
+          {btbPdfs.length > 0 && (
+            <Card>
+              <CardContent className="p-4 space-y-2">
+                <p className="font-medium text-sm flex items-center gap-2">
+                  <Download className="h-4 w-4 text-orange-600" />
+                  Bautagesbericht-PDFs
+                </p>
+                <div className="space-y-1">
+                  {btbPdfs.map(pdf => (
+                    <button
+                      key={pdf.id}
+                      className="flex items-center gap-2 text-sm w-full text-left hover:bg-muted rounded px-2 py-1.5 transition-colors"
+                      onClick={async () => {
+                        const { data } = await supabase.storage.from("bautagesbericht-pdfs").createSignedUrl(pdf.pdf_path, 300);
                         if (data?.signedUrl) window.open(data.signedUrl, "_blank");
                       }}
                     >

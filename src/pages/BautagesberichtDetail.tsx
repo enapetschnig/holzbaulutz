@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ClipboardList, Clock, User, Mail, Phone, MapPin, Edit, Trash2, Package, ArrowLeft, PenLine, Users, FileDown } from "lucide-react";
+import { ClipboardList, Clock, User, Mail, Phone, MapPin, Edit, Trash2, Package, ArrowLeft, Users, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,6 @@ import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { BautagesberichtForm } from "@/components/BautagesberichtForm";
 import { BautagesberichtPhotos } from "@/components/BautagesberichtPhotos";
-import { BautagesberichtSignatureDialog } from "@/components/BautagesberichtSignatureDialog";
 
 type Bautagesbericht = {
   id: string;
@@ -66,10 +65,8 @@ const BautagesberichtDetail = () => {
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
-  const [showSignatureDialog, setShowSignatureDialog] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [autoOpenSignatureHandled, setAutoOpenSignatureHandled] = useState(false);
 
   useEffect(() => {
     checkAuthAndFetch();
@@ -162,17 +159,6 @@ const BautagesberichtDetail = () => {
 
       setMaterials((materialsData || []) as Material[]);
 
-      // Auto-open signature dialog if requested via URL parameter
-      if (searchParams.get('openSignature') === 'true' && !autoOpenSignatureHandled) {
-        setAutoOpenSignatureHandled(true);
-        // Remove the parameter from URL
-        searchParams.delete('openSignature');
-        setSearchParams(searchParams, { replace: true });
-        // Open signature dialog if status is "offen"
-        if (data.status === 'offen') {
-          setShowSignatureDialog(true);
-        }
-      }
     }
     setLoading(false);
   };
@@ -209,11 +195,6 @@ const BautagesberichtDetail = () => {
     fetchBericht();
   };
 
-  const handleSignatureSuccess = () => {
-    setShowSignatureDialog(false);
-    fetchBericht();
-  };
-
   const handleDownloadPdf = async () => {
     if (!bericht?.pdf_path) return;
 
@@ -237,6 +218,8 @@ const BautagesberichtDetail = () => {
       return <Badge className="bg-emerald-600 text-white text-base px-3 py-1">Verrechnet</Badge>;
     }
     switch (status) {
+      case "erstellt":
+        return <Badge variant="secondary">Erstellt</Badge>;
       case "offen":
         return <Badge variant="secondary" className="text-base px-3 py-1">Offen</Badge>;
       case "gesendet":
@@ -340,12 +323,6 @@ const BautagesberichtDetail = () => {
                 onClick={handleToggleVerrechnet}
               >
                 {bericht.is_verrechnet ? "✓ Verrechnet" : "Als verrechnet markieren"}
-              </Button>
-            )}
-            {canEdit && bericht.status === "offen" && (
-              <Button onClick={() => setShowSignatureDialog(true)} className="gap-1">
-                <PenLine className="h-4 w-4" />
-                Zur Unterschrift
               </Button>
             )}
             {canEdit && (
@@ -570,13 +547,6 @@ const BautagesberichtDetail = () => {
         editData={bericht}
       />
 
-      {/* Signature Dialog */}
-      <BautagesberichtSignatureDialog
-        open={showSignatureDialog}
-        onOpenChange={setShowSignatureDialog}
-        bautagesbericht={bericht}
-        onSuccess={handleSignatureSuccess}
-      />
     </div>
   );
 };
