@@ -9,23 +9,30 @@ import { supabase } from "@/integrations/supabase/client";
  * Soll wird doppelt gezählt.
  */
 async function collectChainIds(invoiceId: string): Promise<string[]> {
-  // Zur Wurzel hoch (max. 6 Hops als Safety-Net gegen Datenfehler)
+  // Zur Wurzel hoch — sowohl entlang parent_invoice_id (Umwandeln-Kette)
+  // als auch entlang vorgaenger_id (Preis-REVISIONEN: AN…-R2 hängt über
+  // vorgaenger_id am Original; ohne diesen Pfad würde der Bedarf des
+  // Originals nie gefunden und nach einer Revision doppelt gezählt).
   let root = invoiceId;
   let cursor: string | null = invoiceId;
-  for (let i = 0; i < 6 && cursor; i++) {
+  for (let i = 0; i < 8 && cursor; i++) {
     const { data } = await supabase
-      .from("invoices").select("id, parent_invoice_id").eq("id", cursor).maybeSingle();
+      .from("invoices").select("id, parent_invoice_id, vorgaenger_id").eq("id", cursor).maybeSingle();
     if (!data) break;
     root = (data as any).id;
-    cursor = (data as any).parent_invoice_id || null;
+    cursor = (data as any).parent_invoice_id || (data as any).vorgaenger_id || null;
   }
-  // Von der Wurzel alle Nachfahren einsammeln (breitensuche, bounded)
+  // Von der Wurzel alle Nachfahren einsammeln (Breitensuche über BEIDE
+  // Verknüpfungen, bounded)
   const ids = new Set<string>([root]);
   let frontier = [root];
-  for (let depth = 0; depth < 6 && frontier.length > 0; depth++) {
-    const { data } = await supabase
-      .from("invoices").select("id").in("parent_invoice_id", frontier);
-    const next = ((data as any[]) || []).map(r => r.id).filter((id: string) => !ids.has(id));
+  for (let depth = 0; depth < 8 && frontier.length > 0; depth++) {
+    const [kinder, revisionen] = await Promise.all([
+      supabase.from("invoices").select("id").in("parent_invoice_id", frontier),
+      (supabase as any).from("invoices").select("id").in("vorgaenger_id", frontier),
+    ]);
+    const next = [...(((kinder as any).data as any[]) || []), ...(((revisionen as any).data as any[]) || [])]
+      .map(r => r.id).filter((id: string) => !ids.has(id));
     next.forEach((id: string) => ids.add(id));
     frontier = next;
   }

@@ -67,6 +67,9 @@ const ProjectOverview = () => {
   const [purchaseInvoices, setPurchaseInvoices] = useState<{id: string; lieferant: string; rechnungsdatum: string | null; betrag_brutto: number; status: string; kategorie: string | null}[]>([]);
   const [projectData, setProjectData] = useState<any>(null);
   const [projectHours, setProjectHours] = useState<{user_id: string, name: string, total: number}[]>([]);
+  // Gebuchte Stunden GESAMT (inkl. hidden User) — die sichtbare Personenliste
+  // filtert hidden, die Abgleich-Zahl darf aber keine Stunden unterschlagen.
+  const [gebuchtGesamt, setGebuchtGesamt] = useState(0);
   const [angebotPositionen, setAngebotPositionen] = useState<{position: number; beschreibung: string; menge: number; einheit: string; stunden?: number; stundenQuelle?: "stunden" | "kalkulation"}[]>([]);
   // Stundenabgleich: im Angebot kalkulierte Lohnstunden (Σ arbeitszeit_minuten × Menge)
   const [angeboteneStunden, setAngeboteneStunden] = useState<number | null>(null);
@@ -188,6 +191,7 @@ const ProjectOverview = () => {
         entries.forEach((e: any) => { grouped[e.user_id] = (grouped[e.user_id] || 0) + Number(e.stunden); });
 
         const userIds = Object.keys(grouped);
+        setGebuchtGesamt(Math.round(Object.values(grouped).reduce((s: number, v: any) => s + Number(v), 0) * 10) / 10);
         if (userIds.length > 0) {
           const { data: profiles } = await (supabase.from("profiles" as never) as any)
             .select("id, vorname, nachname, hidden").in("id", userIds);
@@ -628,7 +632,7 @@ const ProjectOverview = () => {
                   Angebot (Σ kalkulierte Lohnminuten × Menge je Position) —
                   drei große Zahlen + Ampel-Fortschrittsbalken. */}
               {(() => {
-                const gebucht = projectHours.reduce((s, h) => s + h.total, 0);
+                const gebucht = gebuchtGesamt;
                 if (angeboteneStunden === null || angeboteneStunden <= 0) {
                   return (
                     <p className="mb-4 text-sm text-muted-foreground rounded-md border border-dashed px-3 py-2.5">

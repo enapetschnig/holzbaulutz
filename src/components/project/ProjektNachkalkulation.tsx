@@ -54,13 +54,18 @@ export function ProjektNachkalkulation({ projectId }: Props) {
       if (cancelled) return;
 
       // --- Erlöse (netto) ---
-      const rechnungen = ((invRes.data as any[]) || []).filter(i => RECHNUNG_TYPEN.has(i.typ) && i.status !== "storniert");
+      const alleBelege = ((invRes.data as any[]) || []).filter(i => i.status !== "storniert");
+      const rechnungen = alleBelege.filter(i => RECHNUNG_TYPEN.has(i.typ));
       const hatSR = rechnungen.some(i => i.typ === "schlussrechnung");
       // Wenn es eine Schlussrechnung gibt, deckt sie die Gesamtleistung ab —
       // Anzahlungsrechnungen NICHT zusätzlich zählen (sonst doppelt).
+      // Gutschriften mindern den Erlös.
+      const gutschriften = alleBelege
+        .filter(i => i.typ === "gutschrift")
+        .reduce((s, i) => s + (Number(i.netto_summe) || 0), 0);
       const erloes = rechnungen
         .filter(i => (hatSR ? i.typ !== "anzahlungsrechnung" : true))
-        .reduce((s, i) => s + (Number(i.netto_summe) || 0), 0);
+        .reduce((s, i) => s + (Number(i.netto_summe) || 0), 0) - gutschriften;
 
       // --- Lohnkosten (Ist) ---
       const faktor = Number(factRes.data?.value) || 1.8;

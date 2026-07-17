@@ -80,7 +80,9 @@ const einheitCode = (e?: string) => EINHEIT_CODE[String(e || "").trim().toLowerC
  */
 export function erzeugeEbInterfaceXml(d: ERechnungDaten): { xml: string; hinweise: string[] } {
   const hinweise: string[] = [];
-  const ust = Number(d.ust_satz) || 20;
+  // 0 % (steuerfrei / Reverse Charge) ist ein gültiger Satz — nur bei
+  // fehlendem/ungültigem Wert auf 20 % zurückfallen.
+  const ust = Number.isFinite(Number(d.ust_satz)) ? Number(d.ust_satz) : 20;
 
   // Normale Zeilen vs. Anzahlungs-Abzüge (mwst_exempt, negativ)
   const normale = d.zeilen.filter(z => !z.mwst_exempt);

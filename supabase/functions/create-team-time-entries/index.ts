@@ -85,6 +85,8 @@ Deno.serve(async (req: Request) => {
     // Zeitblock schon in der Zeiterfassung steht) überspringen statt 500 —
     // genutzt von der Bautagesbericht-Spiegelung.
     let bestEffort = false;
+    let pendingDeleteDisturbanceId: string | undefined;
+    let pendingDeleteByNotizen: string | undefined;
     let teamEntries: TimeEntryData[];
     let createWorkerLinks = true;
     let skipMainEntry = false;
@@ -99,16 +101,11 @@ Deno.serve(async (req: Request) => {
       // der Einträge von Kollegen und jede Bearbeitung dupliziert deren Stunden.
       const deleteByNotizen = body.deleteByNotizen as string | undefined;
 
-      // Create admin client early for delete
-      const supabaseAdminEarly = createClient(supabaseUrl, supabaseServiceKey);
-
-      // Delete old entries for this disturbance if updating
-      if (deleteDisturbanceId) {
-        await supabaseAdminEarly.from("time_entries").delete().eq("disturbance_id", deleteDisturbanceId);
-      }
-      if (deleteByNotizen) {
-        await supabaseAdminEarly.from("time_entries").delete().eq("notizen", deleteByNotizen);
-      }
+      // WICHTIG: Das Löschen der alten gespiegelten Einträge passiert erst
+      // NACH der Validierung (unten) — sonst sind bei einem Validierungs-
+      // fehler die alten Stunden weg, ohne dass neue angelegt wurden.
+      pendingDeleteDisturbanceId = deleteDisturbanceId;
+      pendingDeleteByNotizen = deleteByNotizen;
 
       // First entry is main, rest are team
       mainEntry = entries[0];
@@ -123,16 +120,22 @@ Deno.serve(async (req: Request) => {
       skipMainEntry = body.skipMainEntry ?? false;
     }
 
-    // Validate that the main entry belongs to the authenticated user
-    if (mainEntry.user_id !== userId) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Main entry must belong to authenticated user" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
     // Create admin client with service role key to bypass RLS
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Validate that the main entry belongs to the authenticated user —
+    // AUSNAHME: Administratoren dürfen (z.B. beim Bearbeiten fremder
+    // Bautagesberichte) Einträge für den ursprünglichen Ersteller pflegen.
+    if (mainEntry.user_id !== userId) {
+      const { data: roleRow } = await supabaseAdmin
+        .from("user_roles").select("role").eq("user_id", userId).maybeSingle();
+      if (roleRow?.role !== "administrator") {
+        return new Response(
+          JSON.stringify({ success: false, error: "Main entry must belong to authenticated user" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
 
     // Validate team members exist and are active
     if (teamEntries.length > 0) {
@@ -159,6 +162,15 @@ Deno.serve(async (req: Request) => {
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+    }
+
+    // Jetzt (nach erfolgreicher Validierung) die alten gespiegelten Einträge
+    // entfernen — unmittelbar vor dem Neu-Anlegen.
+    if (pendingDeleteDisturbanceId) {
+      await supabaseAdmin.from("time_entries").delete().eq("disturbance_id", pendingDeleteDisturbanceId);
+    }
+    if (pendingDeleteByNotizen) {
+      await supabaseAdmin.from("time_entries").delete().eq("notizen", pendingDeleteByNotizen);
     }
 
     let mainEntryResult: { id: string } | null = null;

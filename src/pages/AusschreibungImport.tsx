@@ -30,6 +30,9 @@ export default function AusschreibungImport() {
         toast({ variant: "destructive", title: "Keine Positionen gefunden", description: "Die Datei enthält keine Positionen mit Mengenangabe." });
         return;
       }
+      // Eindeutige Schlüssel je Position — LV-Nummern können (v.a. in
+      // GAEB-Dateien) doppelt vorkommen, Auswahl/Keys hängen deshalb am Index.
+      geparst.positionen = geparst.positionen.map((p, i) => ({ ...p, nr: p.nr || `pos-${i + 1}`, _key: `${i}` } as any));
       setLv(geparst);
       setDateiname(file.name);
       setAbgewaehlt(new Set());
@@ -50,7 +53,7 @@ export default function AusschreibungImport() {
     });
   };
 
-  const gewaehlte = (lv?.positionen || []).filter(p => !abgewaehlt.has(p.nr));
+  const gewaehlte = (lv?.positionen || []).filter(p => !abgewaehlt.has((p as any)._key));
 
   const alsAngebot = () => {
     if (!lv || gewaehlte.length === 0) return;
@@ -136,8 +139,8 @@ export default function AusschreibungImport() {
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">{g.titel}</p>
                   <div className="rounded-md border divide-y">
                     {g.positionen.map(p => (
-                      <label key={p.nr} className={`flex items-start gap-3 p-2.5 cursor-pointer hover:bg-muted/40 ${abgewaehlt.has(p.nr) ? "opacity-50" : ""}`}>
-                        <Checkbox className="mt-0.5" checked={!abgewaehlt.has(p.nr)} onCheckedChange={() => toggle(p.nr)} />
+                      <label key={(p as any)._key} className={`flex items-start gap-3 p-2.5 cursor-pointer hover:bg-muted/40 ${abgewaehlt.has((p as any)._key) ? "opacity-50" : ""}`}>
+                        <Checkbox className="mt-0.5" checked={!abgewaehlt.has((p as any)._key)} onCheckedChange={() => toggle((p as any)._key)} />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium">
                             <span className="font-mono text-xs text-muted-foreground mr-2">{p.nr}</span>

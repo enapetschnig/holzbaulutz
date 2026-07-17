@@ -552,6 +552,7 @@ export default function Invoices() {
           const visibleInvoices = invoices.filter(i =>
             (filterTyp === "rechnung" ? INVOICE_LIKE_TYPES.has(i.typ) : ANGEBOT_LIKE_TYPES.has(i.typ)) &&
             i.status !== "storniert" &&
+            (!projectFilter || i.project_id === projectFilter) &&
             (showArchive || !i.archiviert));
           const count = visibleInvoices.length;
           const openBrutto = visibleInvoices.filter(i => PAYABLE_INVOICE_TYPES.has(i.typ) && (i.status === "offen" || i.status === "teilbezahlt")).reduce((s, i) => s + (Number(i.brutto_summe) - Number(i.bezahlt_betrag || 0)), 0);

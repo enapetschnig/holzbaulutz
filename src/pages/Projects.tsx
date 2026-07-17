@@ -75,11 +75,12 @@ const Projects = () => {
     let cancelled = false;
     (async () => {
       const ids = projects.map(p => p.id);
-      const [invRes, teRes, matRes, purRes, factRes] = await Promise.all([
+      const [invRes, teRes, matRes, purRes, allocRes, factRes] = await Promise.all([
         supabase.from("invoices").select("project_id, typ, status, netto_summe").in("project_id", ids),
         supabase.from("time_entries").select("project_id, user_id, stunden, taetigkeit").in("project_id", ids),
         (supabase as any).from("material_entries").select("project_id, typ, menge, einzelpreis").in("project_id", ids),
-        supabase.from("purchase_invoices").select("project_id, betrag_netto, betrag_brutto").in("project_id", ids),
+        supabase.from("purchase_invoices").select("id, project_id, betrag_netto, betrag_brutto").in("project_id", ids),
+        (supabase as any).from("purchase_invoice_allocations").select("purchase_invoice_id, project_id, betrag_netto").in("project_id", ids),
         supabase.from("app_settings").select("value").eq("key", "lohnnebenkosten_faktor").maybeSingle(),
       ]);
       if (cancelled) return;
@@ -96,9 +97,12 @@ const Projects = () => {
       if (cancelled) return;
       const out: Record<string, { db: number; prozent: number | null }> = {};
       for (const pid of ids) {
-        const invs = ((invRes.data as any[]) || []).filter(i => i.project_id === pid && RTYP.has(i.typ) && i.status !== "storniert");
+        const belege = ((invRes.data as any[]) || []).filter(i => i.project_id === pid && i.status !== "storniert");
+        const invs = belege.filter(i => RTYP.has(i.typ));
         const hatSR = invs.some(i => i.typ === "schlussrechnung");
-        const erloes = invs.filter(i => (hatSR ? i.typ !== "anzahlungsrechnung" : true)).reduce((s, i) => s + (Number(i.netto_summe) || 0), 0);
+        // Gutschriften mindern den Erlös (gleiche Regel wie Projekt-Nachkalkulation)
+        const gutschriften = belege.filter(i => i.typ === "gutschrift").reduce((s, i) => s + (Number(i.netto_summe) || 0), 0);
+        const erloes = invs.filter(i => (hatSR ? i.typ !== "anzahlungsrechnung" : true)).reduce((s, i) => s + (Number(i.netto_summe) || 0), 0) - gutschriften;
         let lohn = 0;
         for (const e of ((teRes.data as any[]) || []).filter(e => e.project_id === pid && !SONDER.has(e.taetigkeit)))
           lohn += (Number(e.stunden) || 0) * (lohnByUser[e.user_id] || 0) * faktor;
@@ -108,8 +112,17 @@ const Projects = () => {
           if (m.typ === "entnahme" || m.typ === "verbrauch") material += menge * (Number(m.einzelpreis) || 0);
           else if (m.typ === "rueckgabe") material -= menge * (Number(m.einzelpreis) || 0);
         }
-        const fremd = ((purRes.data as any[]) || []).filter(p => p.project_id === pid)
+        // Fremdkosten mit Teilbeträgen (gleiche Doppelzählungs-Regel wie die
+        // Projekt-Nachkalkulation): Teilbeträge zählen zu IHREM Projekt;
+        // Kopf-Beträge nur, wenn die Rechnung KEINE Teilbeträge hat.
+        const allocs = ((allocRes as any).data as any[]) || [];
+        const rechnungenMitAllocs = new Set(allocs.map(a => a.purchase_invoice_id));
+        const fremdKopf = ((purRes.data as any[]) || [])
+          .filter(p => p.project_id === pid && !rechnungenMitAllocs.has(p.id))
           .reduce((s, p) => s + (Number(p.betrag_netto) || (Number(p.betrag_brutto) || 0) / 1.2), 0);
+        const fremdAllocs = allocs.filter(a => a.project_id === pid)
+          .reduce((s, a) => s + (Number(a.betrag_netto) || 0), 0);
+        const fremd = fremdKopf + fremdAllocs;
         const kosten = lohn + material + fremd;
         if (erloes < 0.005 && kosten < 0.005) continue; // nichts zu zeigen
         const db = Math.round((erloes - kosten) * 100) / 100;

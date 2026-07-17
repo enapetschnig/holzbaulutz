@@ -350,7 +350,9 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
       // (Service Role) über den Notiz-Marker — ein client-seitiger Delete würde
       // die Einträge von Kollegen wegen RLS NICHT löschen und ihre Stunden bei
       // jeder Bearbeitung duplizieren.
-      const timeEntries = buildTimeEntries(editData.id, user.id, stunden);
+      // Beim Bearbeiten gehören die gespiegelten Zeiten weiterhin dem
+      // URSPRÜNGLICHEN Ersteller — nicht dem (Admin-)Bearbeiter.
+      const timeEntries = buildTimeEntries(editData.id, (editData as any).user_id || user.id, stunden);
       const { data: syncData, error: syncError } = await supabase.functions.invoke("create-team-time-entries", {
         body: {
           entries: timeEntries,

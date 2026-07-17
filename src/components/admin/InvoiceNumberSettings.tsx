@@ -25,10 +25,11 @@ const TYPES: { key: string; label: string; defaults: NumberConfig; example: stri
   { key: "kundennummer",         label: "Kundennummern",         defaults: { prefix: "K",  format: "{PREFIX}-{NNN}",    start_nummer: "1", stellen: "5" }, example: "K-00001", hint: "Ohne Jahresbezug. Wird beim Kunden-Anlegen automatisch vergeben." },
 ];
 
-function generatePreview(cfg: NumberConfig): string {
+function generatePreview(cfg: NumberConfig, aktuelleNummer = 0): string {
   const yy = String(new Date().getFullYear()).slice(-2);
   const yyyy = String(new Date().getFullYear());
-  const num = parseInt(cfg.start_nummer) || 1;
+  // Gleiche Logik wie die Nummernvergabe: nächste Nummer = max(Zähler+1, Start)
+  const num = Math.max(aktuelleNummer + 1, parseInt(cfg.start_nummer) || 1);
   const st = parseInt(cfg.stellen) || 3;
   const padded = String(num).padStart(st, "0");
 
@@ -51,6 +52,8 @@ export function InvoiceNumberSettings() {
     for (const t of TYPES) init[t.key] = { ...t.defaults };
     return init;
   });
+  // Stand der Zähler je Kreis — für eine ehrliche "nächste Nummer"-Vorschau
+  const [aktuelleNummern, setAktuelleNummern] = useState<Record<string, number>>({});
 
   useEffect(() => {
     loadSettings();
@@ -67,7 +70,7 @@ export function InvoiceNumberSettings() {
     // number_ranges als Fallback / Single Source
     const { data: ranges } = await supabase
       .from("number_ranges" as never)
-      .select("typ, prefix, format_pattern, start_nummer, stellen" as never);
+      .select("typ, prefix, format_pattern, start_nummer, stellen, aktuelle_nummer" as never);
 
     const map: Record<string, string> = {};
     (appSettings || []).forEach((r: any) => { map[r.key] = r.value; });
@@ -76,20 +79,38 @@ export function InvoiceNumberSettings() {
     ((ranges as any[]) || []).forEach((r: any) => rangeByTyp.set(r.typ, r));
 
     const next: Record<string, NumberConfig> = {};
+    const zaehler: Record<string, number> = {};
     for (const t of TYPES) {
       const r = rangeByTyp.get(t.key);
+      // WICHTIG: number_ranges ZUERST — das ist die Tabelle, die die
+      // Nummernvergabe tatsächlich liest. app_settings ist nur Alt-Spiegel.
       next[t.key] = {
-        prefix: map[`${t.key}_prefix`] ?? r?.prefix ?? t.defaults.prefix,
-        format: map[`${t.key}_format`] ?? r?.format_pattern ?? t.defaults.format,
-        start_nummer: map[`${t.key}_start_nummer`] ?? (r?.start_nummer != null ? String(r.start_nummer) : t.defaults.start_nummer),
-        stellen: map[`${t.key}_stellen`] ?? (r?.stellen != null ? String(r.stellen) : t.defaults.stellen),
+        prefix: r?.prefix ?? map[`${t.key}_prefix`] ?? t.defaults.prefix,
+        format: r?.format_pattern ?? map[`${t.key}_format`] ?? t.defaults.format,
+        start_nummer: r?.start_nummer != null ? String(r.start_nummer) : (map[`${t.key}_start_nummer`] ?? t.defaults.start_nummer),
+        stellen: r?.stellen != null ? String(r.stellen) : (map[`${t.key}_stellen`] ?? t.defaults.stellen),
       };
+      zaehler[t.key] = Number(r?.aktuelle_nummer) || 0;
     }
     setConfigs(next);
+    setAktuelleNummern(zaehler);
     setLoading(false);
   };
 
   const handleSave = async () => {
+    // Format MUSS eine Laufnummer enthalten — sonst kann die Nummernvergabe
+    // keine eindeutigen Nummern erzeugen (DB lehnt das inzwischen auch ab).
+    for (const t of TYPES) {
+      const f = configs[t.key]?.format || "";
+      if (!f.includes("{NNN}") && !f.includes("{N}")) {
+        toast({
+          variant: "destructive",
+          title: `Format bei ${t.label} ungültig`,
+          description: "Das Format muss {NNN} (mit führenden Nullen) oder {N} enthalten.",
+        });
+        return;
+      }
+    }
     setSaving(true);
     try {
       // 1) app_settings spiegeln (UI-Quelle)
@@ -167,7 +188,7 @@ export function InvoiceNumberSettings() {
                   {t.hint && <p className="text-xs text-muted-foreground mt-0.5">{t.hint}</p>}
                 </div>
                 <span className="text-xs text-muted-foreground font-mono bg-muted px-2 py-0.5 rounded">
-                  Vorschau: {generatePreview(cfg)}
+                  Nächste Nummer: {generatePreview(cfg, aktuelleNummern[t.key] || 0)}
                 </span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

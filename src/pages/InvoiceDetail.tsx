@@ -1133,7 +1133,21 @@ export default function InvoiceDetail() {
           arr[u.itemIndex] = { ...it, stundensatz: u.neuerSatz, einzelpreis: ep };
         } else {
           const ep = neuerEinzelpreis(it as any, { itemIndex: u.itemIndex, quelle: u.quelle, stundenProEinheit: u.stundenProEinheit }, u.alterSatz, u.neuerSatz);
-          arr[u.itemIndex] = { ...it, einzelpreis: ep };
+          // Snapshot-Komponenten MIT anpassen — sonst zeigt der Dialog beim
+          // nächsten Öffnen den alten Satz und würde die Differenz erneut
+          // aufschlagen (Doppel-Anwendung).
+          let snap = it.kalkulation_snapshot;
+          if (u.quelle === "snapshot" && snap?.komponenten) {
+            snap = {
+              ...snap,
+              komponenten: snap.komponenten.map((k: any) =>
+                k.typ === "lohn" && Math.abs((Number(k.preis) || 0) - u.alterSatz) < 0.005
+                  ? { ...k, preis: u.neuerSatz }
+                  : k,
+              ),
+            };
+          }
+          arr[u.itemIndex] = { ...it, einzelpreis: ep, kalkulation_snapshot: snap };
         }
         const m = Number(arr[u.itemIndex].menge) || 0;
         const r = Number(arr[u.itemIndex].rabatt_prozent) || 0;
@@ -1165,6 +1179,34 @@ export default function InvoiceDetail() {
       return arr.map((item, i) => ({ ...item, position: i + 1 }));
     });
     if (!loading) setIsDirty(true);
+  };
+
+  // Auftrags-Kette rund um ein Dokument: von hier entlang parent_invoice_id
+  // bis ganz nach oben. ARs können je nach Ausgangspunkt an JEDEM Glied
+  // hängen (Angebot ODER AB) — Kumulierung, SR-Abzug und SR-Guard suchen
+  // deshalb über die GESAMTE Kette statt nur am direkten Parent.
+  // traegerId = erstes Nicht-AR-Glied (Positionsquelle, wie bisher).
+  const ladeAuftragsKette = async (startId: string, startTyp: string) => {
+    const chain: string[] = [startId];
+    let traegerId = startId;
+    let traegerGefunden = startTyp !== "anzahlungsrechnung";
+    let cursor: string | null = startId;
+    for (let hops = 0; hops < 8 && cursor; hops++) {
+      const { data: row } = await supabase
+        .from("invoices").select("parent_invoice_id, typ").eq("id", cursor).maybeSingle();
+      const parent = (row as any)?.parent_invoice_id || null;
+      if (!parent || chain.includes(parent)) break;
+      chain.push(parent);
+      const { data: parentRow } = await supabase
+        .from("invoices").select("typ").eq("id", parent).maybeSingle();
+      const parentTyp = (parentRow as any)?.typ || "";
+      if (!traegerGefunden) {
+        traegerId = parent;
+        traegerGefunden = parentTyp !== "anzahlungsrechnung";
+      }
+      cursor = parent;
+    }
+    return { traegerId, chainIds: chain };
   };
 
   const updateItem = (index: number, field: keyof InvoiceItem, value: any) => {
@@ -1674,7 +1716,24 @@ export default function InvoiceDetail() {
       // und unverändert erhalten (Baubetriebs-Praxis: alter und neuer
       // Preisstand müssen beide nachvollziehbar bleiben).
       const revisionVonId = (kalkRefreshApplied && form.typ === "angebot" && savedId && !isNew) ? savedId : null;
-      if (revisionVonId) savedId = null; // → unten den Insert-Pfad nehmen
+      if (revisionVonId) {
+        // Guard: hat dieses Angebot bereits eine Revision? Dann würde erneutes
+        // "Preise aktualisieren"+Speichern dieselbe -R-Nummer erzeugen
+        // (Unique-Verletzung) bzw. parallele Revisionen anlegen.
+        const { data: vorhandeneRev } = await (supabase as any)
+          .from("invoices").select("id, nummer")
+          .eq("vorgaenger_id", revisionVonId).limit(1);
+        if (vorhandeneRev && vorhandeneRev.length > 0) {
+          toast({
+            variant: "destructive",
+            title: "Revision existiert bereits",
+            description: `Zu diesem Angebot gibt es schon die Revision ${(vorhandeneRev[0] as any).nummer}. Bitte dort weiterarbeiten.`,
+          });
+          setSaving(false);
+          return;
+        }
+        savedId = null; // → unten den Insert-Pfad nehmen
+      }
 
       // Auto-create customer if no customer_id is set (never overwrite existing customer master data)
       if (form.kunde_name.trim()) {
@@ -2347,7 +2406,9 @@ export default function InvoiceDetail() {
         datum: form.datum,
         faellig_am: form.faellig_am || null,
         typ: form.typ,
-        ust_satz: Number(form.mwst_satz) || 20,
+        // 0 % (steuerfrei/Reverse Charge) muss 0 bleiben — nur bei fehlendem
+        // Wert auf den Normalsteuersatz zurückfallen.
+        ust_satz: Number.isFinite(Number(form.mwst_satz)) ? Number(form.mwst_satz) : 20,
         rabatt_prozent: Number(form.rabatt_prozent) || 0,
         rabatt_euro: Number((form as any).rabatt_betrag) || 0,
         betreff: form.betreff || "",
@@ -2700,14 +2761,20 @@ export default function InvoiceDetail() {
 
       // bezahlt_betrag beim Storno auf 0 — sonst bleibt der Teilzahlungs-
       // Wert stehen und verzerrt Umsatz-/Offen-Statistiken.
-      const { error } = await supabase.from("invoices").update({
+      // Guard gegen Doppel-Storno aus einem zweiten Fenster: nur updaten,
+      // wenn die Rechnung serverseitig noch nicht storniert ist.
+      const { data: stornoRows, error } = await supabase.from("invoices").update({
         status: "storniert",
         storno_nummer: stornoNummer,
         storno_datum: stornoDatum,
         storno_grund: stornoGrund,
         bezahlt_betrag: 0,
-      }).eq("id", invoiceId);
+      }).eq("id", invoiceId).neq("status", "storniert").is("storno_nummer", null).select("id");
       if (error) throw error;
+      if (!stornoRows || stornoRows.length === 0) {
+        toast({ variant: "destructive", title: "Bereits storniert", description: "Diese Rechnung wurde inzwischen (z.B. in einem anderen Fenster) storniert." });
+        return;
+      }
       setForm(prev => ({ ...prev, status: "storniert", storno_nummer: stornoNummer, storno_datum: stornoDatum, storno_grund: stornoGrund, bezahlt_betrag: 0 }));
 
       // Stornobeleg sofort erstellen und herunterladen
@@ -3168,30 +3235,13 @@ export default function InvoiceDetail() {
                                 // Die Wurzel (Angebot/AB) FRISCH aus der DB ermitteln — wie beim
                                 // SR-Handler — damit auch "AR aus AR" korrekt am Auftrag hängt.
                                 if (invoiceId) {
-                                  let rootId = invoiceId;
-                                  let cursor: string | null = invoiceId;
-                                  let cursorTyp = form.typ;
-                                  for (let hops = 0; hops < 6 && cursorTyp === "anzahlungsrechnung" && cursor; hops++) {
-                                    const { data: row } = await supabase
-                                      .from("invoices")
-                                      .select("parent_invoice_id")
-                                      .eq("id", cursor)
-                                      .maybeSingle();
-                                    const parent = (row as any)?.parent_invoice_id || null;
-                                    if (!parent) break;
-                                    rootId = parent;
-                                    cursor = parent;
-                                    const { data: parentRow } = await supabase
-                                      .from("invoices")
-                                      .select("typ")
-                                      .eq("id", parent)
-                                      .maybeSingle();
-                                    cursorTyp = (parentRow as any)?.typ || "";
-                                  }
+                                  const { traegerId: rootId, chainIds } = await ladeAuftragsKette(invoiceId, form.typ);
+                                  // ARs über die GANZE Kette suchen — sie können am
+                                  // Angebot ODER an der AB hängen.
                                   const { data: existingAnz } = await supabase
                                     .from("invoices")
                                     .select("id, netto_summe")
-                                    .eq("parent_invoice_id", rootId)
+                                    .in("parent_invoice_id", chainIds)
                                     .eq("typ", "anzahlungsrechnung")
                                     .neq("status", "storniert");
                                   const rows = ((existingAnz as any[]) || []);
@@ -3242,35 +3292,15 @@ export default function InvoiceDetail() {
                                 // Angebot oder AB). Das macht die Logik robust gegen
                                 // stale Form-Daten und gegen verschachtelte Ketten.
                                 if (!invoiceId) return;
-                                let rootId = invoiceId;
-                                let cursor: string | null = invoiceId;
-                                let cursorTyp = form.typ;
-                                for (let hops = 0; hops < 6 && cursorTyp === "anzahlungsrechnung" && cursor; hops++) {
-                                  const { data: row } = await supabase
-                                    .from("invoices")
-                                    .select("parent_invoice_id")
-                                    .eq("id", cursor)
-                                    .maybeSingle();
-                                  const parent = (row as any)?.parent_invoice_id || null;
-                                  if (!parent) break;
-                                  rootId = parent;
-                                  cursor = parent;
-                                  // Typ des Parents holen, um zu entscheiden, ob wir weiter hoch gehen
-                                  const { data: parentRow } = await supabase
-                                    .from("invoices")
-                                    .select("typ")
-                                    .eq("id", parent)
-                                    .maybeSingle();
-                                  cursorTyp = (parentRow as any)?.typ || "";
-                                }
+                                const { traegerId: rootId, chainIds } = await ladeAuftragsKette(invoiceId, form.typ);
 
                                 // Guard: existiert bereits eine nicht-stornierte Schlussrechnung
-                                // zum selben Auftrag? Dann abbrechen — sonst hätten wir parallele
-                                // SRs mit identischen Abzügen.
+                                // irgendwo in der Kette? Dann abbrechen — sonst hätten wir
+                                // parallele SRs mit identischen Abzügen.
                                 const { data: existingSR } = await supabase
                                   .from("invoices")
                                   .select("id, nummer, status")
-                                  .eq("parent_invoice_id", rootId)
+                                  .in("parent_invoice_id", chainIds)
                                   .eq("typ", "schlussrechnung")
                                   .neq("status", "storniert")
                                   .limit(1);
@@ -3283,11 +3313,11 @@ export default function InvoiceDetail() {
                                   return;
                                 }
 
-                                // Alle nicht-stornierten Anzahlungen zum gleichen Auftrag finden
+                                // Alle nicht-stornierten Anzahlungen der GANZEN Kette finden
                                 const { data } = await supabase
                                   .from("invoices")
                                   .select("id, status")
-                                  .eq("parent_invoice_id", rootId)
+                                  .in("parent_invoice_id", chainIds)
                                   .eq("typ", "anzahlungsrechnung")
                                   .neq("status", "storniert");
                                 const ids = ((data as any[]) || []).map(r => r.id);
@@ -4460,7 +4490,7 @@ export default function InvoiceDetail() {
                   </Button>
                   {/* Katalog-Verknüpfung reicht — Komponenten-Positionen haben
                       ist_kalkuliert=false, sollen aber genauso aktualisierbar sein. */}
-                  {items.some(it => it.kalkulation_template_id) && (
+                  {items.some(it => it.kalkulation_template_id) && !revisionInfo.nachfolger && (
                     <Button onClick={refreshKalkulationFromCatalog} disabled={kalkRefreshing} variant="outline" size="sm"
                       className={`gap-1 ${staleKalkCount > 0 ? "border-amber-400 text-amber-700" : ""}`}
                       title="Kalkulierte Positionen mit den aktuellen Material-/EK-Preisen aus dem Katalog neu berechnen">
@@ -5681,14 +5711,15 @@ export default function InvoiceDetail() {
                 if (form.bezahlt_betrag > 0) {
                   const ok = window.confirm(
                     `⚠️ Achtung: Diese Rechnung hat bereits Zahlungen (€ ${form.bezahlt_betrag.toFixed(2)}).\n\n` +
-                    `Beim Stornieren wird der Bezahlt-Betrag NICHT zurückgesetzt. ` +
-                    `Bitte vorab mit der Buchhaltung klären und ggf. eine Rückzahlung dokumentieren.\n\n` +
+                    `Beim Stornieren wird der Bezahlt-Betrag auf € 0,00 zurückgesetzt — ` +
+                    `bitte die Rückzahlung mit der Buchhaltung klären und dokumentieren.\n\n` +
                     `Trotzdem fortfahren?`
                   );
                   if (!ok) return;
                 }
 
-                const year = form.jahr || new Date().getFullYear();
+                // Der Storno-Beleg gehört ins Jahr des STORNOS (nicht der Rechnung)
+                const year = new Date().getFullYear();
 
                 // Atomare Storno-Nummer-Generierung via DB-Funktion (race-safe)
                 const { data: stornoNummer, error: numErr } = await supabase.rpc("next_storno_nummer" as any, { p_jahr: year });
@@ -5732,7 +5763,8 @@ export default function InvoiceDetail() {
                   }
                 }
 
-                const { error: updErr } = await supabase.from("invoices").update({
+                // Guard gegen Doppel-Storno aus einem zweiten Fenster
+                const { data: stornoRows2, error: updErr } = await supabase.from("invoices").update({
                   status: "storniert",
                   storno_nummer: stornoNummer,
                   storno_datum: stornoDatum,
@@ -5740,10 +5772,15 @@ export default function InvoiceDetail() {
                   // Bezahlt-Betrag auf 0 — sonst verzerrt ein stehengebliebener
                   // Teilzahlungswert die Umsatz-/Offen-Statistiken.
                   bezahlt_betrag: 0,
-                }).eq("id", invoiceId);
+                }).eq("id", invoiceId).neq("status", "storniert").is("storno_nummer", null).select("id");
 
                 if (updErr) {
                   toast({ variant: "destructive", title: "Fehler", description: updErr.message });
+                  return;
+                }
+                if (!stornoRows2 || stornoRows2.length === 0) {
+                  toast({ variant: "destructive", title: "Bereits storniert", description: "Diese Rechnung wurde inzwischen (z.B. in einem anderen Fenster) storniert." });
+                  setStornoDialogOpen(false);
                   return;
                 }
 
