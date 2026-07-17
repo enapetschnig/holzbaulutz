@@ -196,8 +196,12 @@ export function CreateProjectDialog({
 
   const selectCustomer = (c: CustomerOption) => {
     setSelectedCustomerId(c.id);
+    // Kundentyp: gespeicherten Wert übernehmen; fehlt er (Altkunden),
+    // gilt: geschäftlich NUR mit UID-Nummer, sonst privat.
     const typ: "geschaeftskunde" | "privatkunde" =
-      c.kundentyp === "privatkunde" ? "privatkunde" : "geschaeftskunde";
+      c.kundentyp === "privatkunde" || c.kundentyp === "geschaeftskunde"
+        ? c.kundentyp
+        : ((c.uid_nummer || "").trim() ? "geschaeftskunde" : "privatkunde");
     setCustomerForm({
       ...EMPTY_CUSTOMER_FORM,
       name: c.name || "",

@@ -90,7 +90,7 @@ export const EMPTY_CUSTOMER_FORM: CustomerFormData = {
   skonto_prozent: 0,
   skonto_tage: 0,
   nettofrist: 0,
-  kundentyp: "geschaeftskunde",
+  kundentyp: "privatkunde",
   firmenname: "",
   branche: "",
   website: "",
