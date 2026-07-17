@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { Upload, X, FileText, Image as ImageIcon, Loader2, Sparkles, Split } from "lucide-react";
+import { Upload, X, FileText, Image as ImageIcon, Loader2, Sparkles, Split, Plus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -332,6 +332,35 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
     });
   };
 
+  /** Position manuell korrigieren (Beschreibung/Netto-Betrag). */
+  const updatePosition = (idx: number, patch: Partial<ParsedPosition>) => {
+    setPositionen(prev => prev.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
+  };
+
+  /** Position entfernen — Index-basierte Auswahl/Zuordnung mitverschieben. */
+  const removePosition = (idx: number) => {
+    setPositionen(prev => prev.filter((_, i) => i !== idx));
+    setPosProjekte(prev => {
+      const next: Record<number, string> = {};
+      Object.entries(prev).forEach(([k, v]) => {
+        const i = Number(k);
+        if (i < idx) next[i] = v;
+        else if (i > idx) next[i - 1] = v;
+      });
+      return next;
+    });
+    setPosSelected(prev => {
+      const next = new Set<number>();
+      prev.forEach(i => { if (i < idx) next.add(i); else if (i > idx) next.add(i - 1); });
+      return next;
+    });
+  };
+
+  /** Manuell eine Position ergänzen (falls die KI etwas nicht erkannt hat). */
+  const addPosition = () => {
+    setPositionen(prev => [...prev, { beschreibung: "", betrag_netto: null, betrag_brutto: null }]);
+  };
+
   const assignBulk = () => {
     if (!bulkProject || posSelected.size === 0) return;
     setPosProjekte(prev => {
@@ -614,12 +643,25 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
                         onCheckedChange={() => togglePosSelected(idx)}
                         className="shrink-0"
                       />
-                      <span className="flex-1 min-w-0 text-xs truncate" title={p.beschreibung}>
-                        {p.beschreibung || `Position ${idx + 1}`}
-                      </span>
-                      <span className="text-xs font-mono tabular-nums whitespace-nowrap">
-                        {netto != null ? eur(netto) : "—"}
-                      </span>
+                      <Input
+                        value={p.beschreibung || ""}
+                        onChange={e => updatePosition(idx, { beschreibung: e.target.value })}
+                        placeholder={`Position ${idx + 1}`}
+                        className="flex-1 min-w-0 h-7 text-xs"
+                      />
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Input
+                          type="number" step="0.01" inputMode="decimal"
+                          value={netto != null ? netto : ""}
+                          onChange={e => {
+                            const n = parseFloat(e.target.value);
+                            updatePosition(idx, { betrag_netto: Number.isFinite(n) ? n : null, betrag_brutto: null });
+                          }}
+                          placeholder="0.00"
+                          className="h-7 w-24 text-xs text-right font-mono"
+                        />
+                        <span className="text-[10px] text-muted-foreground">€</span>
+                      </div>
                       <Select
                         value={projId || "none"}
                         onValueChange={v => setPosProjekte(prev => {
@@ -636,10 +678,18 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
                           {projects.map(pr => <SelectItem key={pr.id} value={pr.id}>{pr.name}</SelectItem>)}
                         </SelectContent>
                       </Select>
+                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0"
+                        title="Position entfernen" onClick={() => removePosition(idx)}>
+                        <X className="h-3.5 w-3.5 text-destructive" />
+                      </Button>
                     </div>
                   );
                 })}
               </div>
+
+              <Button type="button" variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={addPosition}>
+                <Plus className="h-3.5 w-3.5" /> Position hinzufügen
+              </Button>
 
               <div className={`text-xs pt-1 border-t ${invoiceNetto() - zugeordnetSumme < -0.005 ? "text-destructive font-medium" : "text-muted-foreground"}`}>
                 Zugeordnet: <span className="font-mono tabular-nums">{eur(zugeordnetSumme)}</span> von{" "}
