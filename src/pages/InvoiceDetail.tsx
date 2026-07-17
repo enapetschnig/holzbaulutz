@@ -14,7 +14,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, Lock, Link2, Clock3 } from "lucide-react";
 import { KatalogKalkulationPopover } from "@/components/KatalogKalkulationPopover";
 import { StundenlohnAnpassenDialog, neuerEinzelpreis, type StundenlohnUpdate } from "@/components/StundenlohnAnpassenDialog";
-import { istArbeitszeitZeile, istStundensatzName } from "@/lib/stunden";
+import { istArbeitszeitZeile } from "@/lib/stunden";
 import { erzeugeEbInterfaceXml } from "@/lib/erechnung";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -1106,35 +1106,6 @@ export default function InvoiceDetail() {
       rabatt_prozent: 0,
       gesamtpreis: 0,
     }]);
-    if (!loading) setIsDirty(true);
-  };
-
-  // Neue Arbeitszeit-Position: Stunden-Zeile, vorbelegt mit der
-  // Facharbeiterstunde aus dem Katalog (inkl. Katalog-Verknüpfung) —
-  // Satz-Art und Menge danach direkt in der Zeile anpassbar.
-  const addArbeitszeit = () => {
-    const bevorzugt = stundensaetze.find(s => /facharbeiter/i.test(s.name)) || stundensaetze[0];
-    // Gibt es die Stunden-Zeile schon? Dann +1 Stunde statt Doppel-Zeile.
-    const bestehendIdx = bevorzugt
-      ? items.findIndex(it => it.kalkulation_template_id === bevorzugt.id && !it.mwst_exempt)
-      : -1;
-    if (bestehendIdx >= 0) {
-      updateItem(bestehendIdx, "menge", (Number(items[bestehendIdx].menge) || 0) + 1);
-      return;
-    }
-    setItems(prev => [...prev, {
-      position: prev.length + 1,
-      beschreibung: bevorzugt?.name || "Facharbeiterstunde",
-      kurztext: bevorzugt?.name || "Facharbeiterstunde",
-      langtext: "",
-      menge: 1,
-      einheit: "Std.",
-      einzelpreis: bevorzugt?.satz || 0,
-      rabatt_prozent: 0,
-      gesamtpreis: bevorzugt?.satz || 0,
-      katalog_vk: bevorzugt?.satz || undefined,
-      kalkulation_template_id: bevorzugt?.id || null,
-    } as InvoiceItem]);
     if (!loading) setIsDirty(true);
   };
 
@@ -2865,10 +2836,9 @@ export default function InvoiceDetail() {
   // Stundensätze aus dem Materialkatalog (Facharbeiter, Regie, Lehrling, Kran,
   // LKW/Hiab, Maschine …) — zum Verrechnen importierter Projektzeiten.
   const stundensaetze = templates
-    // Gemeinsame Regel (lib/stunden): nur echte eigene Lohn-/Gerätesätze —
-    // Fremdleistungen mit Std-Einheit (Fassadengerüst-Regie, Zellulose
-    // Helfer …) sind KEINE Stundensätze.
-    .filter(t => (t as any).art === "material" && istStundensatzName((t as any).kurzbezeichnung || t.name))
+    // Echte eigene Lohn-/Gerätesätze: explizit als Arbeitszeit/Stundensatz
+    // gekennzeichnete Katalog-Artikel (ist_stundensatz).
+    .filter(t => (t as any).art === "material" && (t as any).ist_stundensatz === true)
     .map(t => ({
       id: t.id,
       name: (t as any).kurzbezeichnung || t.name,
@@ -4791,11 +4761,6 @@ export default function InvoiceDetail() {
                           <Button onClick={addItem} variant="ghost" size="sm" className="gap-1 text-muted-foreground">
                             <Plus className="w-3.5 h-3.5" />
                             Position hinzufügen
-                          </Button>
-                          <Button onClick={addArbeitszeit} variant="ghost" size="sm" className="gap-1 text-muted-foreground"
-                            title="Stunden-Zeile mit Stundensatz aus dem Katalog anlegen (bei erneutem Klick: +1 Stunde)">
-                            <Clock3 className="w-3.5 h-3.5" />
-                            Arbeitszeit (Stundensatz) hinzufügen
                           </Button>
                         </TableCell>
                       </TableRow>

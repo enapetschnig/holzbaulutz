@@ -22,7 +22,6 @@ import { type PositionComponent, calcPositionPreis } from "@/lib/positionen";
 import { BulkPriceDialog } from "@/components/BulkPriceDialog";
 import { KalkulationFields } from "@/components/KalkulationFields";
 import { calcEinzelpreis } from "@/lib/kalkulation";
-import { istStundensatzName } from "@/lib/stunden";
 import {
   Dialog,
   DialogContent,
@@ -73,17 +72,17 @@ interface Template {
   sonstiges_preis: number;
   arbeitszeit_minuten: number;
   stundensatz: number;
+  /** Arbeitszeit-/Stundensatz-Artikel (Facharbeiterstunde, Regie …) */
+  ist_stundensatz: boolean;
   /** 'material' = Einkaufspreis-Eintrag · 'position' = kalkulierte Leistung */
   art: "material" | "position";
 }
 
-// Stundensatz-Artikel: NUR klassische eigene Lohn-/Gerätesätze (Facharbeiter-,
-// Regie-, Lehrling-, Baumeisterstunde, Kranfahrer, LKW mit Hiab, Maschinen-
-// stunde). Bewusst NICHT über die Std-Einheit — Fremdleistungen wie
-// „Fassadengerüst An-und Abtransport in Regie" oder „Zellulose Helfer" tragen
-// zwar Std, sind aber keine eigenen Stundensätze.
-const istStundensatz = (t: { art: string; einheit: string; name: string; kurzbezeichnung?: string | null }) =>
-  t.art === "material" && istStundensatzName(t.kurzbezeichnung || t.name);
+// Stundensatz-Artikel: echtes Merkmal am Artikel (ist_stundensatz) — beim
+// Anlegen wählbar, im Backfill über die Namensregel gesetzt. Fremdleistungen
+// mit Std-Einheit (Fassadengerüst-Regie, Zellulose Helfer …) bleiben false.
+const istStundensatz = (t: { art: string; ist_stundensatz?: boolean }) =>
+  t.art === "material" && t.ist_stundensatz === true;
 
 export default function InvoiceTemplates() {
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -113,6 +112,7 @@ export default function InvoiceTemplates() {
     sonstiges_preis: 0,
     arbeitszeit_minuten: 0,
     stundensatz: 52,
+    ist_stundensatz: false,
     art: "position" as "material" | "position",
   });
   const [importOpen, setImportOpen] = useState(false);
@@ -163,6 +163,7 @@ export default function InvoiceTemplates() {
           ust_satz: Number((t as any).ust_satz) || 20,
           ist_aktiv: (t as any).ist_aktiv !== false,
           ist_lagerartikel: (t as any).ist_lagerartikel || false,
+          ist_stundensatz: (t as any).ist_stundensatz || false,
           artikelnummer: (t as any).artikelnummer || null,
           produktnummer: (t as any).produktnummer || null,
           produktgruppe: (t as any).produktgruppe || null,
@@ -263,6 +264,7 @@ export default function InvoiceTemplates() {
       foto_path: null, ist_set: false,
       ek_netto: 0, vk_netto: 0, bezugseinheit: "", aufschlag_prozent: 0, vk_preis_manuell: false,
       ist_kalkuliert: false, verschnitt_prozent: 0, befestigung_preis: 0, sonstiges_preis: 0, arbeitszeit_minuten: 0, stundensatz: 52,
+      ist_stundensatz: stundenTab,
       art: neueArt,
     });
     setPosComponents([]);
@@ -294,6 +296,7 @@ export default function InvoiceTemplates() {
       sonstiges_preis: t.sonstiges_preis,
       arbeitszeit_minuten: t.arbeitszeit_minuten,
       stundensatz: t.stundensatz || 52,
+      ist_stundensatz: t.ist_stundensatz || false,
       art: t.art,
     });
     setPriceAdjustValue("");
@@ -435,6 +438,7 @@ export default function InvoiceTemplates() {
       brutto_preis: bruttoEffective,
       ust_satz: form.ust_satz,
       ist_lagerartikel: form.ist_lagerartikel,
+      ist_stundensatz: form.art === "material" ? form.ist_stundensatz : false,
       lieferant: form.lieferant || null,
       foto_path: form.foto_path,
       art: form.art,
@@ -778,6 +782,9 @@ export default function InvoiceTemplates() {
                         <TableCell className="font-mono text-xs text-muted-foreground">{t.produktnummer || t.artikelnummer || "–"}</TableCell>
                         <TableCell className="font-medium max-w-[200px] truncate">
                           <span>{t.kurzbezeichnung || t.name}</span>
+                          {t.ist_stundensatz && (
+                            <Badge variant="outline" className="ml-1.5 text-[10px] py-0 border-amber-300 text-amber-800 bg-amber-50">⏱ Arbeitszeit</Badge>
+                          )}
                         </TableCell>
                         <TableCell className="text-muted-foreground max-w-[250px] truncate text-xs">{t.langbezeichnung || t.beschreibung}</TableCell>
                         <TableCell className="text-xs">{t.einheit}</TableCell>
@@ -962,6 +969,28 @@ export default function InvoiceTemplates() {
                   </div>
                 </div>
               </div>
+              {/* Arbeitszeit/Stundensatz — echtes Merkmal, landet im
+                  Stundensätze-Tab und in den Satz-Auswahlen */}
+              {form.art === "material" && (
+                <div className="flex items-center justify-between rounded-lg border p-3 bg-amber-50/50 border-amber-200">
+                  <div>
+                    <Label className="font-medium flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-amber-600" /> Arbeitszeit / Stundensatz
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Eigener Lohn-/Gerätesatz (z.B. Facharbeiterstunde) — erscheint im Tab „Stundensätze".
+                    </p>
+                  </div>
+                  <Switch
+                    checked={form.ist_stundensatz}
+                    onCheckedChange={(c) => setForm(f => ({
+                      ...f,
+                      ist_stundensatz: !!c,
+                      einheit: c && !/^(h|std|std\.|stunde|stunden)$/i.test(f.einheit || "") ? "Std." : f.einheit,
+                    }))}
+                  />
+                </div>
+              )}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                 <div>
                   <Label>Einheit</Label>
