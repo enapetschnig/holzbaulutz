@@ -94,6 +94,8 @@ export default function Invoices() {
     ["rechnung", "angebot", "lieferschein", "storno"].includes(searchParams.get("typ") || "")
       ? (searchParams.get("typ") as string) : "rechnung");
   const [filterStatus, setFilterStatus] = useState<string>("alle");
+  // Projekt-Filter: Dropdown in der Filterzeile (persistiert als ?project=)
+  const [projekte, setProjekte] = useState<{ id: string; name: string }[]>([]);
   // Sub-Typ-Filter innerhalb der Rechnungen- bzw. Angebote-Tabs.
   //   "alle" = keine weitere Einschränkung
   //   sonst = exakter invoices.typ-Wert
@@ -144,6 +146,11 @@ export default function Invoices() {
   useEffect(() => {
     setFilterStatus("alle");
   }, [filterTyp]);
+
+  useEffect(() => {
+    supabase.from("projects").select("id, name").order("name")
+      .then(({ data }) => setProjekte((data as any[]) || []));
+  }, []);
 
   const fetchInvoices = async () => {
     const { data, error } = await supabase
@@ -615,6 +622,18 @@ export default function Invoices() {
               </div>
               <div className="flex gap-2">
                 {filterTyp !== "storno" && (
+                  <Button
+                    onClick={() =>
+                      navigate(filterTyp === "angebot" ? "/invoices/new?typ=rechnung" : "/invoices/new?typ=angebot")
+                    }
+                    variant="outline"
+                    className="gap-2"
+                  >
+                    {filterTyp === "angebot" ? <Receipt className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
+                    {filterTyp === "angebot" ? "Neue Rechnung" : "Neues Angebot"}
+                  </Button>
+                )}
+                {filterTyp !== "storno" && (
                   <DropdownMenu>
                     <div className="flex">
                       {/* Haupt-Button: Default-Aktion je nach aktuellem Tab */}
@@ -756,6 +775,25 @@ export default function Invoices() {
                   </SelectContent>
                 </Select>
               )}
+              {/* Nach Projekt filtern — zeigt nur Belege dieses Projekts */}
+              <Select
+                value={projectFilter || "alle"}
+                onValueChange={(v) => {
+                  const sp = new URLSearchParams(searchParams);
+                  if (v === "alle") sp.delete("project"); else sp.set("project", v);
+                  setSearchParams(sp, { replace: true });
+                }}
+              >
+                <SelectTrigger className="w-[190px] h-9">
+                  <SelectValue placeholder="Alle Projekte" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="alle">Alle Projekte</SelectItem>
+                  {projekte.map(p => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </CardHeader>
           <CardContent>
