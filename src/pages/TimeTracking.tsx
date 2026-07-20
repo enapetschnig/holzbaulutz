@@ -132,8 +132,8 @@ const TimeTracking = () => {
     document: null as File | null,
     customHours: "" as string,
     isFullDay: true,
-    absenceStartTime: "07:00",
-    absenceEndTime: "16:00",
+    absenceStartTime: "07:30",
+    absenceEndTime: "16:30",
     absencePauseMinutes: "30",
   });
   
@@ -630,8 +630,8 @@ const TimeTracking = () => {
       const custom = absenceData.customHours ? parseFloat(absenceData.customHours) : NaN;
       // Validierung: muss eine endliche, nicht-negative Zahl zwischen 0 und 24 sein
       workingHours = (isFinite(custom) && custom >= 0 && custom <= 24) ? custom : automaticHours;
-      entryStartTime = defaultTimes?.startTime || "07:00";
-      entryEndTime = defaultTimes?.endTime || "16:00";
+      entryStartTime = defaultTimes?.startTime || "07:30";
+      entryEndTime = defaultTimes?.endTime || "16:30";
       entryPauseMinutes = defaultTimes?.pauseMinutes || 30;
     } else {
       // Calculate from Von/Bis
@@ -737,8 +737,8 @@ const TimeTracking = () => {
         document: null,
         customHours: "",
         isFullDay: true,
-        absenceStartTime: "07:00",
-        absenceEndTime: "16:00",
+        absenceStartTime: "07:30",
+        absenceEndTime: "16:30",
         absencePauseMinutes: "30",
       });
       fetchExistingDayEntries(selectedDate);
@@ -1544,12 +1544,12 @@ const TimeTracking = () => {
                                 pauseDuration: defaultPause,
                               });
                             } else {
-                              // Fr/Sa/So: keine Regelarbeitszeit — dem Nutzer
+                              // Sa/So: keine Regelarbeitszeit — dem Nutzer
                               // erklären, warum nichts gefüllt wurde (sonst wirkt
                               // der Button kaputt).
                               toast({
                                 title: "Arbeitsfreier Tag",
-                                description: "Für Freitag, Samstag und Sonntag ist keine Regelarbeitszeit hinterlegt. Bitte die Zeiten manuell eintragen.",
+                                description: "Für Samstag und Sonntag ist keine Regelarbeitszeit hinterlegt. Bitte die Zeiten manuell eintragen.",
                               });
                             }
                           }}
@@ -1738,8 +1738,8 @@ const TimeTracking = () => {
                     setAbsenceData({
                       ...absenceData,
                       isFullDay: checked,
-                      absenceStartTime: defaults?.startTime || "07:00",
-                      absenceEndTime: defaults?.endTime || "16:00",
+                      absenceStartTime: defaults?.startTime || "07:30",
+                      absenceEndTime: defaults?.endTime || "16:30",
                       absencePauseMinutes: String(defaults?.pauseMinutes ?? 30),
                     });
                   }}
@@ -1759,8 +1759,9 @@ const TimeTracking = () => {
                     {(() => {
                       const absenceDateObj = new Date(absenceData.date);
                       const dayOfWeek = absenceDateObj.getDay();
-                      if (dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6) return "Fr–So: arbeitsfrei (0 Stunden)";
-                      return "Mo–Do: 10 Stunden (07:00 – 17:30, 30 Min Pause)";
+                      if (dayOfWeek === 0 || dayOfWeek === 6) return "Sa/So: arbeitsfrei (0 Stunden)";
+                      if (dayOfWeek === 5) return "Freitag: 7 Stunden (07:30 – 15:30, 1 h Pause)";
+                      return "Mo–Do: 8 Stunden (07:30 – 16:30, 1 h Pause)";
                     })()}
                   </div>
                   <div className="pt-2 border-t">
@@ -1857,7 +1858,7 @@ const TimeTracking = () => {
                   variant="outline" 
                   onClick={() => {
                     setShowAbsenceDialog(false);
-                    setAbsenceData({ date: new Date().toISOString().split('T')[0], type: "urlaub", document: null, customHours: "", isFullDay: true, absenceStartTime: "07:00", absenceEndTime: "16:00", absencePauseMinutes: "30" });
+                    setAbsenceData({ date: new Date().toISOString().split('T')[0], type: "urlaub", document: null, customHours: "", isFullDay: true, absenceStartTime: "07:30", absenceEndTime: "16:30", absencePauseMinutes: "60" });
                   }}
                   disabled={submittingAbsence}
                 >

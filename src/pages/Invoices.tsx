@@ -7,8 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, Undo2, X } from "lucide-react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, Undo2, X, Import } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from "@/components/ui/dropdown-menu";
 import { matchesSearch } from "@/lib/searchUtils";
 import { loadInvoiceLogo } from "@/lib/logoLoader";
 import { formatDateShort } from "@/lib/dateFormat";
@@ -652,44 +652,42 @@ export default function Invoices() {
                       <DropdownMenuTrigger asChild>
                         <Button
                           variant="default"
-                          className="rounded-l-none border-l border-primary-foreground/20 px-2"
-                          title="Weitere Belegart wählen"
-                          aria-label="Weitere Belegart wählen"
+                          className="rounded-l-none border-l border-primary-foreground/20 px-2.5 gap-1"
+                          title="Alle Belegarten (Auftragsbestätigung, Anzahlungs-/Schlussrechnung, Gutschrift, Ausschreibungs-Import …)"
+                          aria-label="Alle Belegarten anzeigen"
                         >
+                          <span className="text-xs">Mehr</span>
                           <ChevronDown className="w-4 h-4" />
                         </Button>
                       </DropdownMenuTrigger>
                     </div>
-                    <DropdownMenuContent align="end" className="w-56">
-                      {filterTyp === "angebot" ? (
-                        <>
-                          <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=angebot")}>
-                            <FileText className="w-4 h-4 mr-2" /> Neues Angebot
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=auftragsbestaetigung")}>
-                            <FileText className="w-4 h-4 mr-2" /> Neue Auftragsbestätigung
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => navigate("/invoices/ausschreibung")}>
-                            <FileText className="w-4 h-4 mr-2" /> Ausschreibung importieren (ÖNORM/GAEB)
-                          </DropdownMenuItem>
-                        </>
-                      ) : (
-                        <>
-                          <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=rechnung")}>
-                            <Receipt className="w-4 h-4 mr-2" /> Neue Rechnung
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=anzahlungsrechnung")}>
-                            <Receipt className="w-4 h-4 mr-2" /> Neue Anzahlungsrechnung
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=schlussrechnung")}>
-                            <Receipt className="w-4 h-4 mr-2" /> Neue Schlussrechnung
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=gutschrift")}>
-                            <Undo2 className="w-4 h-4 mr-2" /> Neue Gutschrift
-                          </DropdownMenuItem>
-                        </>
-                      )}
+                    {/* Alle Belegarten in BEIDEN Tabs — der Nutzer soll z.B. den
+                        Ausschreibungs-Import auch aus dem Rechnungen-Tab erreichen. */}
+                    <DropdownMenuContent align="end" className="w-64">
+                      <DropdownMenuLabel className="text-xs text-muted-foreground">Angebote</DropdownMenuLabel>
+                      <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=angebot")}>
+                        <FileText className="w-4 h-4 mr-2" /> Neues Angebot
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=auftragsbestaetigung")}>
+                        <FileText className="w-4 h-4 mr-2" /> Neue Auftragsbestätigung
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => navigate("/invoices/ausschreibung")}>
+                        <Import className="w-4 h-4 mr-2" /> Ausschreibung importieren (ÖNORM/GAEB)
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel className="text-xs text-muted-foreground">Rechnungen</DropdownMenuLabel>
+                      <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=rechnung")}>
+                        <Receipt className="w-4 h-4 mr-2" /> Neue Rechnung
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=anzahlungsrechnung")}>
+                        <Receipt className="w-4 h-4 mr-2" /> Neue Anzahlungsrechnung
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=schlussrechnung")}>
+                        <Receipt className="w-4 h-4 mr-2" /> Neue Schlussrechnung
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=gutschrift")}>
+                        <Undo2 className="w-4 h-4 mr-2" /> Neue Gutschrift
+                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}

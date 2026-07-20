@@ -1,6 +1,6 @@
 // AdminAbsenceDialog — Admin trägt Urlaub/Krankenstand/Zeitausgleich/
 // Feiertag/Weiterbildung für einen Mitarbeiter über einen Datumsbereich
-// nach. Pro Werktag im Bereich (Mo-Do, Tagessoll>0) wird ein
+// nach. Pro Werktag im Bereich (Mo-Fr, Tagessoll>0) wird ein
 // time_entry mit Sonderzeit-Tätigkeit angelegt; zusätzlich ein
 // leave_request mit status='genehmigt', damit die Plantafel den Block
 // markiert. Bei Zeitausgleich wird zusätzlich eine
@@ -224,7 +224,7 @@ export function AdminAbsenceDialog({
           <DialogTitle>Abwesenheit nachtragen</DialogTitle>
           <DialogDescription>
             Trägt für den gewählten Mitarbeiter pro Werktag einen Abwesenheits-Eintrag
-            (Mo–Do, je 10 h) in die Stundenerfassung und gleichzeitig einen genehmigten
+            (Mo–Do je 8 h, Fr 7 h) in die Stundenerfassung und gleichzeitig einen genehmigten
             Antrag in die Plantafel ein.
           </DialogDescription>
         </DialogHeader>

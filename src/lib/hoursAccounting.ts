@@ -2,7 +2,7 @@
 //
 // Kernregel: Überstunden und Minusstunden werden PRO TAG gerechnet,
 // nicht pro time_entry. Bei mehreren Projekten am selben Tag würde
-// eine per-Entry-Berechnung Math.max(0, 6h - 10h) = 0 zweimal liefern,
+// eine per-Entry-Berechnung Math.max(0, 6h - 8h) = 0 zweimal liefern,
 // obwohl der Tag in Summe 12h und damit +2h Überstunden hat.
 //
 // Sonderzeiten (Urlaub / Krankenstand / Feiertag / Zeitausgleich /
@@ -20,7 +20,7 @@ export type TimeEntryLite = {
 export type DayBalance = {
   datum: string;          // YYYY-MM-DD
   ist: number;            // gebuchte Summe (alle Einträge des Tages)
-  soll: number;           // Tagessoll (10/0 Mo-Do/sonst, 0 bei Sonderzeit)
+  soll: number;           // Tagessoll (8 Mo-Do / 7 Fr / 0 Sa-So, 0 bei Sonderzeit)
   saldo: number;          // ist - soll, kann negativ sein
   istSonderzeit: boolean;
 };
