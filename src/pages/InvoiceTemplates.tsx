@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/PageHeader";
-import { Plus, Trash2, Save, Package, Search, Filter, Upload, Star, TrendingUp, Percent, Euro, ImagePlus, X, Calculator, Clock } from "lucide-react";
+import { Plus, Trash2, Save, Package, Search, Filter, Upload, Star, TrendingUp, Percent, Euro, ImagePlus, X, Calculator, Clock, Copy } from "lucide-react";
 import { MaterialFileImport } from "@/components/MaterialFileImport";
 import { Textarea } from "@/components/ui/textarea";
 import { useEinheiten } from "@/hooks/useEinheiten";
@@ -138,11 +138,40 @@ export default function InvoiceTemplates() {
   const [deleteTarget, setDeleteTarget] = useState<Template | null>(null);
   const [deleteUsageCount, setDeleteUsageCount] = useState<number | null>(null);
   const [fotoUploading, setFotoUploading] = useState(false);
+  // "Als Kopie speichern": Zustand wird auf Neuanlage umgestellt (editId null,
+  // Komponenten ohne IDs), der eigentliche Save läuft im nächsten Render —
+  // sonst würde handleSave noch den alten editId-State sehen.
+  const [pendingCopySave, setPendingCopySave] = useState(false);
   const [editFotoUrl, setEditFotoUrl] = useState<string | null>(null);
   const { toast } = useToast();
   const einheiten = useEinheiten();
 
   useEffect(() => { fetchTemplates(); }, []);
+
+  useEffect(() => {
+    if (pendingCopySave) {
+      setPendingCopySave(false);
+      handleSave();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCopySave]);
+
+  /** Aktuellen Formularstand als NEUE Position/Material speichern —
+   *  gleiche Kalkulation (Komponenten werden mitkopiert), eigener Name. */
+  const handleSaveAsCopy = () => {
+    setEditId(null);
+    setForm(f => ({
+      ...f,
+      kurzbezeichnung: `${f.kurzbezeichnung || f.name} (Kopie)`,
+      name: `${f.name || f.kurzbezeichnung} (Kopie)`,
+      produktnummer: "",
+      foto_path: null,
+    }));
+    setPosComponents(prev => prev.map(c => ({ ...c, id: undefined })));
+    setOriginalComponentIds([]);
+    setEditFotoUrl(null);
+    setPendingCopySave(true);
+  };
 
   const fetchTemplates = async () => {
     const { data, error } = await supabase
@@ -212,7 +241,11 @@ export default function InvoiceTemplates() {
   const kategorien = [...new Set(templates.filter(t =>
     activeArt === "stundensatz" ? istStundensatz(t) : activeArt === "material" ? (t.art === "material" && !istStundensatz(t)) : t.art === activeArt
   ).map(t => t.kategorie))].sort();
-  const produktgruppen = [...new Set(templates.map(t => t.produktgruppe).filter(Boolean))].sort() as string[];
+  // Produktgruppen getrennt je Art: beim Bearbeiten einer POSITION nur
+  // Positions-Gruppen anbieten (nicht die Material-Gruppen wie Dämmung etc.)
+  const produktgruppen = [...new Set(
+    templates.filter(t => t.art === form.art).map(t => t.produktgruppe).filter(Boolean),
+  )].sort() as string[];
   const lieferanten = [...new Set(templates.map(t => t.lieferant).filter(Boolean))].sort() as string[];
 
   const filtered = templates.filter(t => {
@@ -807,7 +840,7 @@ export default function InvoiceTemplates() {
         )}
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {form.art === "position"
@@ -1176,6 +1209,18 @@ export default function InvoiceTemplates() {
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Abbrechen</Button>
+              {editId && (
+                <Button
+                  variant="outline"
+                  onClick={handleSaveAsCopy}
+                  disabled={!form.kurzbezeichnung?.trim() || componentsLoading}
+                  className="gap-2"
+                  title="Speichert eine neue Position mit identischer Kalkulation — Namen danach anpassen"
+                >
+                  <Copy className="w-4 h-4" />
+                  Als Kopie speichern
+                </Button>
+              )}
               <Button onClick={handleSave} disabled={!form.kurzbezeichnung?.trim() || componentsLoading} className="gap-2">
                 <Save className="w-4 h-4" />
                 {componentsLoading ? "Lädt Komponenten…" : "Speichern"}

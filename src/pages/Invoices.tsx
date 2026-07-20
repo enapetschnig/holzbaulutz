@@ -1159,6 +1159,25 @@ export default function Invoices() {
               } catch (e: any) {
                 console.warn("Materialbedarf beim Projektanlegen fehlgeschlagen:", e?.message);
               }
+              // Materialliste-PDF im Projektordner ablegen (Parität zum
+              // Annehmen-Flow im Beleg-Editor).
+              try {
+                const inv = invoices.find(i => i.id === createProjectForInvoiceId);
+                const { sammleMaterialliste, generateMateriallistePdf } = await import("@/lib/materialliste");
+                const zeilen = await sammleMaterialliste(createProjectForInvoiceId);
+                if (zeilen.length > 0 && inv) {
+                  const { loadInvoiceLogo } = await import("@/lib/logoLoader");
+                  const logoUri = await loadInvoiceLogo();
+                  const blob = generateMateriallistePdf(
+                    { nummer: inv.nummer, kunde_name: inv.kunde_name, datum: inv.datum, projektName: (newProject as any).name },
+                    zeilen, logoUri,
+                  );
+                  const pfad = `${newProject.id}/materialliste/Materialliste_${(inv.nummer || "Angebot").replace(/[^\w-]+/g, "_")}.pdf`;
+                  await supabase.storage.from("project-materials").upload(pfad, blob, { upsert: true, contentType: "application/pdf" });
+                }
+              } catch (e: any) {
+                console.warn("Materialliste-PDF fehlgeschlagen:", e?.message);
+              }
             }
             setCreateProjectDialogOpen(false);
             setCreateProjectForInvoiceId(null);

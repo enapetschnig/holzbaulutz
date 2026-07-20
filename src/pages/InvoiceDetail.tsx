@@ -2523,6 +2523,33 @@ export default function InvoiceDetail() {
     }
   };
 
+  // Materialliste aus den kalkulierten Positionen des Angebots als PDF —
+  // interne Einkaufs-/Baustellenliste (Mengen inkl. Verschnitt, EK, Quellen).
+  const handleMaterialliste = async () => {
+    if (!invoiceId) return;
+    try {
+      const { sammleMaterialliste, generateMateriallistePdf } = await import("@/lib/materialliste");
+      const zeilen = await sammleMaterialliste(invoiceId);
+      if (zeilen.length === 0) {
+        toast({ variant: "destructive", title: "Keine Materialien", description: "Im Angebot stecken keine Material-Komponenten (nur Lohn/Pauschalen)." });
+        return;
+      }
+      const logoUri = await loadInvoiceLogo();
+      const projektName = form.project_id ? (projects.find(p => p.id === form.project_id)?.name || null) : null;
+      const blob = generateMateriallistePdf(
+        { nummer: form.nummer, kunde_name: form.kunde_name, datum: form.datum, projektName },
+        zeilen, logoUri,
+      );
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `Materialliste_${form.nummer || "Angebot"}.pdf`; a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Materialliste erstellt", description: `${zeilen.length} Material${zeilen.length === 1 ? "" : "ien"} — Download gestartet.` });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Materialliste fehlgeschlagen", description: e?.message || "Unbekannter Fehler" });
+    }
+  };
+
   const handleDownloadPdf = async () => {
     if (!invoiceId) {
       toast({ variant: "destructive", title: "Fehler", description: "Bitte zuerst speichern" });
@@ -4952,6 +4979,34 @@ export default function InvoiceDetail() {
                   </TableFooter>
                 </Table>
               </div>
+
+              {/* Interne Arbeitszeit-Info — NUR im Editor sichtbar, nie am PDF:
+                  Summe der Stunden-Positionen + der in den Kalkulationen
+                  hinterlegten Arbeitszeit (auch der "unsichtbaren"). */}
+              {form.typ === "angebot" && (() => {
+                let stdZeilen = 0, kalkStd = 0;
+                for (const it of items) {
+                  if (it.mwst_exempt) continue;
+                  if (istArbeitszeitZeile(it.kurztext || it.beschreibung, it.einheit)) {
+                    stdZeilen += Number(it.menge) || 0;
+                  } else {
+                    kalkStd += ((Number(it.arbeitszeit_minuten) || 0) * (Number(it.menge) || 0)) / 60;
+                  }
+                }
+                const gesamt = Math.round((stdZeilen + kalkStd) * 10) / 10;
+                if (gesamt <= 0) return null;
+                return (
+                  <div className="mt-3 rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground flex items-start gap-2">
+                    <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                    <span>
+                      <b className="text-foreground">Nur intern (erscheint nicht am PDF):</b>{" "}
+                      In diesem Angebot stecken <b className="text-foreground">{gesamt.toLocaleString("de-AT")} Arbeitsstunden</b>
+                      {stdZeilen > 0 && kalkStd > 0 && <> — {(Math.round(stdZeilen * 10) / 10).toLocaleString("de-AT")} h aus Stunden-Positionen + {(Math.round(kalkStd * 10) / 10).toLocaleString("de-AT")} h aus den Kalkulationen der Positionen</>}
+                      {stdZeilen === 0 && kalkStd > 0 && <> (komplett aus den Kalkulationen der Positionen)</>}.
+                    </span>
+                  </div>
+                );
+              })()}
               </fieldset>
             </CardContent>
           </Card>
@@ -5061,6 +5116,13 @@ export default function InvoiceDetail() {
                       <Printer className="w-4 h-4" />
                       Drucken
                     </Button>
+                    {form.typ === "angebot" && (
+                      <Button onClick={handleMaterialliste} variant="outline" className="gap-2"
+                        title="Alle Materialien aus den kalkulierten Positionen als PDF (intern, inkl. Verschnitt + EK)">
+                        <Package className="w-4 h-4" />
+                        Materialliste
+                      </Button>
+                    )}
                   </>
                 )}
                 <Button variant="outline" onClick={async () => { const ok = await handleSave(); if (ok) toast({ title: "Gespeichert" }); }} disabled={saving} className="gap-2">
@@ -6061,6 +6123,22 @@ export default function InvoiceDetail() {
                 if (n > 0) toast({ title: "Projekt verknüpft", description: `${n} Material-Position(en) als Soll ins Projekt übernommen.` });
               } catch (e: any) {
                 console.warn("Materialbedarf fehlgeschlagen:", e?.message);
+              }
+              // Materialliste als PDF im Projekt ablegen (Ordner "Materialliste")
+              try {
+                const { sammleMaterialliste, generateMateriallistePdf } = await import("@/lib/materialliste");
+                const zeilen = await sammleMaterialliste(invoiceId);
+                if (zeilen.length > 0) {
+                  const logoUri = await loadInvoiceLogo();
+                  const blob = generateMateriallistePdf(
+                    { nummer: form.nummer, kunde_name: form.kunde_name, datum: form.datum, projektName: (newProject as any).name },
+                    zeilen, logoUri,
+                  );
+                  const pfad = `${newProject.id}/materialliste/Materialliste_${(form.nummer || "Angebot").replace(/[^\w-]+/g, "_")}.pdf`;
+                  await supabase.storage.from("project-materials").upload(pfad, blob, { upsert: true, contentType: "application/pdf" });
+                }
+              } catch (e: any) {
+                console.warn("Materialliste-PDF fehlgeschlagen:", e?.message);
               }
             }
             const { data: projectsData } = await supabase

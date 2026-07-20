@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Plus, Trash2, Package, Edit2, Check, X, ArrowDown, ArrowUp, Minus } from "lucide-react";
+import { Plus, Trash2, Package, Edit2, Check, X, ArrowDown, ArrowUp, Minus, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -44,6 +44,18 @@ const MaterialList = () => {
   const { projectId } = useParams<{ projectId: string }>();
   const { toast } = useToast();
   const einheiten = useEinheiten();
+  // Beim Annehmen des Angebots abgelegte Materiallisten-PDFs (Projektordner)
+  const [materiallistePdfs, setMateriallistePdfs] = useState<{ name: string; path: string }[]>([]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    (async () => {
+      const { data } = await supabase.storage.from("project-materials").list(`${projectId}/materialliste`);
+      setMateriallistePdfs(((data as any[]) || [])
+        .filter(f => f.name?.toLowerCase().endsWith(".pdf"))
+        .map(f => ({ name: f.name, path: `${projectId}/materialliste/${f.name}` })));
+    })();
+  }, [projectId]);
   const [entries, setEntries] = useState<MaterialEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [projectName, setProjectName] = useState("");
@@ -213,6 +225,33 @@ const MaterialList = () => {
       <PageHeader title={`${projectName} - Material`} backPath={`/projects/${projectId}`} />
 
       <main className="container mx-auto px-4 py-6 max-w-3xl space-y-4">
+        {/* Materialliste aus dem Angebot (PDF) — beim Projekt-Anlegen abgelegt */}
+        {isAdmin && materiallistePdfs.length > 0 && (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <FileDown className="h-5 w-5 text-primary" />
+                Materialliste aus dem Angebot
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-1">
+              {materiallistePdfs.map(pdf => (
+                <button
+                  key={pdf.path}
+                  className="flex items-center gap-2 text-sm w-full text-left hover:bg-muted rounded px-2 py-1.5 transition-colors"
+                  onClick={async () => {
+                    const { data } = await supabase.storage.from("project-materials").createSignedUrl(pdf.path, 300);
+                    if (data?.signedUrl) window.open(data.signedUrl, "_blank");
+                  }}
+                >
+                  <Package className="h-4 w-4 text-red-500 shrink-0" />
+                  <span className="truncate">{pdf.name.replace(/_/g, " ")}</span>
+                </button>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
         {/* Verbrauchsübersicht */}
         {summary.length > 0 && (
           <Card>
