@@ -4984,26 +4984,62 @@ export default function InvoiceDetail() {
                   Summe der Stunden-Positionen + der in den Kalkulationen
                   hinterlegten Arbeitszeit (auch der "unsichtbaren"). */}
               {form.typ === "angebot" && (() => {
-                let stdZeilen = 0, kalkStd = 0;
-                for (const it of items) {
-                  if (it.mwst_exempt) continue;
-                  if (istArbeitszeitZeile(it.kurztext || it.beschreibung, it.einheit)) {
-                    stdZeilen += Number(it.menge) || 0;
-                  } else {
-                    kalkStd += ((Number(it.arbeitszeit_minuten) || 0) * (Number(it.menge) || 0)) / 60;
-                  }
-                }
+                // Je Position: explizite Stunden-Zeile (Menge = Stunden) oder
+                // kalkulierte Arbeitszeit (Minuten/EH × Menge).
+                const zeilen = items
+                  .filter(it => !it.mwst_exempt)
+                  .map(it => {
+                    const istStd = istArbeitszeitZeile(it.kurztext || it.beschreibung, it.einheit);
+                    const stunden = istStd
+                      ? (Number(it.menge) || 0)
+                      : ((Number(it.arbeitszeit_minuten) || 0) * (Number(it.menge) || 0)) / 60;
+                    return { it, istStd, stunden: Math.round(stunden * 10) / 10 };
+                  })
+                  .filter(z => z.stunden > 0);
+                const stdZeilen = zeilen.filter(z => z.istStd).reduce((s, z) => s + z.stunden, 0);
+                const kalkStd = zeilen.filter(z => !z.istStd).reduce((s, z) => s + z.stunden, 0);
                 const gesamt = Math.round((stdZeilen + kalkStd) * 10) / 10;
                 if (gesamt <= 0) return null;
                 return (
-                  <div className="mt-3 rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground flex items-start gap-2">
-                    <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                    <span>
-                      <b className="text-foreground">Nur intern (erscheint nicht am PDF):</b>{" "}
-                      In diesem Angebot stecken <b className="text-foreground">{gesamt.toLocaleString("de-AT")} Arbeitsstunden</b>
-                      {stdZeilen > 0 && kalkStd > 0 && <> — {(Math.round(stdZeilen * 10) / 10).toLocaleString("de-AT")} h aus Stunden-Positionen + {(Math.round(kalkStd * 10) / 10).toLocaleString("de-AT")} h aus den Kalkulationen der Positionen</>}
-                      {stdZeilen === 0 && kalkStd > 0 && <> (komplett aus den Kalkulationen der Positionen)</>}.
-                    </span>
+                  <div className="mt-3 rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                    <div className="flex items-start gap-2">
+                      <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                      <span>
+                        <b className="text-foreground">Nur intern (erscheint nicht am PDF):</b>{" "}
+                        In diesem Angebot stecken <b className="text-foreground">{gesamt.toLocaleString("de-AT")} Arbeitsstunden</b>
+                        {stdZeilen > 0 && kalkStd > 0 && <> — {(Math.round(stdZeilen * 10) / 10).toLocaleString("de-AT")} h aus Stunden-Positionen + {(Math.round(kalkStd * 10) / 10).toLocaleString("de-AT")} h aus den Kalkulationen der Positionen</>}
+                        {stdZeilen === 0 && kalkStd > 0 && <> (komplett aus den Kalkulationen der Positionen)</>}.
+                      </span>
+                    </div>
+                    <details className="mt-1.5 ml-5">
+                      <summary className="cursor-pointer select-none hover:text-foreground">
+                        Aufschlüsselung je Position ▾
+                      </summary>
+                      <ul className="mt-1.5 space-y-0.5 rounded-md border bg-background/60 p-2">
+                        {zeilen.map((z, i) => {
+                          const name = (z.it.kurztext || z.it.beschreibung || `Position ${z.it.position}`);
+                          return (
+                            <li key={i} className="flex justify-between gap-2">
+                              <span className="truncate">
+                                {name.length > 60 ? name.slice(0, 60) + "…" : name}
+                                <span className="opacity-70"> · {z.it.menge} {z.it.einheit}</span>
+                                {!z.istStd && (
+                                  <span className="ml-1.5 text-[10px] rounded bg-muted px-1 py-0.5"
+                                    title="Arbeitszeit aus der Kalkulation dieser Position (Std/Einheit × Menge)">
+                                    aus Kalkulation
+                                  </span>
+                                )}
+                              </span>
+                              <span className="font-mono tabular-nums shrink-0">{z.stunden.toFixed(1)} h</span>
+                            </li>
+                          );
+                        })}
+                        <li className="flex justify-between gap-2 pt-1 mt-1 border-t border-border/50 font-medium text-foreground">
+                          <span>Gesamt</span>
+                          <span className="font-mono tabular-nums shrink-0">{gesamt.toFixed(1)} h</span>
+                        </li>
+                      </ul>
+                    </details>
                   </div>
                 );
               })()}
