@@ -298,7 +298,13 @@ export default function InvoiceDetail() {
   const [anzahlungBetragInput, setAnzahlungBetragInput] = useState<string>("");
   // Welches Feld hat der User zuletzt angefasst? Bestimmt, ob wir mit
   // Prozent oder Fix-Betrag in die URL/Ladelogik gehen.
-  const [anzahlungMode, setAnzahlungMode] = useState<"prozent" | "betrag">("prozent");
+  const [anzahlungMode, setAnzahlungMode] = useState<"prozent" | "betrag" | "leistungsstand">("prozent");
+  // Kumulierte Teilrechnung: Auftrags-Positionen mit bisherigem und neuem
+  // Leistungsstand (%) — Grundlage der positionsweisen kumulierten Abrechnung.
+  const [anzahlungPositionen, setAnzahlungPositionen] = useState<{
+    position: number; name: string; menge: number; einheit: string; einzelpreis: number;
+    bisherPct: number; neuPct: string;
+  }[]>([]);
   // Summe bereits ausgestellter Anzahlungen zum gleichen Auftrag (für Kumulations-Check)
   const [bestehendeAnzahlungenNetto, setBestehendeAnzahlungenNetto] = useState<number>(0);
   // Kumulierte Folge-AR: IDs der bisherigen ARs + Wurzel-Auftrag (Angebot/AB)
@@ -468,6 +474,8 @@ export default function InvoiceDetail() {
       anzahlungProzent?: number | null;
       anzahlungBetrag?: number | null;
       abzugIds?: string[];
+      /** Kumulierte Teilrechnung: Positionszeilen aus sessionStorage bauen */
+      kumulierteLeistung?: boolean;
       /** Duplikat-Modus: unabhängige Kopie — KEIN parent_invoice_id,
        *  Original wird beim Speichern NICHT als "verrechnet" markiert. */
       duplicate?: boolean;
@@ -559,6 +567,61 @@ export default function InvoiceDetail() {
       }));
 
       // Anzahlungsrechnung: Zeile mit dem Anzahlungsbetrag (Delta).
+      // KUMULIERTE TEILRECHNUNG nach Leistungsstand: je Position eine Zeile
+      // mit dem kumulierten Stand (%), darunter der Abzug aller bisherigen
+      // Teilrechnungen (netto) — USt entsteht automatisch auf die Differenz.
+      if (targetTyp === "anzahlungsrechnung" && opts?.kumulierteLeistung) {
+        let lsRows: any[] = [];
+        try { lsRows = JSON.parse(sessionStorage.getItem("kumulierte_leistungsstand") || "[]"); } catch { /* leer */ }
+        sessionStorage.removeItem("kumulierte_leistungsstand");
+        if (lsRows.length > 0) {
+          nextItems = lsRows
+            .filter(r => (Number(r.pct) || 0) > 0)
+            .map((r, i) => {
+              const pct = Math.min(100, Math.max(0, Number(r.pct) || 0));
+              const betrag = Math.round(r.menge * r.einzelpreis * pct / 100 * 100) / 100;
+              return {
+                position: i + 1,
+                beschreibung: `${r.name} — Leistungsstand ${pct} % (${r.menge} ${r.einheit} × € ${(Number(r.einzelpreis) || 0).toFixed(2)})`,
+                kurztext: `${r.name} (${pct} %)`,
+                langtext: "",
+                menge: 1,
+                einheit: "pausch.",
+                einzelpreis: betrag,
+                rabatt_prozent: 0,
+                gesamtpreis: betrag,
+              };
+            });
+          if (opts?.abzugIds && opts.abzugIds.length > 0) {
+            const { data: prevTR } = await supabase
+              .from("invoices")
+              .select("id, nummer, netto_summe, datum")
+              .in("id", opts.abzugIds);
+            ((prevTR as any[]) || [])
+              .sort((a, b) => String(a.datum).localeCompare(String(b.datum)))
+              .forEach((abz, i) => {
+                const netto = Number(abz.netto_summe) || 0;
+                nextItems.push({
+                  position: nextItems.length + 1,
+                  beschreibung: `abzüglich ${i + 1}. Teilrechnung ${abz.nummer} vom ${new Date(abz.datum + "T12:00:00").toLocaleDateString("de-AT")} (netto)`,
+                  kurztext: `Abzug ${abz.nummer}`,
+                  langtext: "",
+                  menge: -1,
+                  einheit: "pausch.",
+                  einzelpreis: netto,
+                  rabatt_prozent: 0,
+                  gesamtpreis: -netto,
+                });
+              });
+          }
+          // Kumulierten Stand am Dokument merken — die NÄCHSTE Teilrechnung
+          // liest ihn als "bisher %" vor.
+          const standMap: Record<string, number> = {};
+          lsRows.forEach(r => { standMap[String(r.position)] = Math.min(100, Math.max(0, Number(r.pct) || 0)); });
+          setForm(prev => ({ ...prev, leistungsstand: standMap } as any));
+        }
+      }
+
       // KUMULIERT (Folge-AR, opts.abzugIds gesetzt): positive Zeile zeigt den
       // kumulierten Leistungsstand, darunter werden alle bisherigen ARs als
       // negative NETTO-Zeilen abgezogen. Netto/MwSt/Brutto der Rechnung
@@ -762,6 +825,7 @@ export default function InvoiceDetail() {
           anzahlungProzent: anzahlungProzentParam ? Number(anzahlungProzentParam) : null,
           anzahlungBetrag: anzahlungBetragParam ? Number(anzahlungBetragParam) : null,
           abzugIds: abzugIdsParam ? abzugIdsParam.split(",").filter(Boolean) : undefined,
+          kumulierteLeistung: searchParams.get("leistungsstand") === "1",
           duplicate: searchParams.get("duplicate") === "1",
         });
       })();
@@ -969,6 +1033,7 @@ export default function InvoiceDetail() {
       // Positionen aus dem Angebot/AB werden nicht übernommen.
       parent_invoice_id: (data as any).parent_invoice_id || null,
       anzahlung_prozent: (data as any).anzahlung_prozent != null ? Number((data as any).anzahlung_prozent) : null,
+      leistungsstand: (data as any).leistungsstand || null,
       anzahlung_betrag: (data as any).anzahlung_betrag != null ? Number((data as any).anzahlung_betrag) : null,
     } as any);
 
@@ -1843,6 +1908,7 @@ export default function InvoiceDetail() {
         kundennummer: (form as any).kundennummer || null,
         parent_invoice_id: normalizedParentId,
         anzahlung_prozent: (form as any).anzahlung_prozent ?? null,
+        leistungsstand: (form as any).leistungsstand ?? null,
         anzahlung_betrag: (form as any).anzahlung_betrag ?? null,
         ansprechpartner_employee_id: (form as any).ansprechpartner_employee_id || null,
         ansprechpartner_name: (form as any).ansprechpartner_name?.trim() || null,
@@ -2550,7 +2616,7 @@ export default function InvoiceDetail() {
   // (Anzahlungs-Prozent, Abzüge von Anzahlungen).
   const handleConvertTo = (
     targetTyp: string,
-    options?: { anzahlung_prozent?: number; anzahlung_betrag?: number; abzug_ids?: string[]; from_doc_id?: string },
+    options?: { anzahlung_prozent?: number; anzahlung_betrag?: number; abzug_ids?: string[]; from_doc_id?: string; leistungsstand?: boolean },
   ) => {
     const sourceId = options?.from_doc_id || invoiceId;
     if (!sourceId) return;
@@ -2565,6 +2631,7 @@ export default function InvoiceDetail() {
     if (options?.anzahlung_prozent != null) params.set("anzahlung_prozent", String(options.anzahlung_prozent));
     if (options?.anzahlung_betrag != null) params.set("anzahlung_betrag", String(options.anzahlung_betrag));
     if (options?.abzug_ids?.length) params.set("abzug_ids", options.abzug_ids.join(","));
+    if (options?.leistungsstand) params.set("leistungsstand", "1");
     navigate(`/invoices/new?${params.toString()}`);
   };
 
@@ -3254,6 +3321,39 @@ export default function InvoiceDetail() {
                                   setBestehendeAnzahlungenNetto(sum);
                                   setAnzahlungAbzugIds(rows.map(r => r.id));
                                   setAnzahlungRootId(rootId);
+                                  // Kumulierte Teilrechnung: Positionen des Auftrags +
+                                  // bisheriger Leistungsstand (aus der letzten TR mit
+                                  // gespeichertem Stand) für die %-Tabelle laden.
+                                  const { data: rootItems } = await supabase
+                                    .from("invoice_items")
+                                    .select("position, beschreibung, kurztext, menge, einheit, einzelpreis, mwst_exempt")
+                                    .eq("invoice_id", rootId)
+                                    .order("position");
+                                  let bisherStand: Record<string, number> = {};
+                                  if (rows.length > 0) {
+                                    const { data: prevTRs } = await (supabase as any)
+                                      .from("invoices")
+                                      .select("leistungsstand, created_at")
+                                      .in("id", rows.map(r => r.id))
+                                      .not("leistungsstand", "is", null)
+                                      .order("created_at", { ascending: false })
+                                      .limit(1);
+                                    bisherStand = ((prevTRs as any[])?.[0]?.leistungsstand as Record<string, number>) || {};
+                                  }
+                                  setAnzahlungPositionen((((rootItems as any[]) || []))
+                                    .filter(i => !i.mwst_exempt && (Number(i.einzelpreis) || 0) !== 0)
+                                    .map(i => {
+                                      const bisher = Number(bisherStand[String(i.position)]) || 0;
+                                      return {
+                                        position: i.position,
+                                        name: i.kurztext || i.beschreibung || `Position ${i.position}`,
+                                        menge: Number(i.menge) || 0,
+                                        einheit: i.einheit || "Stk.",
+                                        einzelpreis: Number(i.einzelpreis) || 0,
+                                        bisherPct: bisher,
+                                        neuPct: String(bisher),
+                                      };
+                                    }));
                                   // Basis = Netto des Wurzel-Auftrags (bei AR-aus-AR ≠ aktuelles Dokument)
                                   if (rootId !== invoiceId) {
                                     const { data: rootInv } = await supabase
@@ -5271,6 +5371,7 @@ export default function InvoiceDetail() {
             ansprechpartner_telefon: (form as any).ansprechpartner_telefon || "",
             ansprechpartner_email: (form as any).ansprechpartner_email || "",
             anzahlung_prozent: (form as any).anzahlung_prozent ?? null,
+        leistungsstand: (form as any).leistungsstand ?? null,
             anzahlung_betrag: (form as any).anzahlung_betrag ?? null,
             // Allgemeine Angaben (Angebot + AB) — Toggle + Felder müssen
             // an die Vorschau durchgereicht werden, sonst rendert die
@@ -5457,7 +5558,7 @@ export default function InvoiceDetail() {
         <Dialog open={anzahlungDialogOpen} onOpenChange={setAnzahlungDialogOpen}>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>Anzahlungsrechnung erstellen</DialogTitle>
+              <DialogTitle>Anzahlungs- / Teilrechnung erstellen</DialogTitle>
             </DialogHeader>
             {(() => {
               // Bei "AR aus AR" ist die Basis der Wurzel-Auftrag, nicht das Delta
@@ -5466,9 +5567,17 @@ export default function InvoiceDetail() {
               const restNetto = Math.max(0, basisNetto - bestehendeAnzahlungenNetto);
               const prozentNum = Number(anzahlungProzentInput);
               const betragNum = Number(anzahlungBetragInput);
+              // Kumuliert: Leistungsstand gesamt über alle Positionen;
+              // Rechnungsbetrag = Stand − bereits gestellte Teilrechnungen.
+              const kumuliertNetto = Math.round(anzahlungPositionen.reduce((sum, p) => {
+                const pct = Math.min(100, Math.max(0, Number(p.neuPct) || 0));
+                return sum + p.menge * p.einzelpreis * pct / 100;
+              }, 0) * 100) / 100;
               const anzNetto = anzahlungMode === "prozent"
                 ? (isNaN(prozentNum) ? 0 : basisNetto * prozentNum / 100)
-                : (isNaN(betragNum) ? 0 : betragNum);
+                : anzahlungMode === "betrag"
+                ? (isNaN(betragNum) ? 0 : betragNum)
+                : Math.round((kumuliertNetto - bestehendeAnzahlungenNetto) * 100) / 100;
               const anzBrutto = anzNetto * (1 + (form.mwst_satz / 100));
               // Neue Anzahlung darf den noch offenen Rest (basisNetto abzüglich
               // bereits ausgestellter Anzahlungen) nicht überschreiten.
@@ -5499,6 +5608,77 @@ export default function InvoiceDetail() {
                       )}
                     </div>
 
+                    {/* Modus: pauschal (%/Betrag) oder kumuliert nach Leistungsstand */}
+                    {anzahlungPositionen.length > 0 && (
+                      <div className="flex rounded-md border overflow-hidden text-sm">
+                        {([["prozent", "Pauschal"], ["leistungsstand", "Nach Leistungsstand (kumuliert)"]] as const).map(([val, lbl]) => (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => setAnzahlungMode(val === "prozent" ? "prozent" : "leistungsstand")}
+                            className={`flex-1 px-3 py-1.5 transition-colors ${(val === "prozent" ? anzahlungMode !== "leistungsstand" : anzahlungMode === "leistungsstand") ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
+                          >
+                            {lbl}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {anzahlungMode === "leistungsstand" && (
+                      <div className="rounded-md border overflow-hidden">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="bg-muted/60">
+                              <th className="text-left px-2 py-1.5 font-semibold">Position</th>
+                              <th className="text-right px-2 py-1.5 font-semibold w-16">bisher %</th>
+                              <th className="text-right px-2 py-1.5 font-semibold w-20">neu %</th>
+                              <th className="text-right px-2 py-1.5 font-semibold w-24">kumuliert €</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {anzahlungPositionen.map((p, i) => {
+                              const pct = Math.min(100, Math.max(0, Number(p.neuPct) || 0));
+                              return (
+                                <tr key={p.position} className="border-t">
+                                  <td className="px-2 py-1 truncate max-w-[220px]" title={`${p.name} · ${p.menge} ${p.einheit} × € ${p.einzelpreis.toFixed(2)}`}>
+                                    {p.name}
+                                    <span className="text-muted-foreground"> · {p.menge} {p.einheit}</span>
+                                  </td>
+                                  <td className="px-2 py-1 text-right text-muted-foreground tabular-nums">{p.bisherPct}%</td>
+                                  <td className="px-1 py-0.5">
+                                    <Input
+                                      type="number" min={0} max={100} step={5}
+                                      value={p.neuPct}
+                                      onChange={(e) => setAnzahlungPositionen(prev => prev.map((x, xi) => xi === i ? { ...x, neuPct: e.target.value } : x))}
+                                      className="h-7 text-right text-xs"
+                                    />
+                                  </td>
+                                  <td className="px-2 py-1 text-right font-mono tabular-nums">
+                                    {(p.menge * p.einzelpreis * pct / 100).toFixed(2)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            <tr className="border-t bg-muted/40 font-medium">
+                              <td className="px-2 py-1.5" colSpan={3}>Leistungsstand gesamt (netto)</td>
+                              <td className="px-2 py-1.5 text-right font-mono tabular-nums">{kumuliertNetto.toFixed(2)}</td>
+                            </tr>
+                            {bestehendeAnzahlungenNetto > 0 && (
+                              <tr className="border-t text-orange-700">
+                                <td className="px-2 py-1" colSpan={3}>abzüglich bereits gestellte Teilrechnungen</td>
+                                <td className="px-2 py-1 text-right font-mono tabular-nums">- {bestehendeAnzahlungenNetto.toFixed(2)}</td>
+                              </tr>
+                            )}
+                            <tr className="border-t bg-primary/10 font-bold">
+                              <td className="px-2 py-1.5" colSpan={3}>Diese Teilrechnung (netto)</td>
+                              <td className="px-2 py-1.5 text-right font-mono tabular-nums">{anzNetto.toFixed(2)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {anzahlungMode !== "leistungsstand" && (
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <Label>Prozentsatz</Label>
@@ -5544,6 +5724,7 @@ export default function InvoiceDetail() {
                         </div>
                       </div>
                     </div>
+                    )}
 
                     <div className="rounded border border-primary/30 bg-primary/5 p-3 text-sm">
                       <div className="flex justify-between font-medium">
@@ -5576,7 +5757,17 @@ export default function InvoiceDetail() {
                           ...(anzahlungAbzugIds.length > 0 ? { abzug_ids: anzahlungAbzugIds } : {}),
                           ...(anzahlungRootId ? { from_doc_id: anzahlungRootId } : {}),
                         };
-                        if (anzahlungMode === "betrag") {
+                        if (anzahlungMode === "leistungsstand") {
+                          // Positionsdaten sind zu groß für die URL → sessionStorage-Übergabe
+                          sessionStorage.setItem("kumulierte_leistungsstand", JSON.stringify(
+                            anzahlungPositionen.map(p => ({
+                              position: p.position, name: p.name, menge: p.menge,
+                              einheit: p.einheit, einzelpreis: p.einzelpreis,
+                              pct: Math.min(100, Math.max(0, Number(p.neuPct) || 0)),
+                            })),
+                          ));
+                          handleConvertTo("anzahlungsrechnung", { leistungsstand: true, ...extra });
+                        } else if (anzahlungMode === "betrag") {
                           handleConvertTo("anzahlungsrechnung", { anzahlung_betrag: Math.round(anzNetto * 100) / 100, ...extra });
                         } else {
                           handleConvertTo("anzahlungsrechnung", { anzahlung_prozent: Number(anzahlungProzentInput), ...extra });
