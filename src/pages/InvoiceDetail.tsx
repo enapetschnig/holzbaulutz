@@ -3326,7 +3326,7 @@ export default function InvoiceDetail() {
                                   // gespeichertem Stand) für die %-Tabelle laden.
                                   const { data: rootItems } = await supabase
                                     .from("invoice_items")
-                                    .select("position, beschreibung, kurztext, menge, einheit, einzelpreis, mwst_exempt")
+                                    .select("position, beschreibung, kurztext, menge, einheit, einzelpreis, rabatt_prozent, mwst_exempt")
                                     .eq("invoice_id", rootId)
                                     .order("position");
                                   let bisherStand: Record<string, number> = {};
@@ -3340,20 +3340,38 @@ export default function InvoiceDetail() {
                                       .limit(1);
                                     bisherStand = ((prevTRs as any[])?.[0]?.leistungsstand as Record<string, number>) || {};
                                   }
-                                  setAnzahlungPositionen((((rootItems as any[]) || []))
+                                  // Effektiver EP je Position: Zeilen-Rabatt eingerechnet.
+                                  // Dokument-Rabatt des Auftrags wird über einen Faktor
+                                  // verteilt, damit 100 % Leistungsstand EXAKT dem
+                                  // Auftrags-Netto entspricht.
+                                  const basisRows = (((rootItems as any[]) || []))
                                     .filter(i => !i.mwst_exempt && (Number(i.einzelpreis) || 0) !== 0)
-                                    .map(i => {
-                                      const bisher = Number(bisherStand[String(i.position)]) || 0;
-                                      return {
-                                        position: i.position,
-                                        name: i.kurztext || i.beschreibung || `Position ${i.position}`,
-                                        menge: Number(i.menge) || 0,
-                                        einheit: i.einheit || "Stk.",
-                                        einzelpreis: Number(i.einzelpreis) || 0,
-                                        bisherPct: bisher,
-                                        neuPct: String(bisher),
-                                      };
+                                    .map(i => ({
+                                      ...i,
+                                      epEff: (Number(i.einzelpreis) || 0) * (1 - (Number(i.rabatt_prozent) || 0) / 100),
                                     }));
+                                  const zeilenSumme = basisRows.reduce((sum, i) => sum + (Number(i.menge) || 0) * i.epEff, 0);
+                                  // Basis für den Faktor: Netto des Wurzel-Auftrags
+                                  let faktorBasis = 0;
+                                  {
+                                    const { data: rootInvFaktor } = await supabase
+                                      .from("invoices").select("netto_summe").eq("id", rootId).maybeSingle();
+                                    faktorBasis = Number((rootInvFaktor as any)?.netto_summe) || 0;
+                                  }
+                                  const docFaktor = zeilenSumme > 0 && faktorBasis > 0
+                                    ? Math.min(1, faktorBasis / zeilenSumme) : 1;
+                                  setAnzahlungPositionen(basisRows.map(i => {
+                                    const bisher = Number(bisherStand[String(i.position)]) || 0;
+                                    return {
+                                      position: i.position,
+                                      name: i.kurztext || i.beschreibung || `Position ${i.position}`,
+                                      menge: Number(i.menge) || 0,
+                                      einheit: i.einheit || "Stk.",
+                                      einzelpreis: Math.round(i.epEff * docFaktor * 10000) / 10000,
+                                      bisherPct: bisher,
+                                      neuPct: String(bisher),
+                                    };
+                                  }));
                                   // Basis = Netto des Wurzel-Auftrags (bei AR-aus-AR ≠ aktuelles Dokument)
                                   if (rootId !== invoiceId) {
                                     const { data: rootInv } = await supabase
@@ -5625,6 +5643,12 @@ export default function InvoiceDetail() {
                     )}
 
                     {anzahlungMode === "leistungsstand" && (
+                      <>
+                      <p className="text-xs text-muted-foreground">
+                        Trage je Position den <b>kumulierten Fertigstellungsgrad</b> ein (nicht den Zuwachs).
+                        Die Rechnung zeigt den gesamten Leistungsstand, zieht bisherige Teilrechnungen ab —
+                        USt fällt nur auf die Differenz an.
+                      </p>
                       <div className="rounded-md border overflow-hidden">
                         <table className="w-full text-xs">
                           <thead>
@@ -5676,6 +5700,7 @@ export default function InvoiceDetail() {
                           </tbody>
                         </table>
                       </div>
+                      </>
                     )}
 
                     {anzahlungMode !== "leistungsstand" && (
