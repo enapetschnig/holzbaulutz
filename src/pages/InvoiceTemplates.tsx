@@ -151,7 +151,43 @@ export default function InvoiceTemplates() {
   useEffect(() => {
     if (pendingCopySave) {
       setPendingCopySave(false);
-      handleSave();
+      (async () => {
+        await handleSave();
+        // Direkt in der Kopie weiterarbeiten: frisch gespeicherte Position
+        // laden und den Dialog dafür wieder öffnen.
+        try {
+          const { data } = await supabase
+            .from("invoice_templates")
+            .select("*")
+            .eq("kurzbezeichnung", form.kurzbezeichnung)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (data) {
+            const t: any = {
+              ...data,
+              einzelpreis: Number((data as any).einzelpreis) || 0,
+              netto_preis: Number((data as any).netto_preis) || Number((data as any).einzelpreis) || 0,
+              brutto_preis: Number((data as any).brutto_preis) || 0,
+              ust_satz: Number((data as any).ust_satz) || 20,
+              ek_netto: Number((data as any).ek_netto) || 0,
+              vk_netto: Number((data as any).vk_netto) || 0,
+              aufschlag_prozent: Number((data as any).aufschlag_prozent) || 0,
+              verschnitt_prozent: Number((data as any).verschnitt_prozent) || 0,
+              befestigung_preis: Number((data as any).befestigung_preis) || 0,
+              sonstiges_preis: Number((data as any).sonstiges_preis) || 0,
+              arbeitszeit_minuten: Number((data as any).arbeitszeit_minuten) || 0,
+              stundensatz: Number((data as any).stundensatz) || 52,
+              ist_stundensatz: (data as any).ist_stundensatz || false,
+              ist_lagerartikel: (data as any).ist_lagerartikel || false,
+              ist_kalkuliert: (data as any).ist_kalkuliert || false,
+              ist_set: (data as any).ist_set || false,
+            };
+            await openEdit(t);
+            toast({ title: "Kopie erstellt", description: "Du arbeitest jetzt in der Kopie — Name und Kalkulation anpassen." });
+          }
+        } catch { /* Kopie gespeichert, Öffnen best effort */ }
+      })();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingCopySave]);
@@ -242,9 +278,10 @@ export default function InvoiceTemplates() {
     activeArt === "stundensatz" ? istStundensatz(t) : activeArt === "material" ? (t.art === "material" && !istStundensatz(t)) : t.art === activeArt
   ).map(t => t.kategorie))].sort();
   // Produktgruppen getrennt je Art: beim Bearbeiten einer POSITION nur
-  // Positions-Gruppen anbieten (nicht die Material-Gruppen wie Dämmung etc.)
+  // Positions-Gruppen (= deren Kategorien wie "Allgemein", "Außenwände
+  // Dämmung" …), bei Materialien die Material-Gruppen.
   const produktgruppen = [...new Set(
-    templates.filter(t => t.art === form.art).map(t => t.produktgruppe).filter(Boolean),
+    templates.filter(t => t.art === form.art).flatMap(t => [t.produktgruppe, t.kategorie]).filter(Boolean),
   )].sort() as string[];
   const lieferanten = [...new Set(templates.map(t => t.lieferant).filter(Boolean))].sort() as string[];
 
