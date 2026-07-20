@@ -892,10 +892,10 @@ export default function InvoiceTemplates() {
                   <Input value={form.produktnummer} onChange={(e) => setForm(f => ({ ...f, produktnummer: e.target.value }))} placeholder="z.B. 0050-PCI" />
                 </div>
                 <div>
-                  <Label>Produktgruppe</Label>
+                  <Label>Produktgruppe / Kategorie</Label>
                   <Select value={form.produktgruppe || "none"} onValueChange={(v) => {
                     if (v === "_new") {
-                      const newGrp = prompt("Neue Produktgruppe:");
+                      const newGrp = prompt("Neue Produktgruppe/Kategorie:");
                       if (newGrp?.trim()) setForm(f => ({ ...f, produktgruppe: newGrp.trim() }));
                     } else {
                       setForm(f => ({ ...f, produktgruppe: v === "none" ? "" : v }));
@@ -905,7 +905,7 @@ export default function InvoiceTemplates() {
                     <SelectContent>
                       <SelectItem value="none">—</SelectItem>
                       {produktgruppen.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}
-                      <SelectItem value="_new" className="text-primary font-medium">+ Neue Gruppe...</SelectItem>
+                      <SelectItem value="_new" className="text-primary font-medium">+ Neue Gruppe/Kategorie anlegen...</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
