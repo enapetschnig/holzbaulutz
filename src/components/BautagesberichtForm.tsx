@@ -535,7 +535,7 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
           <div className="space-y-4">
             <h3 className="font-medium flex items-center gap-2">
               <Calendar className="h-4 w-4" />
-              Datum & Tätigkeiten
+              Datum & Arbeitsort
             </h3>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
@@ -578,7 +578,6 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
               </div>
             </div>
 
-            <TaetigkeitenEditor value={taetigkeiten} onChange={setTaetigkeiten} />
           </div>
 
           {/* Projekt-Zuordnung — bei Werkstattarbeit ausgeblendet */}
@@ -677,6 +676,9 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
             )}
           </div>
           )}
+
+          {/* Tätigkeiten — nach Projekt/Kunde, damit erst der Auftrag steht */}
+          <TaetigkeitenEditor value={taetigkeiten} onChange={setTaetigkeiten} />
 
           {/* Multi-Employee Selection — ohne Uhrzeiten entfällt die
               Überschneidungs-Warnung (der Guard in der Komponente greift). */}

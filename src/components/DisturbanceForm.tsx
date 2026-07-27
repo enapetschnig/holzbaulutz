@@ -474,7 +474,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
           <div className="space-y-4">
             <h3 className="font-medium flex items-center gap-2">
               <Calendar className="h-4 w-4" />
-              Datum & Tätigkeiten
+              Datum
             </h3>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
@@ -489,7 +489,6 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
               </div>
             </div>
 
-            <TaetigkeitenEditor value={taetigkeiten} onChange={setTaetigkeiten} />
           </div>
 
           {/* Projekt-Zuordnung */}
@@ -584,6 +583,9 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
               <p className="text-sm text-muted-foreground">Bitte wählen Sie oben einen Kunden aus oder erstellen Sie einen neuen.</p>
             )}
           </div>
+
+          {/* Tätigkeiten — nach Projekt/Kunde, damit erst der Auftrag steht */}
+          <TaetigkeitenEditor value={taetigkeiten} onChange={setTaetigkeiten} />
 
           {/* Multi-Employee Selection */}
           <MultiEmployeeSelect
