@@ -12,8 +12,10 @@ interface TimeEntryData {
   disturbance_id?: string | null;
   taetigkeit: string;
   stunden: number;
-  start_time: string;
-  end_time: string;
+  // Berichte (Bautages-/Regiebericht) erfassen nur noch Stunden — dann sind
+  // start/end null. Die Zeiterfassung schickt weiterhin echte Uhrzeiten.
+  start_time: string | null;
+  end_time: string | null;
   pause_minutes: number;
   pause_start?: string | null;
   pause_end?: string | null;
@@ -187,8 +189,8 @@ Deno.serve(async (req: Request) => {
           disturbance_id: mainEntry.disturbance_id || null,
           taetigkeit: mainEntry.taetigkeit,
           stunden: mainEntry.stunden,
-          start_time: mainEntry.start_time,
-          end_time: mainEntry.end_time,
+          start_time: mainEntry.start_time ?? null,
+          end_time: mainEntry.end_time ?? null,
           pause_minutes: mainEntry.pause_minutes,
           pause_start: mainEntry.pause_start || null,
           pause_end: mainEntry.pause_end || null,
@@ -229,8 +231,8 @@ Deno.serve(async (req: Request) => {
           disturbance_id: teamEntry.disturbance_id || null,
           taetigkeit: teamEntry.taetigkeit,
           stunden: teamEntry.stunden,
-          start_time: teamEntry.start_time,
-          end_time: teamEntry.end_time,
+          start_time: teamEntry.start_time ?? null,
+          end_time: teamEntry.end_time ?? null,
           pause_minutes: teamEntry.pause_minutes,
           pause_start: teamEntry.pause_start || null,
           pause_end: teamEntry.pause_end || null,

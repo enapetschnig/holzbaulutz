@@ -11,6 +11,16 @@ import { DictateButton } from "@/components/DictateButton";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useEinheiten } from "@/hooks/useEinheiten";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { TaetigkeitenEditor } from "@/components/TaetigkeitenEditor";
+import {
+  type TaetigkeitEntry,
+  entriesToTaetigkeiten,
+  taetigkeitenToEntries,
+  parseTaetigkeiten,
+  summeStunden,
+  taetigkeitenAlsText,
+} from "@/lib/berichtZeiten";
 import { format } from "date-fns";
 import { MultiEmployeeSelect } from "@/components/MultiEmployeeSelect";
 import { CustomerSelect } from "@/components/CustomerSelect";
@@ -29,9 +39,11 @@ type BautagesberichtFormProps = {
   editData?: {
     id: string;
     datum: string;
-    start_time: string;
-    end_time: string;
+    start_time: string | null;
+    end_time: string | null;
     pause_minutes: number;
+    taetigkeiten?: unknown;
+    location_type?: string | null;
     kunde_name: string;
     kunde_email: string | null;
     kunde_adresse: string | null;
@@ -53,11 +65,16 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
 
+  // Tätigkeitszeilen statt von-bis: "Aufräumen 1 h", "Stapler richten 2,5 h"
+  const [taetigkeiten, setTaetigkeiten] = useState<TaetigkeitEntry[]>(
+    [{ id: crypto.randomUUID(), text: "", stunden: "" }],
+  );
+  // Arbeitsort wie in der Zeiterfassung — Werkstattarbeit ist nicht direkt
+  // verrechenbar und läuft deshalb ohne Projekt.
+  const [arbeitsort, setArbeitsort] = useState<"baustelle" | "werkstatt">("baustelle");
+
   const [formData, setFormData] = useState({
     datum: format(new Date(), "yyyy-MM-dd"),
-    startTime: "08:00",
-    endTime: "10:00",
-    pauseMinutes: 0,
     kundeName: "",
     kundeEmail: "",
     kundeAdresse: "",
@@ -118,11 +135,10 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
 
   useEffect(() => {
     if (editData) {
+      setTaetigkeiten(taetigkeitenToEntries(parseTaetigkeiten(editData.taetigkeiten)));
+      setArbeitsort(editData.location_type === "werkstatt" ? "werkstatt" : "baustelle");
       setFormData({
         datum: editData.datum,
-        startTime: editData.start_time.slice(0, 5),
-        endTime: editData.end_time.slice(0, 5),
-        pauseMinutes: editData.pause_minutes,
         kundeName: editData.kunde_name,
         kundeEmail: editData.kunde_email || "",
         kundeAdresse: editData.kunde_adresse || "",
@@ -141,11 +157,10 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
       loadExistingMaterials(editData.id);
     } else {
       // Reset form for new entry
+      setTaetigkeiten([{ id: crypto.randomUUID(), text: "", stunden: "" }]);
+      setArbeitsort("baustelle");
       setFormData({
         datum: format(new Date(), "yyyy-MM-dd"),
-        startTime: "08:00",
-        endTime: "10:00",
-        pauseMinutes: 0,
         kundeName: "",
         kundeEmail: "",
         kundeAdresse: "",
@@ -189,12 +204,8 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
     }
   };
 
-  const calculateHours = (): number => {
-    const [startH, startM] = formData.startTime.split(":").map(Number);
-    const [endH, endM] = formData.endTime.split(":").map(Number);
-    const totalMinutes = (endH * 60 + endM) - (startH * 60 + startM) - formData.pauseMinutes;
-    return Math.max(0, totalMinutes / 60);
-  };
+  /** Berichtsstunden = Summe der Tätigkeitszeilen. */
+  const calculateHours = (): number => summeStunden(entriesToTaetigkeiten(taetigkeiten));
 
   const addMaterial = () => {
     setMaterials([...materials, { id: crypto.randomUUID(), material: "", menge: "", einheit: "Stk." }]);
@@ -252,16 +263,18 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
     return allWorkerIds.map(workerId => ({
       user_id: workerId,
       datum: formData.datum,
-      start_time: formData.startTime,
-      end_time: formData.endTime,
-      pause_minutes: formData.pauseMinutes,
+      // Keine Uhrzeiten mehr — es werden nur Stunden erfasst. Erfundene
+      // Zeiten würden Überschneidungswarnungen gegen Fiktion auslösen.
+      start_time: null,
+      end_time: null,
+      pause_minutes: 0,
       stunden,
-      taetigkeit: `Bautagesbericht: ${formData.beschreibung.trim().substring(0, 100)}`,
-      location_type: "baustelle",
+      taetigkeit: `${arbeitsort === "werkstatt" ? "Werkstatt" : "Bautagesbericht"}: ${(formData.beschreibung.trim() || taetigkeitenAlsText(entriesToTaetigkeiten(taetigkeiten))).substring(0, 100)}`,
+      location_type: arbeitsort,
       // Projektbezug übernehmen, damit die gespiegelten Stunden in der
-      // Projekt-Zeitauswertung auftauchen (Baustellen-Zeit ohne Projekt fällt
-      // dort heraus).
-      project_id: selectedProjectId || null,
+      // Projekt-Zeitauswertung auftauchen. Werkstattarbeit ist nicht direkt
+      // verrechenbar und läuft deshalb bewusst ohne Projekt.
+      project_id: arbeitsort === "werkstatt" ? null : (selectedProjectId || null),
       disturbance_id: null,
       notizen: `Bautagesbericht-Zuordnung: ${bautagesberichtId}`,
     }));
@@ -269,10 +282,14 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Ende muss nach dem Start liegen — sonst scheitert später die
-    // Zeiten-Spiegelung an der DB (check_time_order) mit kryptischem Fehler.
-    if (formData.startTime && formData.endTime && formData.endTime <= formData.startTime) {
-      toast({ variant: "destructive", title: "Zeiten prüfen", description: "Die Endzeit muss nach der Startzeit liegen." });
+    const zeilen = entriesToTaetigkeiten(taetigkeiten);
+    if (zeilen.length === 0) {
+      toast({ variant: "destructive", title: "Tätigkeiten fehlen", description: "Bitte mindestens eine Tätigkeit mit Stunden eintragen." });
+      return;
+    }
+    // > 24 h/Tag lehnt die DB bei der Zeiten-Spiegelung ab (time_entries_stunden_nonneg)
+    if (summeStunden(zeilen) > 24) {
+      toast({ variant: "destructive", title: "Zu viele Stunden", description: "Die Summe der Tätigkeiten darf 24 Stunden pro Tag nicht überschreiten." });
       return;
     }
     setSaving(true);
@@ -284,46 +301,40 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
       return;
     }
 
-    // Validation
-    if (!formData.kundeName.trim()) {
+    // Validation — bei Werkstattarbeit gibt es keinen Kunden
+    const istWerkstatt = arbeitsort === "werkstatt";
+    if (!istWerkstatt && !formData.kundeName.trim()) {
       toast({ variant: "destructive", title: "Fehler", description: "Kundenname ist erforderlich" });
       setSaving(false);
       return;
     }
 
-    if (!formData.beschreibung.trim()) {
-      toast({ variant: "destructive", title: "Fehler", description: "Arbeitsbeschreibung ist erforderlich" });
-      setSaving(false);
-      return;
-    }
-
-    const [startH, startM] = formData.startTime.split(":").map(Number);
-    const [endH, endM] = formData.endTime.split(":").map(Number);
-    if (endH * 60 + endM <= startH * 60 + startM) {
-      toast({ variant: "destructive", title: "Fehler", description: "Endzeit muss nach Startzeit liegen" });
-      setSaving(false);
-      return;
-    }
-
-    const stunden = calculateHours();
+    const stunden = summeStunden(zeilen);
+    // Beschreibung ist NOT NULL und wird von Liste/PDF gelesen — bei leerem
+    // Feld aus den Tätigkeitszeilen ableiten, damit niemand doppelt tippt.
+    const beschreibungText = formData.beschreibung.trim() || taetigkeitenAlsText(zeilen);
 
     const berichtData = {
       user_id: user.id,
       datum: formData.datum,
-      start_time: formData.startTime,
-      end_time: formData.endTime,
-      pause_minutes: formData.pauseMinutes,
+      // Keine Uhrzeit-Erfassung mehr — Spalten bleiben für den Altbestand
+      start_time: null,
+      end_time: null,
+      pause_minutes: 0,
       stunden,
-      kunde_name: formData.kundeName.trim(),
-      kunde_email: formData.kundeEmail.trim() || null,
-      kunde_adresse: formData.kundeAdresse.trim() || null,
-      kunde_plz: formData.kundePlz.trim() || null,
-      kunde_ort: formData.kundeOrt.trim() || null,
-      kunde_telefon: formData.kundeTelefon.trim() || null,
-      beschreibung: formData.beschreibung.trim(),
+      taetigkeiten: zeilen,
+      location_type: arbeitsort,
+      kunde_name: istWerkstatt ? "Werkstatt (intern)" : formData.kundeName.trim(),
+      kunde_email: istWerkstatt ? null : (formData.kundeEmail.trim() || null),
+      kunde_adresse: istWerkstatt ? null : (formData.kundeAdresse.trim() || null),
+      kunde_plz: istWerkstatt ? null : (formData.kundePlz.trim() || null),
+      kunde_ort: istWerkstatt ? null : (formData.kundeOrt.trim() || null),
+      kunde_telefon: istWerkstatt ? null : (formData.kundeTelefon.trim() || null),
+      beschreibung: beschreibungText,
       notizen: formData.notizen.trim() || null,
-      project_id: selectedProjectId || null,
-      customer_id: selectedCustomerId || null,
+      // Werkstattarbeit läuft ohne Projekt/Kunde — sie ist nicht direkt verrechenbar
+      project_id: istWerkstatt ? null : (selectedProjectId || null),
+      customer_id: istWerkstatt ? null : (selectedCustomerId || null),
     };
 
     if (editData) {
@@ -524,7 +535,7 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
           <div className="space-y-4">
             <h3 className="font-medium flex items-center gap-2">
               <Calendar className="h-4 w-4" />
-              Datum & Uhrzeit
+              Datum & Tätigkeiten
             </h3>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
@@ -537,48 +548,41 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
                   required
                 />
               </div>
-              <div>
-                <Label htmlFor="startTime">Startzeit</Label>
-                <Input
-                  id="startTime"
-                  type="time"
-                  step={900}
-                  value={formData.startTime}
-                  onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="endTime">Endzeit</Label>
-                <Input
-                  id="endTime"
-                  type="time"
-                  step={900}
-                  value={formData.endTime}
-                  onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="pauseMinutes">Pause (Minuten)</Label>
-                <Input
-                  id="pauseMinutes"
-                  type="number"
-                  min="0"
-                  value={formData.pauseMinutes}
-                  onChange={(e) => setFormData({ ...formData, pauseMinutes: parseInt(e.target.value) || 0 })}
-                />
-              </div>
-              <div className="flex items-end">
-                <div className="bg-muted rounded-md px-3 py-2 w-full text-center">
-                  <span className="text-sm text-muted-foreground">Stunden: </span>
-                  <span className="font-bold text-primary">{calculateHours().toFixed(2)}</span>
-                </div>
+              {/* Arbeitsort wie in der Zeiterfassung — Werkstattarbeit läuft
+                  ohne Projekt/Kunde und ist damit nicht direkt verrechenbar. */}
+              <div className="col-span-2 space-y-2">
+                <Label>Arbeitsort</Label>
+                <RadioGroup
+                  value={arbeitsort}
+                  onValueChange={(v: "baustelle" | "werkstatt") => setArbeitsort(v)}
+                  className="grid grid-cols-2 gap-3"
+                >
+                  <div>
+                    <RadioGroupItem value="baustelle" id="btb-ort-baustelle" className="peer sr-only" />
+                    <Label htmlFor="btb-ort-baustelle" className="flex h-12 cursor-pointer items-center justify-center rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent peer-data-[state=checked]:border-primary text-sm">
+                      🏗️ Baustelle
+                    </Label>
+                  </div>
+                  <div>
+                    <RadioGroupItem value="werkstatt" id="btb-ort-werkstatt" className="peer sr-only" />
+                    <Label htmlFor="btb-ort-werkstatt" className="flex h-12 cursor-pointer items-center justify-center rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent peer-data-[state=checked]:border-primary text-sm">
+                      🏢 Werkstatt
+                    </Label>
+                  </div>
+                </RadioGroup>
+                {arbeitsort === "werkstatt" && (
+                  <p className="text-xs text-muted-foreground">
+                    Werkstattarbeit wird ohne Projekt und Kunde erfasst — die Stunden zählen nicht auf ein Projekt.
+                  </p>
+                )}
               </div>
             </div>
+
+            <TaetigkeitenEditor value={taetigkeiten} onChange={setTaetigkeiten} />
           </div>
 
-          {/* Projekt-Zuordnung */}
+          {/* Projekt-Zuordnung — bei Werkstattarbeit ausgeblendet */}
+          {arbeitsort === "baustelle" && (
           <div className="space-y-2">
             <p className="text-xs rounded-md border border-blue-200 bg-blue-50 text-blue-900 px-2 py-1.5">
               💡 Bitte zuerst das <b>Projekt auswählen</b> — der Kunde wird dann automatisch übernommen.
@@ -617,8 +621,10 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
               </SelectContent>
             </Select>
           </div>
+          )}
 
-          {/* Customer Section */}
+          {/* Customer Section — bei Werkstattarbeit ausgeblendet */}
+          {arbeitsort === "baustelle" && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-medium flex items-center gap-2">
@@ -670,14 +676,14 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
               <p className="text-sm text-muted-foreground">Bitte wählen Sie oben einen Kunden aus oder erstellen Sie einen neuen.</p>
             )}
           </div>
+          )}
 
-          {/* Multi-Employee Selection */}
+          {/* Multi-Employee Selection — ohne Uhrzeiten entfällt die
+              Überschneidungs-Warnung (der Guard in der Komponente greift). */}
           <MultiEmployeeSelect
             selectedEmployees={selectedEmployees}
             onSelectionChange={setSelectedEmployees}
             date={formData.datum}
-            startTime={formData.startTime}
-            endTime={formData.endTime}
           />
 
           {/* Work Description Section */}

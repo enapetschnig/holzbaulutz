@@ -11,12 +11,14 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { DisturbanceForm } from "@/components/DisturbanceForm";
+import { parseTaetigkeiten, zeitraum, fmtStunden } from "@/lib/berichtZeiten";
 
 type Disturbance = {
   id: string;
   datum: string;
-  start_time: string;
-  end_time: string;
+  start_time: string | null;
+  end_time: string | null;
+  taetigkeiten?: unknown;
   pause_minutes: number;
   stunden: number;
   kunde_name: string;
@@ -436,7 +438,13 @@ const Disturbances = () => {
                         </span>
                         <span className="flex items-center gap-1">
                           <Clock className="h-4 w-4" />
-                          {disturbance.start_time.slice(0, 5)} - {disturbance.end_time.slice(0, 5)} ({disturbance.stunden.toFixed(1)}h)
+                          {(() => {
+                            const zr = zeitraum(disturbance.start_time, disturbance.end_time);
+                            const anzahl = parseTaetigkeiten((disturbance as any).taetigkeiten).length;
+                            return zr
+                              ? `${zr} (${fmtStunden(disturbance.stunden)} h)`
+                              : `${fmtStunden(disturbance.stunden)} h${anzahl > 0 ? ` · ${anzahl} Tätigkeit${anzahl === 1 ? "" : "en"}` : ""}`;
+                          })()}
                         </span>
                         {disturbance.kunde_adresse && (
                           <span className="flex items-center gap-1">

@@ -27,8 +27,8 @@ type Photo = {
 type Bautagesbericht = {
   id: string;
   datum: string;
-  start_time: string;
-  end_time: string;
+  start_time: string | null;
+  end_time: string | null;
   pause_minutes: number;
   stunden: number;
   kunde_name: string;
@@ -303,7 +303,7 @@ export const BautagesberichtSignatureDialog = ({
                 </p>
                 <p>
                   <strong>Arbeitszeit:</strong>{" "}
-                  {bautagesbericht.start_time.slice(0, 5)} - {bautagesbericht.end_time.slice(0, 5)} Uhr
+                  {String(bautagesbericht.start_time ?? "").slice(0, 5)} - {String(bautagesbericht.end_time ?? "").slice(0, 5)} Uhr
                 </p>
                 {bautagesbericht.pause_minutes > 0 && (
                   <p><strong>Pause:</strong> {bautagesbericht.pause_minutes} Minuten</p>

@@ -14,6 +14,15 @@ import { useEinheiten } from "@/hooks/useEinheiten";
 import { format } from "date-fns";
 import { MultiEmployeeSelect } from "@/components/MultiEmployeeSelect";
 import { CustomerSelect } from "@/components/CustomerSelect";
+import { TaetigkeitenEditor } from "@/components/TaetigkeitenEditor";
+import {
+  type TaetigkeitEntry,
+  entriesToTaetigkeiten,
+  taetigkeitenToEntries,
+  parseTaetigkeiten,
+  summeStunden,
+  taetigkeitenAlsText,
+} from "@/lib/berichtZeiten";
 
 type MaterialEntry = {
   id: string;
@@ -29,9 +38,10 @@ type DisturbanceFormProps = {
   editData?: {
     id: string;
     datum: string;
-    start_time: string;
-    end_time: string;
+    start_time: string | null;
+    end_time: string | null;
     pause_minutes: number;
+    taetigkeiten?: unknown;
     kunde_name: string;
     kunde_email: string | null;
     kunde_adresse: string | null;
@@ -53,11 +63,13 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
 
+  // Tätigkeitszeilen statt von-bis
+  const [taetigkeiten, setTaetigkeiten] = useState<TaetigkeitEntry[]>(
+    [{ id: crypto.randomUUID(), text: "", stunden: "" }],
+  );
+
   const [formData, setFormData] = useState({
     datum: format(new Date(), "yyyy-MM-dd"),
-    startTime: "08:00",
-    endTime: "10:00",
-    pauseMinutes: 0,
     kundeName: "",
     kundeEmail: "",
     kundeAdresse: "",
@@ -118,11 +130,9 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
 
   useEffect(() => {
     if (editData) {
+      setTaetigkeiten(taetigkeitenToEntries(parseTaetigkeiten(editData.taetigkeiten)));
       setFormData({
         datum: editData.datum,
-        startTime: editData.start_time.slice(0, 5),
-        endTime: editData.end_time.slice(0, 5),
-        pauseMinutes: editData.pause_minutes,
         kundeName: editData.kunde_name,
         kundeEmail: editData.kunde_email || "",
         kundeAdresse: editData.kunde_adresse || "",
@@ -142,11 +152,9 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
       loadExistingMaterials(editData.id);
     } else {
       // Reset form for new entry
+      setTaetigkeiten([{ id: crypto.randomUUID(), text: "", stunden: "" }]);
       setFormData({
         datum: format(new Date(), "yyyy-MM-dd"),
-        startTime: "08:00",
-        endTime: "10:00",
-        pauseMinutes: 0,
         kundeName: "",
         kundeEmail: "",
         kundeAdresse: "",
@@ -190,12 +198,8 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
     }
   };
 
-  const calculateHours = (): number => {
-    const [startH, startM] = formData.startTime.split(":").map(Number);
-    const [endH, endM] = formData.endTime.split(":").map(Number);
-    const totalMinutes = (endH * 60 + endM) - (startH * 60 + startM) - formData.pauseMinutes;
-    return Math.max(0, totalMinutes / 60);
-  };
+  /** Berichtsstunden = Summe der Tätigkeitszeilen. */
+  const calculateHours = (): number => summeStunden(entriesToTaetigkeiten(taetigkeiten));
 
   const addMaterial = () => {
     setMaterials([...materials, { id: crypto.randomUUID(), material: "", menge: "", einheit: "Stk." }]);
@@ -232,36 +236,39 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
       return;
     }
 
-    if (!formData.beschreibung.trim()) {
-      toast({ variant: "destructive", title: "Fehler", description: "Arbeitsbeschreibung ist erforderlich" });
+
+    const zeilen = entriesToTaetigkeiten(taetigkeiten);
+    if (zeilen.length === 0) {
+      toast({ variant: "destructive", title: "Tätigkeiten fehlen", description: "Bitte mindestens eine Tätigkeit mit Stunden eintragen." });
+      setSaving(false);
+      return;
+    }
+    if (summeStunden(zeilen) > 24) {
+      toast({ variant: "destructive", title: "Zu viele Stunden", description: "Die Summe der Tätigkeiten darf 24 Stunden pro Tag nicht überschreiten." });
       setSaving(false);
       return;
     }
 
-    const [startH, startM] = formData.startTime.split(":").map(Number);
-    const [endH, endM] = formData.endTime.split(":").map(Number);
-    if (endH * 60 + endM <= startH * 60 + startM) {
-      toast({ variant: "destructive", title: "Fehler", description: "Endzeit muss nach Startzeit liegen" });
-      setSaving(false);
-      return;
-    }
-
-    const stunden = calculateHours();
+    const stunden = summeStunden(zeilen);
 
     const disturbanceData = {
       user_id: user.id,
       datum: formData.datum,
-      start_time: formData.startTime,
-      end_time: formData.endTime,
-      pause_minutes: formData.pauseMinutes,
+      // Keine Uhrzeit-Erfassung mehr — Spalten bleiben für den Altbestand
+      start_time: null,
+      end_time: null,
+      pause_minutes: 0,
       stunden,
+      taetigkeiten: zeilen,
       kunde_name: formData.kundeName.trim(),
       kunde_email: formData.kundeEmail.trim() || null,
       kunde_adresse: formData.kundeAdresse.trim() || null,
       kunde_plz: formData.kundePlz.trim() || null,
       kunde_ort: formData.kundeOrt.trim() || null,
       kunde_telefon: formData.kundeTelefon.trim() || null,
-      beschreibung: formData.beschreibung.trim(),
+      // NOT NULL und von Liste/PDF gelesen — bei leerem Feld aus den
+      // Tätigkeitszeilen ableiten.
+      beschreibung: formData.beschreibung.trim() || taetigkeitenAlsText(zeilen),
       notizen: formData.notizen.trim() || null,
       project_id: selectedProjectId || null,
       customer_id: selectedCustomerId || null,
@@ -292,9 +299,9 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
       const timeEntries = allWorkerIds.map(workerId => ({
         user_id: workerId,
         datum: formData.datum,
-        start_time: formData.startTime,
-        end_time: formData.endTime,
-        pause_minutes: formData.pauseMinutes,
+        start_time: null,
+        end_time: null,
+        pause_minutes: 0,
         stunden,
         taetigkeit: `Regiearbeit: ${formData.beschreibung.trim().substring(0, 100)}`,
         location_type: "baustelle",
@@ -360,9 +367,9 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
       const timeEntries = allWorkerIds.map(workerId => ({
         user_id: workerId,
         datum: formData.datum,
-        start_time: formData.startTime,
-        end_time: formData.endTime,
-        pause_minutes: formData.pauseMinutes,
+        start_time: null,
+        end_time: null,
+        pause_minutes: 0,
         stunden,
         taetigkeit: `Regiearbeit: ${formData.beschreibung.trim().substring(0, 100)}`,
         location_type: "baustelle",
@@ -467,7 +474,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
           <div className="space-y-4">
             <h3 className="font-medium flex items-center gap-2">
               <Calendar className="h-4 w-4" />
-              Datum & Uhrzeit
+              Datum & Tätigkeiten
             </h3>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
@@ -480,45 +487,9 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
                   required
                 />
               </div>
-              <div>
-                <Label htmlFor="startTime">Startzeit</Label>
-                <Input
-                  id="startTime"
-                  type="time"
-                  step={900}
-                  value={formData.startTime}
-                  onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="endTime">Endzeit</Label>
-                <Input
-                  id="endTime"
-                  type="time"
-                  step={900}
-                  value={formData.endTime}
-                  onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="pauseMinutes">Pause (Minuten)</Label>
-                <Input
-                  id="pauseMinutes"
-                  type="number"
-                  min="0"
-                  value={formData.pauseMinutes}
-                  onChange={(e) => setFormData({ ...formData, pauseMinutes: parseInt(e.target.value) || 0 })}
-                />
-              </div>
-              <div className="flex items-end">
-                <div className="bg-muted rounded-md px-3 py-2 w-full text-center">
-                  <span className="text-sm text-muted-foreground">Stunden: </span>
-                  <span className="font-bold text-primary">{calculateHours().toFixed(2)}</span>
-                </div>
-              </div>
             </div>
+
+            <TaetigkeitenEditor value={taetigkeiten} onChange={setTaetigkeiten} />
           </div>
 
           {/* Projekt-Zuordnung */}
@@ -619,8 +590,6 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
             selectedEmployees={selectedEmployees}
             onSelectionChange={setSelectedEmployees}
             date={formData.datum}
-            startTime={formData.startTime}
-            endTime={formData.endTime}
           />
 
           {/* Work Description Section */}

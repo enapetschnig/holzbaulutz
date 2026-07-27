@@ -33,8 +33,9 @@ type Project = {
 
 type ExistingEntry = {
   id: string;
-  start_time: string;
-  end_time: string;
+  // Berichts-Spiegelungen (Bautages-/Regiebericht) haben keine Uhrzeiten
+  start_time: string | null;
+  end_time: string | null;
   stunden: number;
   taetigkeit: string;
   project_name: string | null;
@@ -592,6 +593,9 @@ const TimeTracking = () => {
           setSubmittingAbsence(false);
           return;
         }
+        // Berichts-Spiegelungen haben keine Uhrzeiten — sie können sich
+        // definitionsgemäß nicht mit einem Zeitblock überschneiden.
+        if (!e.start_time || !e.end_time) continue;
         const exStart = toMin(e.start_time), exEnde = toMin(e.end_time);
         if (neuStart < exEnde && exStart < neuEnde) {
           toast({ variant: "destructive", title: "Zeitüberschneidung", description: `Überschneidet mit bestehendem Eintrag (${String(e.start_time).substring(0, 5)}–${String(e.end_time).substring(0, 5)}).` });
@@ -884,6 +888,8 @@ const TimeTracking = () => {
           return;
         }
         
+        // Einträge ohne Uhrzeit (aus Bautages-/Regieberichten) überspringen
+        if (!entry.start_time || !entry.end_time) continue;
         const existingStart = timeToMinutes(entry.start_time);
         const existingEnd = timeToMinutes(entry.end_time);
         
@@ -1120,7 +1126,9 @@ const TimeTracking = () => {
                         <div key={entry.id} className="flex items-center justify-between text-sm bg-background/60 rounded px-2 py-1.5">
                           <div className="flex items-center gap-2">
                             <Badge variant="outline" className="font-mono text-xs">
-                              {entry.start_time.substring(0, 5)} - {entry.end_time.substring(0, 5)}
+                              {entry.start_time && entry.end_time
+                                ? `${String(entry.start_time).substring(0, 5)} - ${String(entry.end_time).substring(0, 5)}`
+                                : `${Number(entry.stunden || 0).toLocaleString("de-AT")} h`}
                             </Badge>
                             <span className="truncate max-w-[150px]">
                               {entry.project_name ? `${entry.project_name}` : entry.taetigkeit}

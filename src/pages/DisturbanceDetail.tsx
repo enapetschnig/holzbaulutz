@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { DisturbanceForm } from "@/components/DisturbanceForm";
+import { parseTaetigkeiten, zeitraum, fmtStunden } from "@/lib/berichtZeiten";
 import { DisturbanceMaterials } from "@/components/DisturbanceMaterials";
 import { DisturbancePhotos } from "@/components/DisturbancePhotos";
 import { SignatureDialog } from "@/components/SignatureDialog";
@@ -18,8 +19,9 @@ import { SignatureDialog } from "@/components/SignatureDialog";
 type Disturbance = {
   id: string;
   datum: string;
-  start_time: string;
-  end_time: string;
+  start_time: string | null;
+  end_time: string | null;
+  taetigkeiten?: unknown;
   pause_minutes: number;
   stunden: number;
   kunde_name: string;
@@ -538,16 +540,29 @@ const DisturbanceDetail = () => {
                 {format(new Date(disturbance.datum), "dd.MM.yyyy", { locale: de })}
               </p>
             </div>
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Arbeitszeit</p>
-              <p className="font-medium">
-                {disturbance.start_time.slice(0, 5)} - {disturbance.end_time.slice(0, 5)}
-              </p>
-            </div>
+            {zeitraum(disturbance.start_time, disturbance.end_time) && (
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Arbeitszeit</p>
+                <p className="font-medium">{zeitraum(disturbance.start_time, disturbance.end_time)}</p>
+              </div>
+            )}
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">Gesamtstunden</p>
-              <p className="font-medium text-lg text-primary">{disturbance.stunden.toFixed(2)} h</p>
+              <p className="font-medium text-lg text-primary">{fmtStunden(disturbance.stunden)} h</p>
             </div>
+            {parseTaetigkeiten((disturbance as any).taetigkeiten).length > 0 && (
+              <div className="space-y-1 sm:col-span-3">
+                <p className="text-sm text-muted-foreground">Tätigkeiten</p>
+                <div className="mt-1">
+                  {parseTaetigkeiten((disturbance as any).taetigkeiten).map((t, i) => (
+                    <div key={i} className="flex justify-between gap-3 border-b border-border/50 last:border-0 py-1">
+                      <span>{t.text}</span>
+                      <span className="font-mono tabular-nums shrink-0">{fmtStunden(t.stunden)} h</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {disturbance.pause_minutes > 0 && (
               <div className="space-y-1">
                 <p className="text-sm text-muted-foreground">Pause</p>

@@ -48,8 +48,11 @@ interface Photo {
 interface Bautagesbericht {
   id: string;
   datum: string;
-  start_time: string;
-  end_time: string;
+  // Berichte erfassen nur noch Stunden — Uhrzeiten gibt es nur im Altbestand
+  start_time: string | null;
+  end_time: string | null;
+  taetigkeiten?: { text: string; stunden: number }[] | null;
+  location_type?: string | null;
   pause_minutes: number;
   stunden: number;
   kunde_name: string;
@@ -191,8 +194,10 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
   doc.setLineWidth(0.3);
   doc.roundedRect(margin, yPos, contentWidth, boxHeight, 2, 2, "S");
 
-  const startTime = bautagesbericht.start_time.slice(0, 5);
-  const endTime = bautagesbericht.end_time.slice(0, 5);
+  const zeitraumText = bautagesbericht.start_time && bautagesbericht.end_time
+    ? `${String(bautagesbericht.start_time).slice(0, 5)} – ${String(bautagesbericht.end_time).slice(0, 5)} Uhr`
+    : null;
+  const istWerkstatt = (bautagesbericht.location_type ?? "baustelle") === "werkstatt";
   const techDisplay = technicians.join(", ");
   const col1 = margin + 5;
   const col2 = margin + contentWidth * 0.35;
@@ -202,14 +207,14 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
   doc.setFont("helvetica", "normal");
   doc.setTextColor(120, 120, 120);
   doc.text("KUNDE", col1, yPos + 5);
-  doc.text("ARBEITSZEIT", col2, yPos + 5);
+  doc.text(zeitraumText ? "ARBEITSZEIT" : "ARBEITSORT", col2, yPos + 5);
   doc.text("STUNDEN", col3, yPos + 5);
 
   doc.setFontSize(10);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(26, 26, 26);
   doc.text(bautagesbericht.kunde_name, col1, yPos + 11);
-  doc.text(`${startTime} – ${endTime} Uhr`, col2, yPos + 11);
+  doc.text(zeitraumText ?? (istWerkstatt ? "Werkstatt" : "Baustelle"), col2, yPos + 11);
   doc.text(`${Number(bautagesbericht.stunden || 0).toFixed(2)} h`, col3, yPos + 11);
 
   doc.setFontSize(8);
@@ -254,6 +259,47 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
   }
 
   // Materials Section
+  // === TÄTIGKEITEN (Zeitaufstellung) ===
+  const taetigkeitenListe = bautagesbericht.taetigkeiten ?? [];
+  if (taetigkeitenListe.length > 0) {
+    if (yPos > 220) { doc.addPage(); yPos = margin; }
+
+    sectionTitle("Zeitaufstellung");
+
+    doc.setFontSize(7.5);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(100, 100, 100);
+    doc.text("TÄTIGKEIT", margin + 5, yPos);
+    doc.text("STUNDEN", margin + contentWidth - 5, yPos, { align: "right" });
+    yPos += 2;
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.3);
+    doc.line(margin + 5, yPos, margin + contentWidth, yPos);
+    yPos += 4;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    taetigkeitenListe.forEach((t, idx) => {
+      if (yPos > 270) { doc.addPage(); yPos = margin; }
+      if (idx % 2 === 0) {
+        doc.setFillColor(250, 250, 250);
+        doc.rect(margin + 3, yPos - 3.5, contentWidth - 3, 6, "F");
+      }
+      doc.setTextColor(26, 26, 26);
+      doc.text(String(t.text ?? "-"), margin + 5, yPos, { maxWidth: contentWidth - 45 });
+      doc.text(`${Number(t.stunden || 0).toFixed(2)} h`, margin + contentWidth - 5, yPos, { align: "right" });
+      yPos += 6;
+    });
+
+    doc.setDrawColor(200, 200, 200);
+    doc.line(margin + contentWidth - 45, yPos - 2, margin + contentWidth, yPos - 2);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(26, 26, 26);
+    doc.text("Gesamt", margin + 5, yPos + 2);
+    doc.text(`${Number(bautagesbericht.stunden || 0).toFixed(2)} h`, margin + contentWidth - 5, yPos + 2, { align: "right" });
+    yPos += 10;
+  }
+
   if (materials && materials.length > 0) {
     if (yPos > 220) { doc.addPage(); yPos = margin; }
 
@@ -414,7 +460,7 @@ function generateEmailHtml(data: ReportRequest & { technicians: string[] }): str
         <div class="info-box">
           <strong>Zusammenfassung:</strong><br>
           Techniker: ${technicianDisplay}<br>
-          Arbeitszeit: ${bautagesbericht.start_time.slice(0, 5)} - ${bautagesbericht.end_time.slice(0, 5)} Uhr<br>
+          ${bautagesbericht.start_time && bautagesbericht.end_time ? `Arbeitszeit: ${String(bautagesbericht.start_time).slice(0, 5)} - ${String(bautagesbericht.end_time).slice(0, 5)} Uhr<br>` : ""}${(bautagesbericht.taetigkeiten ?? []).map((t) => `&bull; ${String(t.text ?? "")} — ${Number(t.stunden || 0).toFixed(2)} h`).join("<br>")}${(bautagesbericht.taetigkeiten ?? []).length ? "<br>" : ""}
           Gesamtstunden: ${Number(bautagesbericht.stunden || 0).toFixed(2)} h
         </div>
 

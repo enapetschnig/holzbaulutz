@@ -18,8 +18,10 @@ type MultiEmployeeSelectProps = {
   selectedEmployees: string[];
   onSelectionChange: (employees: string[]) => void;
   date: string;
-  startTime: string;
-  endTime: string;
+  /** Optional: ohne Uhrzeiten (Berichte mit Stundenerfassung) entfällt
+   *  die Überschneidungs-Prüfung. */
+  startTime?: string;
+  endTime?: string;
   label?: string;
 };
 

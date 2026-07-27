@@ -93,7 +93,7 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
 
     // Add time as position
     newItems.push({
-      beschreibung: `Arbeitszeit Regiebericht ${format(new Date(dist.datum), "dd.MM.yyyy")} (${dist.start_time?.slice(0, 5)} - ${dist.end_time?.slice(0, 5)})`,
+      beschreibung: `Arbeitszeit Regiebericht ${format(new Date(dist.datum), "dd.MM.yyyy")}${dist.start_time && dist.end_time ? ` (${String(dist.start_time).slice(0, 5)} - ${String(dist.end_time).slice(0, 5)})` : ""}`,
       menge: Number(dist.stunden),
       einheit: "Std.",
       einzelpreis: stundensatz,

@@ -27,8 +27,9 @@ type Photo = {
 type Disturbance = {
   id: string;
   datum: string;
-  start_time: string;
-  end_time: string;
+  start_time: string | null;
+  end_time: string | null;
+  taetigkeiten?: unknown;
   pause_minutes: number;
   stunden: number;
   kunde_name: string;
@@ -301,10 +302,12 @@ export const SignatureDialog = ({
                   <strong>Datum:</strong>{" "}
                   {format(new Date(disturbance.datum), "EEEE, dd. MMMM yyyy", { locale: de })}
                 </p>
-                <p>
-                  <strong>Arbeitszeit:</strong>{" "}
-                  {disturbance.start_time.slice(0, 5)} - {disturbance.end_time.slice(0, 5)} Uhr
-                </p>
+                {disturbance.start_time && disturbance.end_time && (
+                  <p>
+                    <strong>Arbeitszeit:</strong>{" "}
+                    {String(disturbance.start_time).slice(0, 5)} - {String(disturbance.end_time).slice(0, 5)} Uhr
+                  </p>
+                )}
                 {disturbance.pause_minutes > 0 && (
                   <p><strong>Pause:</strong> {disturbance.pause_minutes} Minuten</p>
                 )}

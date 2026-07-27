@@ -11,12 +11,15 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { BautagesberichtForm } from "@/components/BautagesberichtForm";
+import { parseTaetigkeiten, zeitraum, fmtStunden } from "@/lib/berichtZeiten";
 
 type Bautagesbericht = {
   id: string;
   datum: string;
-  start_time: string;
-  end_time: string;
+  start_time: string | null;
+  end_time: string | null;
+  taetigkeiten?: unknown;
+  location_type?: string | null;
   pause_minutes: number;
   stunden: number;
   kunde_name: string;
@@ -318,7 +321,13 @@ const Bautagesberichte = () => {
                         </span>
                         <span className="flex items-center gap-1">
                           <Clock className="h-4 w-4" />
-                          {bericht.start_time.slice(0, 5)} - {bericht.end_time.slice(0, 5)} ({bericht.stunden.toFixed(1)}h)
+                          {(() => {
+                            const zr = zeitraum(bericht.start_time, bericht.end_time);
+                            const anzahl = parseTaetigkeiten(bericht.taetigkeiten).length;
+                            return zr
+                              ? `${zr} (${fmtStunden(bericht.stunden)} h)`
+                              : `${fmtStunden(bericht.stunden)} h${anzahl > 0 ? ` · ${anzahl} Tätigkeit${anzahl === 1 ? "" : "en"}` : ""}`;
+                          })()}
                         </span>
                         {bericht.kunde_adresse && (
                           <span className="flex items-center gap-1">

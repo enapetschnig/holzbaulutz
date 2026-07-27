@@ -11,13 +11,16 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { BautagesberichtForm } from "@/components/BautagesberichtForm";
+import { parseTaetigkeiten, zeitraum, fmtStunden } from "@/lib/berichtZeiten";
 import { BautagesberichtPhotos } from "@/components/BautagesberichtPhotos";
 
 type Bautagesbericht = {
   id: string;
   datum: string;
-  start_time: string;
-  end_time: string;
+  start_time: string | null;
+  end_time: string | null;
+  taetigkeiten?: unknown;
+  location_type?: string | null;
   pause_minutes: number;
   stunden: number;
   kunde_name: string;
@@ -418,14 +421,17 @@ const BautagesberichtDetail = () => {
               </p>
             </div>
             <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Arbeitszeit</p>
+              <p className="text-sm text-muted-foreground">
+                {zeitraum(bericht.start_time, bericht.end_time) ? "Arbeitszeit" : "Arbeitsort"}
+              </p>
               <p className="font-medium">
-                {bericht.start_time.slice(0, 5)} - {bericht.end_time.slice(0, 5)}
+                {zeitraum(bericht.start_time, bericht.end_time)
+                  ?? (bericht.location_type === "werkstatt" ? "🏢 Werkstatt" : "🏗️ Baustelle")}
               </p>
             </div>
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">Gesamtstunden</p>
-              <p className="font-medium text-lg text-primary">{bericht.stunden.toFixed(2)} h</p>
+              <p className="font-medium text-lg text-primary">{fmtStunden(bericht.stunden)} h</p>
             </div>
             {bericht.pause_minutes > 0 && (
               <div className="space-y-1">
@@ -435,6 +441,30 @@ const BautagesberichtDetail = () => {
             )}
           </CardContent>
         </Card>
+
+        {/* Tätigkeiten */}
+        {parseTaetigkeiten(bericht.taetigkeiten).length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Clock className="h-5 w-5" />
+                Tätigkeiten
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-1">
+              {parseTaetigkeiten(bericht.taetigkeiten).map((t, i) => (
+                <div key={i} className="flex justify-between gap-3 border-b border-border/50 last:border-0 py-1.5">
+                  <span>{t.text}</span>
+                  <span className="font-mono tabular-nums shrink-0">{fmtStunden(t.stunden)} h</span>
+                </div>
+              ))}
+              <div className="flex justify-between gap-3 pt-2 font-semibold">
+                <span>Gesamt</span>
+                <span className="font-mono tabular-nums">{fmtStunden(bericht.stunden)} h</span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Work Description */}
         <Card>
