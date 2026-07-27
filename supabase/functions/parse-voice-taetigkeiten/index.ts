@@ -18,7 +18,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   try {
-    const { audioBase64 }: { audioBase64: string } = await req.json();
+    const { audioBase64, mimeType }: { audioBase64: string; mimeType?: string } = await req.json();
 
     if (!audioBase64) {
       return new Response(
@@ -37,7 +37,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     // ── Schritt 1: Transkription ──
     const audioBytes = Uint8Array.from(atob(audioBase64), c => c.charCodeAt(0));
-    const audioBlob = new Blob([audioBytes], { type: "audio/webm" });
+    // iOS/Safari liefert mp4/aac statt webm — Endung passend mitgeben,
+    // sonst lehnt die Transkriptions-API die Datei ab.
+    const typ = (mimeType || "audio/webm").split(";")[0];
+    const endung = typ.includes("mp4") || typ.includes("m4a") ? "mp4"
+      : typ.includes("mpeg") || typ.includes("mp3") ? "mp3"
+      : typ.includes("wav") ? "wav" : "webm";
+    const audioBlob = new Blob([audioBytes], { type: typ });
     // Fach-Kontext hilft dem Modell bei Zimmerei-Begriffen und Stundenangaben
     const kontextPrompt =
       "Zimmerei und Holzbau. Tätigkeiten mit Stundenangaben, z.B. eine Stunde aufräumen, " +
@@ -46,7 +52,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     const transkribiere = async (model: string) => {
       const formData = new FormData();
-      formData.append("file", audioBlob, "audio.webm");
+      formData.append("file", audioBlob, `audio.${endung}`);
       formData.append("model", model);
       formData.append("language", "de");
       formData.append("prompt", kontextPrompt);

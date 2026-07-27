@@ -49,13 +49,20 @@ export function TaetigkeitenEditor({ value, onChange }: Props) {
   const starteAufnahme = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const rec = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+      // Format-Fallback wie im DictateButton: iOS/Safari kennt kein WebM,
+      // dort liefert MediaRecorder mp4/aac (von Whisper ebenfalls gelesen).
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : "audio/mp4";
+      const rec = new MediaRecorder(stream, { mimeType });
       recorderRef.current = rec;
       chunksRef.current = [];
       rec.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       rec.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
-        await verarbeite(new Blob(chunksRef.current, { type: "audio/webm" }));
+        await verarbeite(new Blob(chunksRef.current, { type: mimeType }));
       };
       rec.start();
       setAufnahme("recording");
@@ -73,11 +80,15 @@ export function TaetigkeitenEditor({ value, onChange }: Props) {
 
   const verarbeite = async (blob: Blob) => {
     try {
+      if (blob.size < 1000) {
+        toast({ variant: "destructive", title: "Zu kurz", description: "Bitte mindestens 2 Sekunden sprechen." });
+        return;
+      }
       const bytes = new Uint8Array(await blob.arrayBuffer());
       let binary = "";
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
       const { data, error } = await supabase.functions.invoke("parse-voice-taetigkeiten", {
-        body: { audioBase64: btoa(binary) },
+        body: { audioBase64: btoa(binary), mimeType: blob.type },
       });
       if (error) throw error;
       const neue = (data?.items || []) as { text: string; stunden: number }[];
