@@ -269,7 +269,7 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
       end_time: null,
       pause_minutes: 0,
       stunden,
-      taetigkeit: `${arbeitsort === "werkstatt" ? "Werkstatt" : "Bautagesbericht"}: ${(formData.beschreibung.trim() || taetigkeitenAlsText(entriesToTaetigkeiten(taetigkeiten))).substring(0, 100)}`,
+      taetigkeit: `${arbeitsort === "werkstatt" ? "Firma" : "Bautagesbericht"}: ${(formData.beschreibung.trim() || taetigkeitenAlsText(entriesToTaetigkeiten(taetigkeiten))).substring(0, 100)}`,
       location_type: arbeitsort,
       // Projektbezug übernehmen, damit die gespiegelten Stunden in der
       // Projekt-Zeitauswertung auftauchen. Werkstattarbeit ist nicht direkt
@@ -324,7 +324,7 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
       stunden,
       taetigkeiten: zeilen,
       location_type: arbeitsort,
-      kunde_name: istWerkstatt ? "Werkstatt (intern)" : formData.kundeName.trim(),
+      kunde_name: istWerkstatt ? "Firma (intern)" : formData.kundeName.trim(),
       kunde_email: istWerkstatt ? null : (formData.kundeEmail.trim() || null),
       kunde_adresse: istWerkstatt ? null : (formData.kundeAdresse.trim() || null),
       kunde_plz: istWerkstatt ? null : (formData.kundePlz.trim() || null),
@@ -566,13 +566,13 @@ export const BautagesberichtForm = ({ open, onOpenChange, onSuccess, editData, p
                   <div>
                     <RadioGroupItem value="werkstatt" id="btb-ort-werkstatt" className="peer sr-only" />
                     <Label htmlFor="btb-ort-werkstatt" className="flex h-12 cursor-pointer items-center justify-center rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent peer-data-[state=checked]:border-primary text-sm">
-                      🏢 Werkstatt
+                      🏢 Firma
                     </Label>
                   </div>
                 </RadioGroup>
                 {arbeitsort === "werkstatt" && (
                   <p className="text-xs text-muted-foreground">
-                    Werkstattarbeit wird ohne Projekt und Kunde erfasst — die Stunden zählen nicht auf ein Projekt.
+                    Firmenarbeit wird ohne Projekt und Kunde erfasst — die Stunden zählen nicht auf ein Projekt.
                   </p>
                 )}
               </div>

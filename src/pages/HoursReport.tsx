@@ -391,7 +391,7 @@ export default function HoursReport() {
           const project = projects[entry.project_id];
           
           // Ort-Spalte: Baustelle oder Werkstatt
-          const ortText = entry.location_type === "baustelle" ? "Baustelle" : "Werkstatt";
+          const ortText = entry.location_type === "baustelle" ? "Baustelle" : "Firma";
           
           // Projekt-Spalte: Urlaub/Krankenstand/Weiterbildung, Störung oder Projektname
           const isAbsence = ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag"].includes(entry.taetigkeit);

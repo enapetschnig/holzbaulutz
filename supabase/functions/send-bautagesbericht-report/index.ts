@@ -214,7 +214,7 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
   doc.setFont("helvetica", "bold");
   doc.setTextColor(26, 26, 26);
   doc.text(bautagesbericht.kunde_name, col1, yPos + 11);
-  doc.text(zeitraumText ?? (istWerkstatt ? "Werkstatt" : "Baustelle"), col2, yPos + 11);
+  doc.text(zeitraumText ?? (istWerkstatt ? "Firma" : "Baustelle"), col2, yPos + 11);
   doc.text(`${Number(bautagesbericht.stunden || 0).toFixed(2)} h`, col3, yPos + 11);
 
   doc.setFontSize(8);

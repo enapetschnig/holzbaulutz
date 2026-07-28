@@ -426,7 +426,7 @@ const BautagesberichtDetail = () => {
               </p>
               <p className="font-medium">
                 {zeitraum(bericht.start_time, bericht.end_time)
-                  ?? (bericht.location_type === "werkstatt" ? "🏢 Werkstatt" : "🏗️ Baustelle")}
+                  ?? (bericht.location_type === "werkstatt" ? "🏢 Firma" : "🏗️ Baustelle")}
               </p>
             </div>
             <div className="space-y-1">

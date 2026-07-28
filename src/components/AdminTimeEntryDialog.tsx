@@ -54,7 +54,7 @@ interface KfzRow {
 
 const LOCATION_OPTIONS = [
   { value: "baustelle", label: "Baustelle" },
-  { value: "werkstatt", label: "Werkstatt" },
+  { value: "werkstatt", label: "Firma" },
   { value: "regie",     label: "Regie / Büro" },
 ];
 
