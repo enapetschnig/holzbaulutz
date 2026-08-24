@@ -9,7 +9,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Calendar, Check, X, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
-import { getNormalWorkingHours } from "@/lib/workingHours";
 import { de } from "date-fns/locale";
 
 type Profile = {
@@ -52,16 +51,10 @@ export default function LeaveManagement({ profiles }: LeaveManagementProps) {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [editingBalance, setEditingBalance] = useState<string | null>(null);
   const [editDays, setEditDays] = useState("");
-  // Verbrauchte Urlaubstage werden LIVE aus den Urlaubs-Zeiteinträgen
-  // gerechnet — egal ob der Urlaub vom Mitarbeiter selbst, vom Admin
-  // („Abwesenheit nachtragen") oder als einzelner Zeiteintrag erfasst
-  // wurde. Die gespeicherte Spalte used_days zählte nur den (nie
-  // genutzten) Antrags-Genehmigen-Weg und übersah alles andere.
-  const [verbrauchtProUser, setVerbrauchtProUser] = useState<Record<string, number>>({});
 
   const fetchData = async () => {
     setLoading(true);
-    const [{ data: reqData }, { data: balData }, { data: urlaubEntries }] = await Promise.all([
+    const [{ data: reqData }, { data: balData }] = await Promise.all([
       supabase
         .from("leave_requests")
         .select("*")
@@ -70,37 +63,10 @@ export default function LeaveManagement({ profiles }: LeaveManagementProps) {
         .from("leave_balances")
         .select("*")
         .eq("year", selectedYear),
-      (supabase.from("time_entries" as never) as any)
-        .select("user_id, datum, stunden, is_full_day")
-        .eq("taetigkeit", "Urlaub")
-        .gte("datum", `${selectedYear}-01-01`)
-        .lte("datum", `${selectedYear}-12-31`),
     ]);
 
     if (reqData) setRequests(reqData as LeaveRequest[]);
     if (balData) setBalances(balData as LeaveBalance[]);
-
-    // Pro Mitarbeiter und Tag: Ganztag = 1 Tag, Teiltag = Stunden/Tagessoll
-    // (max. 1). Nur Werktage zählen — Urlaub am Wochenende kostet nichts.
-    const proUserTag = new Map<string, Map<string, number>>();
-    for (const e of (urlaubEntries as any[]) || []) {
-      const datum = String(e.datum);
-      const tagessoll = getNormalWorkingHours(new Date(datum + "T12:00:00"));
-      if (tagessoll <= 0) continue;
-      const anteil = e.is_full_day === false
-        ? Math.min(1, (Number(e.stunden) || 0) / tagessoll)
-        : 1;
-      const tage = proUserTag.get(e.user_id) || new Map<string, number>();
-      tage.set(datum, Math.min(1, (tage.get(datum) || 0) + anteil));
-      proUserTag.set(e.user_id, tage);
-    }
-    const verbraucht: Record<string, number> = {};
-    for (const [userId, tage] of proUserTag) {
-      let summe = 0;
-      for (const anteil of tage.values()) summe += anteil;
-      verbraucht[userId] = Math.round(summe * 100) / 100;
-    }
-    setVerbrauchtProUser(verbraucht);
     setLoading(false);
   };
 
@@ -307,10 +273,9 @@ export default function LeaveManagement({ profiles }: LeaveManagementProps) {
                 const balance = balances.find(
                   (b) => b.user_id === profile.id && b.year === selectedYear
                 );
-                const totalDays = balance ? balance.total_days : 25;
-                const used = verbrauchtProUser[profile.id] || 0;
-                const remaining = Math.round((totalDays - used) * 100) / 100;
-                const fmtTage = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(".", ","));
+                const remaining = balance
+                  ? balance.total_days - balance.used_days
+                  : 25;
 
                 return (
                   <div
@@ -322,8 +287,9 @@ export default function LeaveManagement({ profiles }: LeaveManagementProps) {
                         {profile.vorname} {profile.nachname}
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        {fmtTage(used)} von {fmtTage(totalDays)} Tagen verbraucht · {fmtTage(remaining)} übrig
-                        {!balance && " (Standard-Kontingent 25)"}
+                        {balance
+                          ? `${balance.used_days} von ${balance.total_days} Tagen verbraucht · ${remaining} übrig`
+                          : "Noch kein Kontingent angelegt"}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">

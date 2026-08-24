@@ -27,7 +27,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { getNormalWorkingHours, getDefaultWorkTimes } from "@/lib/workingHours";
-import { monatsSoll, fehltage } from "@/lib/monatsSoll";
 import { aggregateByDay, totalAutoSaldo, formatSaldo, type DayBalance } from "@/lib/hoursAccounting";
 
 interface TimeEntry {
@@ -304,45 +303,22 @@ export default function HoursReport() {
   // nur des aktuellen Monats). Wird im Header-Block angezeigt.
   const [manualBalance, setManualBalance] = useState<number>(0);
   const [autoBalanceAll, setAutoBalanceAll] = useState<number>(0);
-  // Ein-/Austrittsdatum: Personalakte (employees) hat Vorrang, sonst Profil.
-  const [dienstzeit, setDienstzeit] = useState<{ eintritt: string | null; austritt: string | null }>({ eintritt: null, austritt: null });
   useEffect(() => {
     if (!selectedUserId) return;
     let cancelled = false;
     (async () => {
-      const [{ data: acc }, { data: allEntries }, empRes, profRes] = await Promise.all([
+      const [{ data: acc }, { data: allEntries }] = await Promise.all([
         (supabase.from("time_accounts" as never) as any)
           .select("balance_hours").eq("user_id", selectedUserId).maybeSingle(),
         supabase.from("time_entries")
           .select("datum, stunden, taetigkeit").eq("user_id", selectedUserId),
-        (supabase.from("employees" as never) as any)
-          .select("eintritt_datum, austritt_datum").eq("user_id", selectedUserId).maybeSingle(),
-        (supabase.from("profiles" as never) as any)
-          .select("eintrittsdatum").eq("id", selectedUserId).maybeSingle(),
       ]);
       if (cancelled) return;
       setManualBalance(Number((acc as any)?.balance_hours) || 0);
       setAutoBalanceAll(totalAutoSaldo((allEntries as any[]) || []));
-      const emp = (empRes as any)?.data;
-      const prof = (profRes as any)?.data;
-      setDienstzeit({
-        eintritt: emp?.eintritt_datum ?? prof?.eintrittsdatum ?? null,
-        austritt: emp?.austritt_datum ?? null,
-      });
     })();
     return () => { cancelled = true; };
   }, [selectedUserId]);
-
-  // Persönliches Monatssoll (ab Eintritt / bis Austritt) + Werktage ohne
-  // eine einzige Buchung — beides fürs Büro, ändert die Saldo-Logik nicht.
-  const mSoll = useMemo(
-    () => monatsSoll(year, month, dienstzeit.eintritt, dienstzeit.austritt),
-    [year, month, dienstzeit],
-  );
-  const fehltageListe = useMemo(() => {
-    const gebucht = new Set(timeEntries.map((e) => e.datum));
-    return fehltage(year, month, gebucht, dienstzeit.eintritt, dienstzeit.austritt);
-  }, [year, month, timeEntries, dienstzeit]);
 
   const addBordersToCell = (cell: any, thick: boolean = false, centered: boolean = false) => {
     const borderStyle = thick ? "medium" : "thin";
@@ -398,13 +374,8 @@ export default function HoursReport() {
     const prevMonthLastDay = new Date(year, month - 1, 0).getDate();
     worksheetData.push([prevMonthLastDay, "", "", "", "", "", "", "", "", "", "", ""]);
 
-    // Alle Tage des Monats (1-31) durchgehen.
-    // Je Tag merken wir uns die Zeilen der Stunden-Zellen — daraus werden
-    // unten echte Excel-Formeln (Tagessumme/Überstunden/SUMME), damit
-    // nachträgliches Bearbeiten in Excel die Summen mitrechnet.
+    // Alle Tage des Monats (1-31) durchgehen
     const daysInMonth = new Date(year, month, 0).getDate();
-    type TagZellen = { entryRows: number[]; sumRow: number | null; repRow: number; ist: number; soll: number; neutral: boolean };
-    const tagZellen: TagZellen[] = [];
     for (let day = 1; day <= daysInMonth; day++) {
       const dayDate = new Date(year, month - 1, day);
       // Finde alle Einträge für diesen Tag
@@ -414,10 +385,8 @@ export default function HoursReport() {
       if (dayEntries.length === 0) {
         worksheetData.push([day, "", "", "", "", "", "", "", "", "", "", ""]);
       } else {
-        const entryRows: number[] = [];
         // Alle Einträge des Tages hinzufügen
         dayEntries.forEach((entry, entryIndex) => {
-          entryRows.push(worksheetData.length);
           const lunchBreak = calculateLunchBreak(entry);
           const project = projects[entry.project_id];
           
@@ -452,8 +421,13 @@ export default function HoursReport() {
             const actualPauseText = entry.pause_minutes && entry.pause_minutes > 0 && lunchBreak
               ? `${lunchBreak.start} - ${lunchBreak.end}`
               : "";
-            // Stunden als echte Zahl — die Überstunden-Spalte bleibt hier
-            // leer und wird unten als Formel gesetzt (1. Zeile des Tages).
+            // Saldo PRO TAG (positiv oder negativ) — nur in der ersten
+            // Eintragszeile anzeigen, sonst leer (sonst doppelt gezählt).
+            const dayBal = getDayBal(entry.datum);
+            const overtimeText = (entryIndex === 0 && dayBal && Math.abs(dayBal.saldo) >= 0.005)
+              ? formatSaldo(dayBal.saldo)
+              : "";
+
             worksheetData.push([
               displayDay,
               entry.start_time?.substring(0, 5) || "",
@@ -461,13 +435,13 @@ export default function HoursReport() {
               actualPauseText,
               actualAfternoonStart,
               entry.end_time?.substring(0, 5) || "",
-              Math.round((Number(entry.stunden) || 0) * 100) / 100,
-              "",
+              entry.stunden.toFixed(2),
+              overtimeText,
               ortText,
               projektName,
               entry.taetigkeit,
               plz,
-              entry.wetterschicht_stunden && entry.wetterschicht_stunden > 0 ? Math.round(entry.wetterschicht_stunden * 100) / 100 : "",
+              entry.wetterschicht_stunden && entry.wetterschicht_stunden > 0 ? entry.wetterschicht_stunden.toFixed(2) : "",
             ]);
           } else {
             // Export OHNE Überstunden: Regelarbeitszeiten aus Lib
@@ -489,42 +463,32 @@ export default function HoursReport() {
               regelPause,
               regelAfternoonStart,
               regelEnd,
-              regelarbeitszeit,
+              regelarbeitszeit.toFixed(2),
               ortText,
               projektName,
               entry.taetigkeit,
               plz,
               "",
-              entry.wetterschicht_stunden && entry.wetterschicht_stunden > 0 ? Math.round(entry.wetterschicht_stunden * 100) / 100 : "",
+              entry.wetterschicht_stunden && entry.wetterschicht_stunden > 0 ? entry.wetterschicht_stunden.toFixed(2) : "",
             ]);
           }
         });
 
-        // Tagessumme wenn mehrere Einträge am Tag — als Zahl; die
-        // Formel darüber wird unten gesetzt. (format statt toISOString:
-        // toISOString kippt lokale Mitternacht auf den Vortag.)
-        const datumStr = format(dayDate, "yyyy-MM-dd");
-        const dayBal = getDayBal(datumStr);
-        let sumRow: number | null = null;
+        // Tagessumme wenn mehrere Einträge am Tag — Saldo aus dem
+        // Helper, NICHT mehr per-Entry summieren.
         if (dayEntries.length > 1) {
+          const datumStr = dayDate.toISOString().slice(0, 10);
+          const dayBal = getDayBal(datumStr);
           const dayTotalHours = dayBal?.ist ?? dayEntries.reduce((sum, e) => sum + e.stunden, 0);
-          sumRow = worksheetData.length;
           if (includeOvertime) {
-            worksheetData.push(["", "", "", "", "", "Tagessumme:", Math.round(dayTotalHours * 100) / 100, "", "", "", "", ""]);
+            const saldoText = (dayBal && Math.abs(dayBal.saldo) >= 0.005) ? formatSaldo(dayBal.saldo) : "";
+            worksheetData.push(["", "", "", "", "", "Tagessumme:", dayTotalHours.toFixed(2), saldoText, "", "", "", ""]);
           } else {
             const regelarbeitszeitTag = getNormalWorkingHours(dayDate);
             // Tagessoll erscheint genau EINMAL pro Tag (vorher ×Anzahl-Einträge — Bug).
-            worksheetData.push(["", "", "", "", "", "Tagessumme:", regelarbeitszeitTag, "", "", "", "", ""]);
+            worksheetData.push(["", "", "", "", "", "Tagessumme:", regelarbeitszeitTag.toFixed(2), "", "", "", "", ""]);
           }
         }
-        tagZellen.push({
-          entryRows,
-          sumRow,
-          repRow: sumRow ?? entryRows[0],
-          ist: dayBal?.ist ?? dayEntries.reduce((sum, e) => sum + (Number(e.stunden) || 0), 0),
-          soll: dayBal?.soll ?? getNormalWorkingHours(dayDate),
-          neutral: !!dayBal && dayBal.istSonderzeit && dayBal.soll === 0,
-        });
       }
     }
 
@@ -540,25 +504,17 @@ export default function HoursReport() {
       return summe;
     };
 
-    // Summenzeile — Zahlen als Startwert, echte SUM-Formeln folgen unten.
-    const sumRowIdx = worksheetData.length;
-    const wetterTotal = Math.round(timeEntries.reduce((s, e) => s + (e.wetterschicht_stunden || 0), 0) * 100) / 100;
+    // Summenzeile — Saldo statt Math.max(0,…), Vorzeichen sichtbar.
     if (includeOvertime) {
-      worksheetData.push(["", "", "", "", "", "SUMME", Math.round(totalHours * 100) / 100, Math.round(totalSaldo * 100) / 100, "", "", "", "", wetterTotal]);
+      worksheetData.push(["", "", "", "", "", "SUMME", totalHours.toFixed(2), formatSaldo(totalSaldo), "", "", "", "", timeEntries.reduce((s, e) => s + (e.wetterschicht_stunden || 0), 0).toFixed(2)]);
     } else {
       const regelarbeitszeitSumme = calculateRegelarbeitszeitSumme();
-      worksheetData.push(["", "", "", "", "", "SUMME", regelarbeitszeitSumme, "", "", "", "", "", wetterTotal]);
+      worksheetData.push(["", "", "", "", "", "SUMME", regelarbeitszeitSumme.toFixed(2), "", "", "", "", ""]);
     }
     
-    // Footer-Zeilen — die zweite Zeile trägt das persönliche Monatssoll
-    // (ab Eintritt / bis Austritt), Zeilenanzahl bleibt unverändert.
-    const dienstHinweis = mSoll.eintrittImMonat
-      ? ` (Eintritt ${new Date(mSoll.eintrittImMonat + "T12:00:00").toLocaleDateString("de-AT")})`
-      : mSoll.austrittImMonat
-        ? ` (Austritt ${new Date(mSoll.austrittImMonat + "T12:00:00").toLocaleDateString("de-AT")})`
-        : "";
+    // Footer-Zeilen
     worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-    worksheetData.push(["", `Monatssoll lt. Regelarbeitszeit: ${mSoll.sollStunden.toFixed(2).replace(".", ",")} h${dienstHinweis}`, "", "", "", "", "", "", "", "", "", ""]);
+    worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
     worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
     if (includeOvertime) {
       worksheetData.push(["", "Hiermit bestätige ich die Richtigkeit der von mir angegebenen Überstunden.", "", "", "", "", "", "", "", "", "", ""]);
@@ -575,43 +531,6 @@ export default function HoursReport() {
     worksheetData.push(["", "Datum:", "", "", "", "Unterschrift:", "", "", "", "", "", ""]);
 
     const ws = XLSX.utils.aoa_to_sheet(worksheetData);
-
-    // ── Echte Formeln: Tagessumme, Überstunden je Tag und SUMME rechnen in
-    //    der Datei — wer in Excel Stunden ändert, sieht die Summen live.
-    const zelle = (c: number, r: number) => XLSX.utils.encode_cell({ r, c });
-    const HOURS_C = 6, SALDO_C = 7, WETTER_C = 12;
-    const NUM_Z = "0.00", SALDO_Z = "+0.00;-0.00;;";
-    for (const tz of tagZellen) {
-      if (tz.sumRow != null) {
-        // Mit Überstunden: Summe der Eintragszeilen. Ohne: jede Zeile trägt
-        // bereits das volle Tagessoll — Referenz auf die erste Zeile.
-        const f = includeOvertime
-          ? `SUM(${zelle(HOURS_C, tz.entryRows[0])}:${zelle(HOURS_C, tz.entryRows[tz.entryRows.length - 1])})`
-          : `${zelle(HOURS_C, tz.entryRows[0])}`;
-        const bisher = ws[zelle(HOURS_C, tz.sumRow)];
-        ws[zelle(HOURS_C, tz.sumRow)] = { t: "n", v: typeof bisher?.v === "number" ? bisher.v : 0, f, z: NUM_Z };
-      }
-      if (includeOvertime && !tz.neutral) {
-        // Überstunden des Tages = Tagesstunden − Tagessoll; Sonderzeit-Tage
-        // (Urlaub etc., neutralisiert) bleiben ohne Formel wie bisher leer.
-        ws[zelle(SALDO_C, tz.entryRows[0])] = {
-          t: "n",
-          v: Math.round((tz.ist - tz.soll) * 100) / 100,
-          f: `ROUND(${zelle(HOURS_C, tz.repRow)}-${tz.soll},2)`,
-          z: SALDO_Z,
-        };
-      }
-    }
-    if (tagZellen.length > 0) {
-      const ersteZeile = tagZellen[0].entryRows[0];
-      const reps = tagZellen.map((tz) => zelle(HOURS_C, tz.repRow));
-      const gBisher = ws[zelle(HOURS_C, sumRowIdx)];
-      ws[zelle(HOURS_C, sumRowIdx)] = { t: "n", v: typeof gBisher?.v === "number" ? gBisher.v : 0, f: `SUM(${reps.join(",")})`, z: NUM_Z };
-      ws[zelle(WETTER_C, sumRowIdx)] = { t: "n", v: wetterTotal, f: `SUM(${zelle(WETTER_C, ersteZeile)}:${zelle(WETTER_C, sumRowIdx - 1)})`, z: NUM_Z };
-      if (includeOvertime) {
-        ws[zelle(SALDO_C, sumRowIdx)] = { t: "n", v: Math.round(totalSaldo * 100) / 100, f: `SUM(${zelle(SALDO_C, ersteZeile)}:${zelle(SALDO_C, sumRowIdx - 1)})`, z: SALDO_Z };
-      }
-    }
     
     // Spaltenbreiten für 12 Spalten
     ws["!cols"] = [
@@ -647,7 +566,6 @@ export default function HoursReport() {
       { s: { r: 7, c: 1 }, e: { r: 7, c: 2 } },
       { s: { r: 7, c: 4 }, e: { r: 7, c: 5 } },
       // Footer Merges - immer aktiv
-      { s: { r: sumRowIndex + 2, c: 1 }, e: { r: sumRowIndex + 2, c: 10 } },
       { s: { r: sumRowIndex + 4, c: 1 }, e: { r: sumRowIndex + 4, c: 10 } },
       { s: { r: sumRowIndex + 6, c: 1 }, e: { r: sumRowIndex + 6, c: 10 } },
       { s: { r: sumRowIndex + 7, c: 1 }, e: { r: sumRowIndex + 7, c: 10 } }
@@ -660,7 +578,6 @@ export default function HoursReport() {
     });
     
     // Footer-Texte: erhöhte Zeilenhöhe für Lesbarkeit - immer aktiv
-    ws["!rows"][sumRowIndex + 2] = { hpt: 20 }; // "Monatssoll lt. Regelarbeitszeit..."
     ws["!rows"][sumRowIndex + 4] = { hpt: 30 }; // "Hiermit bestätige ich..."
     ws["!rows"][sumRowIndex + 6] = { hpt: 25 }; // "Derzeitiger offener Überstundenstand..."
 
@@ -671,10 +588,6 @@ export default function HoursReport() {
         const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
         if (!ws[cellAddress]) {
           ws[cellAddress] = { t: "s", v: "" };
-        }
-        // Stunden-/Wetter-Zellen: einheitlich 2 Nachkommastellen
-        if ((C === 6 || C === 7 || C === 12) && ws[cellAddress].t === "n" && !ws[cellAddress].z) {
-          ws[cellAddress].z = C === 7 && includeOvertime ? "+0.00;-0.00;;" : "0.00";
         }
         
         const isFirmenHeader = R >= 0 && R <= 3;
@@ -843,26 +756,7 @@ export default function HoursReport() {
                       <div>
                         <p className="text-sm text-muted-foreground">Gesamtstunden</p>
                         <p className="text-2xl font-bold">{totalHours.toFixed(2)} h</p>
-                        <p className="text-[10px] text-muted-foreground">Soll (gebuchte Tage): {totalSoll.toFixed(2)} h</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Monatssoll</p>
-                        <p className="text-2xl font-bold">{mSoll.sollStunden.toFixed(2)} h</p>
-                        <p className="text-[10px] text-muted-foreground">
-                          {mSoll.eintrittImMonat
-                            ? `ab Eintritt ${new Date(mSoll.eintrittImMonat + "T12:00:00").toLocaleDateString("de-AT")}`
-                            : mSoll.austrittImMonat
-                              ? `bis Austritt ${new Date(mSoll.austrittImMonat + "T12:00:00").toLocaleDateString("de-AT")}`
-                              : `${mSoll.werktage} Werktage lt. Regelarbeitszeit`}
-                        </p>
-                        {fehltageListe.length > 0 && (
-                          <p
-                            className="text-[10px] font-medium text-amber-600"
-                            title={fehltageListe.map((d) => new Date(d + "T12:00:00").toLocaleDateString("de-AT")).join(", ")}
-                          >
-                            {fehltageListe.length} Werktag{fehltageListe.length === 1 ? "" : "e"} ohne Buchung
-                          </p>
-                        )}
+                        <p className="text-[10px] text-muted-foreground">Soll: {totalSoll.toFixed(2)} h</p>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Saldo Monat</p>
