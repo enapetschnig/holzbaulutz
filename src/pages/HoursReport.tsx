@@ -647,6 +647,7 @@ export default function HoursReport() {
       { s: { r: 7, c: 1 }, e: { r: 7, c: 2 } },
       { s: { r: 7, c: 4 }, e: { r: 7, c: 5 } },
       // Footer Merges - immer aktiv
+      { s: { r: sumRowIndex + 2, c: 1 }, e: { r: sumRowIndex + 2, c: 10 } },
       { s: { r: sumRowIndex + 4, c: 1 }, e: { r: sumRowIndex + 4, c: 10 } },
       { s: { r: sumRowIndex + 6, c: 1 }, e: { r: sumRowIndex + 6, c: 10 } },
       { s: { r: sumRowIndex + 7, c: 1 }, e: { r: sumRowIndex + 7, c: 10 } }
@@ -659,6 +660,7 @@ export default function HoursReport() {
     });
     
     // Footer-Texte: erhöhte Zeilenhöhe für Lesbarkeit - immer aktiv
+    ws["!rows"][sumRowIndex + 2] = { hpt: 20 }; // "Monatssoll lt. Regelarbeitszeit..."
     ws["!rows"][sumRowIndex + 4] = { hpt: 30 }; // "Hiermit bestätige ich..."
     ws["!rows"][sumRowIndex + 6] = { hpt: 25 }; // "Derzeitiger offener Überstundenstand..."
 
