@@ -1,6 +1,8 @@
 // AdminAbsenceDialog — Admin trägt Urlaub/Krankenstand/Zeitausgleich/
-// Feiertag/Weiterbildung für einen Mitarbeiter über einen Datumsbereich
-// nach. Pro Werktag im Bereich (Mo-Fr, Tagessoll>0) wird ein
+// Feiertag/Weiterbildung/Arztbesuch für einen Mitarbeiter über einen
+// Datumsbereich nach. Bei einem einzelnen Tag kann statt des ganzen Tages
+// eine Stundenzahl angegeben werden (Teilabwesenheit, z. B. 2,5 h Arzt +
+// 5,5 h Zeitausgleich am selben Tag). Pro Werktag im Bereich (Mo-Fr, Tagessoll>0) wird ein
 // time_entry mit Sonderzeit-Tätigkeit angelegt; zusätzlich ein
 // leave_request mit status='genehmigt', damit die Plantafel den Block
 // markiert. Bei Zeitausgleich wird zusätzlich eine
@@ -40,14 +42,17 @@ import { supabase } from "@/integrations/supabase/client";
 import { getNormalWorkingHours } from "@/lib/workingHours";
 import { format } from "date-fns";
 
-type AbsenceType = "Urlaub" | "Krankenstand" | "Zeitausgleich" | "Feiertag" | "Weiterbildung";
+type AbsenceType = "Urlaub" | "Krankenstand" | "Zeitausgleich" | "Feiertag" | "Weiterbildung" | "Arztbesuch";
 
+// Arztbesuch ist bezahlte Dienstverhinderung: zählt als normale Arbeitszeit
+// gegen das Tagessoll (keine Sonderzeit, kein ZA-Abzug, kein Plantafel-Block).
 const TYPE_OPTIONS: { value: AbsenceType; label: string; leaveTypeKey: string }[] = [
   { value: "Urlaub",        label: "Urlaub",        leaveTypeKey: "urlaub" },
   { value: "Krankenstand",  label: "Krankenstand",  leaveTypeKey: "krankenstand" },
   { value: "Zeitausgleich", label: "Zeitausgleich", leaveTypeKey: "za" },
   { value: "Feiertag",      label: "Feiertag",      leaveTypeKey: "feiertag" },
   { value: "Weiterbildung", label: "Weiterbildung", leaveTypeKey: "weiterbildung" },
+  { value: "Arztbesuch",    label: "Arztbesuch / Dienstverhinderung (bezahlt)", leaveTypeKey: "arzt" },
 ];
 
 interface AdminAbsenceDialogProps {
@@ -72,6 +77,8 @@ export function AdminAbsenceDialog({
   const [fromDate, setFromDate] = useState<string>(today);
   const [toDate, setToDate] = useState<string>(today);
   const [notiz, setNotiz] = useState<string>("");
+  // Teilabwesenheit: nur bei einem einzelnen Tag — leer = ganzer Tag
+  const [teilStunden, setTeilStunden] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [conflictDays, setConflictDays] = useState<string[] | null>(null);
 
@@ -83,6 +90,7 @@ export function AdminAbsenceDialog({
       setFromDate(today);
       setToDate(today);
       setNotiz("");
+      setTeilStunden("");
       setConflictDays(null);
     }
   }, [open, defaultUserId]);
@@ -100,6 +108,16 @@ export function AdminAbsenceDialog({
     return out;
   }, [fromDate, toDate]);
 
+  const istEinzeltag = fromDate !== "" && fromDate === toDate;
+  const teilStundenWert = parseFloat(teilStunden.replace(",", "."));
+  const istTeiltag = istEinzeltag && teilStunden.trim() !== "" && Number.isFinite(teilStundenWert) && teilStundenWert > 0;
+  // Gesamtstunden der Buchung: Teiltag = eingegebene Stunden, sonst Summe
+  // der Tagessolls (Mo–Do 8 h, Fr 7 h) — vorher stand hier fälschlich ×10.
+  const gesamtStunden = useMemo(() => {
+    if (istTeiltag) return Math.round(teilStundenWert * 100) / 100;
+    return eligibleDates.reduce((s, d) => s + getNormalWorkingHours(new Date(d + "T12:00:00")), 0);
+  }, [istTeiltag, teilStundenWert, eligibleDates]);
+
   const sortedProfiles = useMemo(() => {
     return Object.entries(profiles)
       .filter(([, p]) => p.vorname || p.nachname)
@@ -110,13 +128,19 @@ export function AdminAbsenceDialog({
 
   const performSave = async (forceDespiteConflicts: boolean) => {
     if (!userId || eligibleDates.length === 0) return;
+    if (istTeiltag && teilStundenWert > 24) {
+      toast({ variant: "destructive", title: "Ungültige Stunden", description: "Mehr als 24 Stunden pro Tag sind nicht möglich." });
+      return;
+    }
     setSaving(true);
     try {
       const { data: { user: caller } } = await supabase.auth.getUser();
       if (!caller) throw new Error("Nicht angemeldet");
 
       // Konflikt-Check: Sind für diese Tage schon time_entries angelegt?
-      if (!forceDespiteConflicts) {
+      // Teilabwesenheit koexistiert absichtlich mit anderen Buchungen des
+      // Tages (z. B. 2,5 h Arzt + 5,5 h ZA) — kein Warnhinweis nötig.
+      if (!forceDespiteConflicts && !istTeiltag) {
         const { data: existing } = await supabase
           .from("time_entries")
           .select("datum")
@@ -136,19 +160,22 @@ export function AdminAbsenceDialog({
       // Self-Service-Pfad in TimeTracking.tsx (Z. 558-570).
       const rows = eligibleDates.map((d) => {
         const dateObj = new Date(d + "T12:00:00");
-        const stunden = getNormalWorkingHours(dateObj);
+        const stunden = istTeiltag ? Math.round(teilStundenWert * 100) / 100 : getNormalWorkingHours(dateObj);
         return {
           user_id: userId,
           datum: d,
           project_id: null,
           taetigkeit: type,
           stunden,
-          start_time: "07:00",
-          end_time: "16:00",
-          pause_minutes: 30,
+          // Teiltag ohne fiktive Uhrzeiten — sonst würden Überschneidungs-
+          // Warnungen gegen die echte Arbeitszeit des Tages ausgelöst.
+          start_time: istTeiltag ? null : "07:00",
+          end_time: istTeiltag ? null : "16:00",
+          pause_minutes: istTeiltag ? 0 : 30,
           location_type: "baustelle",
           notizen: notiz || null,
           week_type: null,
+          is_full_day: !istTeiltag,
           nachgetragen_von: caller.id !== userId ? caller.id : null,
           nachgetragen_am: caller.id !== userId ? new Date().toISOString() : null,
         };
@@ -157,20 +184,24 @@ export function AdminAbsenceDialog({
       if (teErr) throw teErr;
 
       // leave_request mit status='genehmigt' anlegen — Plantafel zeigt
-      // den Block dann automatisch via isOnLeave-Helper.
-      const leaveTypeKey = TYPE_OPTIONS.find(o => o.value === type)?.leaveTypeKey || "urlaub";
+      // den Block dann automatisch via isOnLeave-Helper. Nur für ganze
+      // Tage: eine Teilabwesenheit oder ein Arztbesuch soll den Tag in
+      // der Plantafel nicht als abwesend blocken.
       const totalDays = eligibleDates.length;
-      await (supabase.from("leave_requests" as any) as any).insert({
-        user_id: userId,
-        type: leaveTypeKey,
-        start_date: fromDate,
-        end_date: toDate,
-        days: totalDays,
-        status: "genehmigt",
-        reviewed_by: caller.id,
-        reviewed_at: new Date().toISOString(),
-        notizen: notiz || null,
-      });
+      if (!istTeiltag && type !== "Arztbesuch") {
+        const leaveTypeKey = TYPE_OPTIONS.find(o => o.value === type)?.leaveTypeKey || "urlaub";
+        await (supabase.from("leave_requests" as any) as any).insert({
+          user_id: userId,
+          type: leaveTypeKey,
+          start_date: fromDate,
+          end_date: toDate,
+          days: totalDays,
+          status: "genehmigt",
+          reviewed_by: caller.id,
+          reviewed_at: new Date().toISOString(),
+          notizen: notiz || null,
+        });
+      }
 
       // Bei Zeitausgleich: Stundenkonto-Abzug — analog TimeTracking.tsx
       // (sonst würde der ZA "doppelt zählen" — kein Soll und kein Abzug).
@@ -203,7 +234,9 @@ export function AdminAbsenceDialog({
 
       toast({
         title: "Abwesenheit eingetragen",
-        description: `${type}: ${eligibleDates.length} Werktag${eligibleDates.length > 1 ? "e" : ""} verbucht.`,
+        description: istTeiltag
+          ? `${type}: ${String(gesamtStunden).replace(".", ",")} h am ${new Date(fromDate + "T12:00:00").toLocaleDateString("de-AT")} verbucht.`
+          : `${type}: ${eligibleDates.length} Werktag${eligibleDates.length > 1 ? "e" : ""} verbucht.`,
       });
       onSaved?.();
       onOpenChange(false);
@@ -224,8 +257,9 @@ export function AdminAbsenceDialog({
           <DialogTitle>Abwesenheit nachtragen</DialogTitle>
           <DialogDescription>
             Trägt für den gewählten Mitarbeiter pro Werktag einen Abwesenheits-Eintrag
-            (Mo–Do je 8 h, Fr 7 h) in die Stundenerfassung und gleichzeitig einen genehmigten
-            Antrag in die Plantafel ein.
+            (Mo–Do je 8 h, Fr 7 h) in die Stundenerfassung ein — ganze Tage zusätzlich als
+            genehmigten Antrag in die Plantafel. Bei einem einzelnen Tag kann stattdessen
+            eine Stundenzahl angegeben werden (Teilabwesenheit).
           </DialogDescription>
         </DialogHeader>
 
@@ -282,6 +316,24 @@ export function AdminAbsenceDialog({
             </div>
           </div>
 
+          {istEinzeltag && (
+            <div className="space-y-1.5">
+              <Label htmlFor="abs-stunden">Stunden (leer = ganzer Tag)</Label>
+              <Input
+                id="abs-stunden"
+                type="text"
+                inputMode="decimal"
+                placeholder={`ganzer Tag (${getNormalWorkingHours(new Date((fromDate || toDate) + "T12:00:00")) || 0} h)`}
+                value={teilStunden}
+                onChange={(e) => setTeilStunden(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Für Teilabwesenheiten, z. B. 2,5 h Arztbesuch und 5,5 h Zeitausgleich am selben Tag —
+                zwei Buchungen mit je ihren Stunden eintragen.
+              </p>
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <Label htmlFor="abs-notiz">Notiz (optional)</Label>
             <Textarea
@@ -295,11 +347,23 @@ export function AdminAbsenceDialog({
 
           <div className="text-xs text-muted-foreground rounded bg-muted/40 p-2">
             {eligibleDates.length === 0
-              ? "Kein Werktag im gewählten Bereich (Mo–Do erforderlich)."
-              : `Wird ${eligibleDates.length} Werktag${eligibleDates.length > 1 ? "e" : ""} eintragen.`}
+              ? "Kein Werktag im gewählten Bereich (Mo–Fr erforderlich)."
+              : istTeiltag
+                ? `Wird ${String(gesamtStunden).replace(".", ",")} h als Teilabwesenheit eintragen.`
+                : `Wird ${eligibleDates.length} Werktag${eligibleDates.length > 1 ? "e" : ""} (${String(gesamtStunden).replace(".", ",")} h) eintragen.`}
             {type === "Zeitausgleich" && eligibleDates.length > 0 && (
               <span className="block mt-1">
-                Hinweis: Stundenkonto wird um {eligibleDates.length * 10} h reduziert.
+                Hinweis: Stundenkonto wird um {String(gesamtStunden).replace(".", ",")} h reduziert.
+              </span>
+            )}
+            {type === "Arztbesuch" && (
+              <span className="block mt-1">
+                Arztbesuch zählt als bezahlte Arbeitszeit (kein Abzug vom Stunden- oder Urlaubskonto).
+              </span>
+            )}
+            {type === "Urlaub" && eligibleDates.length > 0 && (
+              <span className="block mt-1">
+                Wird automatisch am Urlaubskonto verbucht{istTeiltag ? " (anteilig)" : ""}.
               </span>
             )}
           </div>
