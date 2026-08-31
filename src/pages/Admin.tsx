@@ -12,6 +12,8 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AenderungswuenscheListe } from "@/components/aenderungswunsch/AenderungswuenscheListe";
+import { NeuerungenPflege } from "@/components/neuerungen/NeuerungenPflege";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -659,6 +661,7 @@ export default function Admin() {
             <TabsTrigger value="farben" className="flex-shrink-0">Farben & Plantafel</TabsTrigger>
             <TabsTrigger value="konfiguration" className="flex-shrink-0">Konfiguration</TabsTrigger>
             <TabsTrigger value="berechtigungen" className="flex-shrink-0">Berechtigungen</TabsTrigger>
+            <TabsTrigger value="aenderungswuensche" className="flex-shrink-0">Änderungswünsche</TabsTrigger>
           </TabsList>
 
           {/* ===== TAB 1: BENUTZER & MITARBEITER ===== */}
@@ -1309,6 +1312,12 @@ export default function Admin() {
           {/* ===== TAB 6: BERECHTIGUNGEN ===== */}
           <TabsContent value="berechtigungen" className="space-y-6">
             <PermissionMatrix />
+          </TabsContent>
+
+          {/* ===== ÄNDERUNGSWÜNSCHE ===== */}
+          <TabsContent value="aenderungswuensche" className="space-y-6">
+            <NeuerungenPflege />
+            <AenderungswuenscheListe />
           </TabsContent>
 
         </Tabs>

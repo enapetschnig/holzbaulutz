@@ -332,7 +332,7 @@ export function KalkulationsExcelAnsicht({ positionen, onEdit, onDataChanged, on
 
       {/* Schwebende Speicherleiste */}
       {dirtyCount > 0 && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-full border bg-background shadow-lg px-4 py-2">
+        <div data-bildschirmfoto="aus" className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-full border bg-background shadow-lg px-4 py-2">
           <span className="text-sm">
             <b>{dirtyCount}</b> Position{dirtyCount === 1 ? "" : "en"} geändert
           </span>

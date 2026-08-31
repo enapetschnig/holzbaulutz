@@ -20,6 +20,9 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { MeineEinteilung } from "@/components/MeineEinteilung";
 import { StundenabgleichWidget } from "@/components/dashboard/StundenabgleichWidget";
 import { OffenePostenWidget } from "@/components/dashboard/OffenePostenWidget";
+import { AenderungswunschKnopf } from "@/components/aenderungswunsch/AenderungswunschKnopf";
+import { ErledigteWuensche } from "@/components/aenderungswunsch/ErledigteWuensche";
+import { NeuerungenBanner } from "@/components/neuerungen/NeuerungenBanner";
 
 type Project = {
   id: string;
@@ -275,7 +278,7 @@ export default function Index() {
       {/* Erzwungener Passwortwechsel beim ersten Login (vom Admin angelegte Konten) */}
       {mustChangePw && <ChangePasswordDialog forced onSuccess={() => setMustChangePw(false)} />}
       {/* Header */}
-      <header className="border-b bg-card sticky top-0 z-50 shadow-sm">
+      <header data-seitenkopf className="border-b bg-card sticky top-0 z-50 shadow-sm">
         <div className="container mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-4">
           <div className="flex justify-between items-center gap-3">
             <div className="flex items-center gap-2 sm:gap-3">
@@ -284,9 +287,11 @@ export default function Index() {
                 <span className="text-sm sm:text-base font-semibold">{userName || "Benutzer"}</span>
               </div>
             </div>
+            <div className="flex items-center gap-2">
+            <AenderungswunschKnopf gestalt="kopf" />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm">
+                <Button variant="outline" size="sm" data-bildschirmfoto="aus">
                   <UserIcon className="h-4 w-4 mr-2" />
                   <span className="hidden sm:inline">Menü</span>
                 </Button>
@@ -312,6 +317,7 @@ export default function Index() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            </div>
           </div>
         </div>
       </header>
@@ -353,6 +359,12 @@ export default function Index() {
               : "Zeiterfassung und Projektdokumentation"}
           </p>
         </div>
+
+        {/* "Dein Wunsch ist erledigt" — für alle, die etwas gemeldet haben */}
+        <ErledigteWuensche />
+
+        {/* "Das ist neu" — bewusst nur für Administratoren (Kundenentscheid) */}
+        {user && isAdmin && <NeuerungenBanner userId={user.id} />}
 
         {/* Meine Einteilung — für alle; Admins nur, wenn sie in der Plantafel eingeteilt sind */}
         {user && <MeineEinteilung userId={user.id} nurMitEinsaetzen={isAdmin} />}

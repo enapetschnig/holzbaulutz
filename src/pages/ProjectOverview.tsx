@@ -1015,7 +1015,7 @@ const ProjectOverview = () => {
         )}
 
         <Button
-          className="fixed bottom-6 right-6 z-50 h-14 w-14 rounded-full shadow-lg"
+          data-bildschirmfoto="aus" className="fixed bottom-6 right-6 z-50 h-14 w-14 rounded-full shadow-lg"
           size="icon"
           onClick={handleQuickPhotoUpload}
         >
