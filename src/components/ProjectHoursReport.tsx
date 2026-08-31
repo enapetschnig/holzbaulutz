@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Download, Calendar, Briefcase, MapPin, Wrench } from "lucide-react";
 import * as XLSX from "xlsx-js-style";
+import { querformatXlsxSpeichern, QUER_RAENDER } from "@/lib/excelQuerformat";
 import { format, parseISO } from "date-fns";
 import { de } from "date-fns/locale";
 
@@ -203,7 +204,7 @@ export default function ProjectHoursReport() {
     };
   };
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
     const selectedProject = projects.find((p) => p.id === selectedProjectId);
     if (!selectedProject) return;
 
@@ -274,7 +275,8 @@ export default function ProjectHoursReport() {
 
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, selectedProject.name.substring(0, 31));
-    XLSX.writeFile(wb, `Projektzeiterfassung_${selectedProject.name}.xlsx`);
+    ws["!margins"] = QUER_RAENDER;
+    await querformatXlsxSpeichern(wb, `Projektzeiterfassung_${selectedProject.name}.xlsx`);
 
     toast({
       title: "Export erfolgreich",

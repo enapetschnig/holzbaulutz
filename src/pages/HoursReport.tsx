@@ -18,6 +18,7 @@ import { AdminTimeEntryDialog } from "@/components/AdminTimeEntryDialog";
 import { format, isSameDay, parseISO } from "date-fns";
 import { de } from "date-fns/locale";
 import * as XLSX from "xlsx-js-style";
+import { querformatXlsxSpeichern, QUER_RAENDER } from "@/lib/excelQuerformat";
 import { cn } from "@/lib/utils";
 import ProjectHoursReport from "@/components/ProjectHoursReport";
 import {
@@ -333,7 +334,7 @@ export default function HoursReport() {
     };
   };
 
-  const exportToExcel = (includeOvertime: boolean = true) => {
+  const exportToExcel = async (includeOvertime: boolean = true) => {
     if (!selectedUserId) {
       toast({ title: "Kein Mitarbeiter ausgewählt", variant: "destructive" });
       return;
@@ -635,7 +636,8 @@ export default function HoursReport() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Arbeitszeit");
     const suffix = includeOvertime ? "_mit_Ueberstunden" : "_ohne_Ueberstunden";
-    XLSX.writeFile(wb, `Arbeitszeiterfassung_${employeeName}_${monthNamesShort[month - 1]}_${year}${suffix}.xlsx`);
+    ws["!margins"] = QUER_RAENDER;
+    await querformatXlsxSpeichern(wb, `Arbeitszeiterfassung_${employeeName}_${monthNamesShort[month - 1]}_${year}${suffix}.xlsx`);
 
     toast({ title: "Excel exportiert", description: `Datei wurde heruntergeladen` });
   };

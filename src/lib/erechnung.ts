@@ -19,6 +19,7 @@ export interface ERechnungZeile {
   einzelpreis: number;
   rabatt_prozent?: number;
   gesamtpreis: number;
+  eventual?: boolean;
   mwst_exempt?: boolean;
 }
 
@@ -85,7 +86,9 @@ export function erzeugeEbInterfaceXml(d: ERechnungDaten): { xml: string; hinweis
   const ust = Number.isFinite(Number(d.ust_satz)) ? Number(d.ust_satz) : 20;
 
   // Normale Zeilen vs. Anzahlungs-Abzüge (mwst_exempt, negativ)
-  const normale = d.zeilen.filter(z => !z.mwst_exempt);
+  // Eventualpositionen sind nicht beauftragt und gehören nicht in die
+  // E-Rechnung — weder als Zeile noch in eine Summe.
+  const normale = d.zeilen.filter(z => !z.mwst_exempt && !(z as any).eventual);
   const abzuege = d.zeilen.filter(z => z.mwst_exempt);
   const prepaidBrutto = Math.round(abzuege.reduce((s, z) => s + Math.abs(Number(z.gesamtpreis) || 0), 0) * 100) / 100;
 

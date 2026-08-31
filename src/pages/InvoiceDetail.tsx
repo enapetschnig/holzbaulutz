@@ -77,6 +77,11 @@ interface InvoiceItem {
   // Wenn true, ist gesamtpreis bereits BRUTTO und wird aus der MwSt-
   // Berechnung ausgenommen (Anzahlungs-Abzüge in Schlussrechnungen).
   mwst_exempt?: boolean;
+  // Eventualposition (EV): wird nur bei Bedarf beauftragt. Der Einheitspreis
+  // steht am Beleg, aber es gibt keinen Positionspreis und die Zeile zählt in
+  // KEINER Summe mit — technisch: gesamtpreis ist immer 0, solange das Flag
+  // gesetzt ist. Haken raus = Position wird normal gerechnet.
+  eventual?: boolean;
   // Set-Summary: wenn gesetzt, ist diese Zeile eine Material-Set-Summary.
   // Das PDF/HTML rendert weiterhin nur die Zeile — der Snapshot ist nur
   // für interne Nachkalkulation im Rechnungs-Editor sichtbar.
@@ -549,6 +554,7 @@ export default function InvoiceDetail() {
         gesamtpreis: Number(it.gesamtpreis) || 0,
         produktnummer: (it as any).produktnummer || "",
         mwst_exempt: !!(it as any).mwst_exempt,
+        eventual: !!(it as any).eventual,
         set_template_id: it.set_template_id || null,
         set_snapshot: it.set_snapshot || null,
         // Kalkulations-Snapshot + Katalog-Verknüpfung mitnehmen, damit die
@@ -1057,6 +1063,7 @@ export default function InvoiceDetail() {
         produktnummer: (it as any).produktnummer || "",
         gesamtpreis: Number(it.gesamtpreis),
         mwst_exempt: !!(it as any).mwst_exempt,
+        eventual: !!(it as any).eventual,
         set_template_id: (it as any).set_template_id || null,
         set_snapshot: (it as any).set_snapshot || null,
         ist_kalkuliert: !!(it as any).ist_kalkuliert,
@@ -1139,7 +1146,7 @@ export default function InvoiceDetail() {
     // → EINE Zeile mit Menge 8). Gleich = selbe Katalog-Verknüpfung bzw.
     // selber Text + Einheit + Einzelpreis; Abzugs-/gesperrte Zeilen nie.
     const passtZusammen = (a: InvoiceItem, b: InvoiceItem) =>
-      !a.mwst_exempt && !b.mwst_exempt &&
+      !a.mwst_exempt && !b.mwst_exempt && !!a.eventual === !!b.eventual &&
       (a.kalkulation_template_id && b.kalkulation_template_id
         ? a.kalkulation_template_id === b.kalkulation_template_id
         : (a.kurztext || a.beschreibung || "").trim().toLowerCase() === (b.kurztext || b.beschreibung || "").trim().toLowerCase()
@@ -1151,7 +1158,7 @@ export default function InvoiceDetail() {
       if (vorhanden) {
         vorhanden.menge = Math.round(((Number(vorhanden.menge) || 0) + (Number(neu.menge) || 0)) * 100) / 100;
         const r = Number(vorhanden.rabatt_prozent) || 0;
-        vorhanden.gesamtpreis = Math.round(vorhanden.menge * (Number(vorhanden.einzelpreis) || 0) * (1 - r / 100) * 100) / 100;
+        vorhanden.gesamtpreis = vorhanden.eventual ? 0 : Math.round(vorhanden.menge * (Number(vorhanden.einzelpreis) || 0) * (1 - r / 100) * 100) / 100;
       } else {
         base.push(neu);
       }
@@ -1290,11 +1297,11 @@ export default function InvoiceDetail() {
         value = isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
       }
       (updated[index] as any)[field] = value;
-      if (field === "menge" || field === "einzelpreis" || field === "rabatt_prozent") {
+      if (field === "menge" || field === "einzelpreis" || field === "rabatt_prozent" || field === "eventual") {
         const m = Number(updated[index].menge) || 0;
         const p = Number(updated[index].einzelpreis) || 0;
         const r = Number(updated[index].rabatt_prozent) || 0;
-        const total = m * p * (1 - r / 100);
+        const total = updated[index].eventual ? 0 : m * p * (1 - r / 100);
         updated[index].gesamtpreis = isFinite(total) ? Math.round(total * 100) / 100 : 0;
       }
       return updated;
@@ -1309,6 +1316,7 @@ export default function InvoiceDetail() {
       ? null : Number(form.kalkulation_aufschlag_override);
 
   const computeItemTotal = (it: InvoiceItem): number => {
+    if (it.eventual) return 0;
     const m = Number(it.menge) || 0;
     const r = Number(it.rabatt_prozent) || 0;
     const t = m * (Number(it.einzelpreis) || 0) * (1 - r / 100);
@@ -2047,6 +2055,7 @@ export default function InvoiceDetail() {
         produktnummer: item.produktnummer || null,
         rabatt_prozent: item.rabatt_prozent || 0,
         mwst_exempt: item.mwst_exempt || false,
+        eventual: item.eventual || false,
         set_template_id: item.set_template_id || null,
         set_snapshot: item.set_snapshot || null,
         ist_kalkuliert: item.ist_kalkuliert || false,
@@ -2499,6 +2508,7 @@ export default function InvoiceDetail() {
           kontoinhaber: s.bank_kontoinhaber,
         },
         zeilen: items.map(it => ({
+          eventual: !!(it as any).eventual,
           position: it.position,
           beschreibung: it.kurztext || it.beschreibung || "",
           menge: Number(it.menge) || 0,
@@ -3351,11 +3361,14 @@ export default function InvoiceDetail() {
                                   // Kumulierte Teilrechnung: Positionen des Auftrags +
                                   // bisheriger Leistungsstand (aus der letzten TR mit
                                   // gespeichertem Stand) für die %-Tabelle laden.
-                                  const { data: rootItems } = await supabase
+                                  const { data: rootItemsRoh } = await supabase
                                     .from("invoice_items")
-                                    .select("position, beschreibung, kurztext, menge, einheit, einzelpreis, rabatt_prozent, mwst_exempt")
+                                    .select("position, beschreibung, kurztext, menge, einheit, einzelpreis, rabatt_prozent, mwst_exempt, eventual")
                                     .eq("invoice_id", rootId)
                                     .order("position");
+                                  // Eventualpositionen sind nicht beauftragt — sie gehören
+                                  // weder in die %-Tabelle noch in den Auftrags-Faktor.
+                                  const rootItems = (rootItemsRoh || []).filter(it => !(it as any).eventual);
                                   let bisherStand: Record<string, number> = {};
                                   if (rows.length > 0) {
                                     const { data: prevTRs } = await (supabase as any)
@@ -4794,8 +4807,14 @@ export default function InvoiceDetail() {
                               </div>
                             )}
                           </div>
-                          {(item.produktnummer || item.kalkulation_template_id || istArbeitszeitZeile(item.kurztext || item.beschreibung, item.einheit)) && (
+                          {(item.produktnummer || item.kalkulation_template_id || item.eventual || istArbeitszeitZeile(item.kurztext || item.beschreibung, item.einheit)) && (
                             <span className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-2">
+                              {item.eventual && (
+                                <span className="inline-flex items-center gap-0.5 rounded bg-sky-50 border border-sky-200 text-sky-800 px-1"
+                                  title="Eventualposition — nur Einheitspreis am Beleg, zählt nicht in die Endsumme">
+                                  EV Eventualposition
+                                </span>
+                              )}
                               {item.produktnummer && <span>Prod.-Nr: {item.produktnummer}</span>}
                               {istArbeitszeitZeile(item.kurztext || item.beschreibung, item.einheit) && (
                                 <span className="inline-flex items-center gap-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 px-1"
@@ -4847,7 +4866,9 @@ export default function InvoiceDetail() {
                           <Input type="number" value={item.rabatt_prozent || ""} onChange={(e) => updateItem(idx, "rabatt_prozent", Number(e.target.value))} min={0} max={100} step={0.5} className="text-right h-10 md:h-9" placeholder="0" disabled={zeileGesperrt} />
                         </TableCell>
                         <TableCell className="text-right font-medium">
-                          € {item.gesamtpreis.toFixed(2)}
+                          {item.eventual
+                            ? <span className="text-sky-700 text-xs font-semibold" title="Eventualposition — kein Positionspreis, nicht in der Endsumme">EV</span>
+                            : <>€ {item.gesamtpreis.toFixed(2)}</>}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-0.5">
@@ -4909,6 +4930,19 @@ export default function InvoiceDetail() {
                                   </div>
                                 </PopoverContent>
                               </Popover>
+                            )}
+                            {!isLocked && !zeileGesperrt && !item.mwst_exempt && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={`h-10 w-10 md:h-8 md:w-8 text-[10px] font-bold ${item.eventual ? "text-sky-700 bg-sky-50" : "text-muted-foreground/60"}`}
+                                title={item.eventual
+                                  ? "Eventualposition — Klick macht daraus wieder eine normale Position"
+                                  : "Als Eventualposition kennzeichnen: nur Einheitspreis am Beleg, kein Positionspreis, zählt nicht in die Endsumme"}
+                                onClick={() => updateItem(idx, "eventual", !item.eventual)}
+                              >
+                                EV
+                              </Button>
                             )}
                             {!isLocked && (
                               <>
@@ -5515,6 +5549,7 @@ export default function InvoiceDetail() {
             rabatt_prozent: Number((item as any).rabatt_prozent) || 0,
             gesamtpreis: item.gesamtpreis,
             mwst_exempt: !!(item as any).mwst_exempt,
+            eventual: !!(item as any).eventual,
           }))}
         />
 
@@ -5926,6 +5961,7 @@ export default function InvoiceDetail() {
               gesamtpreis: item.gesamtpreis ?? (item.menge * item.einzelpreis),
               produktnummer: item.produktnummer || "",
               mwst_exempt: !!item.mwst_exempt,
+              eventual: !!(item as any).eventual,
             }));
             setItems(prev => mergeItems(prev, newItems));
             // Quell-Angebot verknüpfen → wird beim Speichern als Rechnung auf

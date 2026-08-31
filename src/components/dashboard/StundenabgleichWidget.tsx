@@ -77,7 +77,7 @@ export function StundenabgleichWidget() {
         if (angebotIds.length > 0) {
           const { data: items } = await supabase
             .from("invoice_items")
-            .select("invoice_id, menge, einheit, arbeitszeit_minuten, kurztext, beschreibung")
+            .select("invoice_id, menge, einheit, arbeitszeit_minuten, kurztext, beschreibung, eventual")
             .in("invoice_id", angebotIds);
           // Soll = GESAMTE Arbeitszeit des Angebots (wie in der Projekt-
           // Ansicht): explizite Stunden-Positionen PLUS die Arbeitszeit aus
@@ -85,6 +85,7 @@ export function StundenabgleichWidget() {
           const stundenByInvoice: Record<string, number> = {};
           for (const it of ((items || []) as any[])) {
             const menge = Number(it.menge) || 0;
+            if ((it as any).eventual) continue;   // Eventualposition: nicht beauftragt, kein Soll
             const stunden = istArbeitszeitZeile(it.kurztext || it.beschreibung, it.einheit)
               ? menge
               : ((Number(it.arbeitszeit_minuten) || 0) * menge) / 60;

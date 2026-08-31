@@ -95,6 +95,9 @@ export interface InvoiceHtmlItem {
   einheit: string;
   einzelpreis: number;
   gesamtpreis: number;
+  /** Eventualposition: nur der Einheitspreis erscheint, kein Positionspreis,
+   *  die Zeile zählt nicht in die Endsumme (gesamtpreis ist 0). */
+  eventual?: boolean;
 }
 
 // Minimal HTML-Escape für freien Text aus document_texts (verhindert XSS
@@ -171,7 +174,7 @@ export function buildInvoiceHtml(
     0
   );
   // Item-Rabatt-Total: Differenz "Menge × Einzelpreis" vs. gesamtpreis pro Position.
-  const itemRabattTotal = (items || []).filter(it => !(it as any).mwst_exempt).reduce((s, it) => {
+  const itemRabattTotal = (items || []).filter(it => !(it as any).mwst_exempt && !it.eventual).reduce((s, it) => {
     const rabProz = Number((it as any).rabatt_prozent) || 0;
     if (rabProz <= 0) return s;
     const original = Number(it.menge) * Number(it.einzelpreis);
@@ -195,18 +198,18 @@ export function buildInvoiceHtml(
         ? `
     <tr style="background:${idx % 2 === 0 ? "#fff" : "#fafafa"};">
       <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;color:#888;text-align:center;font-size:9pt;">${item.position}</td>
-      <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;color:#1a1a1a;font-size:9.5pt;white-space:pre-wrap;">${item.beschreibung}</td>
+      <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;color:#1a1a1a;font-size:9.5pt;white-space:pre-wrap;">${item.beschreibung}${item.eventual ? '<div style="color:#888;font-size:8pt;margin-top:2px;">Eventualposition — wird nur bei Bedarf beauftragt, nicht in der Endsumme enthalten</div>' : ""}</td>
       <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;text-align:right;color:#444;font-size:9pt;">${fmt(Number(item.menge))}</td>
       <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;text-align:center;color:#444;font-size:9pt;">${item.einheit || "Stk."}</td>
     </tr>`
         : `
     <tr style="background:${idx % 2 === 0 ? "#fff" : "#fafafa"};">
       <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;color:#888;text-align:center;font-size:9pt;">${item.position}</td>
-      <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;color:#1a1a1a;font-size:9.5pt;white-space:pre-wrap;">${item.beschreibung}</td>
+      <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;color:#1a1a1a;font-size:9.5pt;white-space:pre-wrap;">${item.beschreibung}${item.eventual ? '<div style="color:#888;font-size:8pt;margin-top:2px;">Eventualposition — wird nur bei Bedarf beauftragt, nicht in der Endsumme enthalten</div>' : ""}</td>
       <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;text-align:right;color:#444;font-size:9pt;">${fmt(Number(item.menge))}</td>
       <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;text-align:center;color:#444;font-size:9pt;">${item.einheit || "Stk."}</td>
       <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;text-align:right;color:#444;font-size:9pt;">${fmtCurrency(Number(item.einzelpreis))}</td>
-      <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;text-align:right;font-weight:600;color:#1a1a1a;font-size:9.5pt;">${fmtCurrency(Number(item.gesamtpreis))}</td>
+      <td style="padding:9px 12px;border-bottom:1px solid #e8e8e8;text-align:right;font-weight:600;color:#1a1a1a;font-size:9.5pt;">${item.eventual ? '<span style="color:#888;font-weight:600;font-size:8.5pt;">EV</span>' : fmtCurrency(Number(item.gesamtpreis))}</td>
     </tr>`
     )
     .join("");
@@ -549,10 +552,10 @@ ${(() => {
       <td style="text-align:center;color:#888;">${String(item.position).padStart(2, "0")}</td>
       <td style="text-align:right;">${fmt(Number(item.menge))}</td>
       <td style="text-align:center;color:#888;">${item.einheit || "Stk."}</td>
-      <td>${item.beschreibung}</td>
+      <td>${item.beschreibung}${item.eventual ? '<div style="color:#888;font-size:7.5pt;">Eventualposition — wird nur bei Bedarf beauftragt, nicht in der Endsumme enthalten</div>' : ""}</td>
       ${hidePrices ? "" : `<td style="text-align:right;">${fmtCurrency(Number(item.einzelpreis))}</td>
-      <td style="text-align:right;color:${itemRabattProz > 0 ? accent : "#bbb"};">${itemRabattProz > 0 ? `${itemRabattProz}%` : "—"}</td>
-      <td style="text-align:right;font-weight:600;">${fmtCurrency(Number(item.gesamtpreis))}</td>`}
+      <td style="text-align:right;color:${itemRabattProz > 0 && !item.eventual ? accent : "#bbb"};">${itemRabattProz > 0 && !item.eventual ? `${itemRabattProz}%` : "—"}</td>
+      <td style="text-align:right;font-weight:600;">${item.eventual ? '<span style="color:#888;">EV</span>' : fmtCurrency(Number(item.gesamtpreis))}</td>`}
     </tr>`;
     }).join("")}
   </tbody>

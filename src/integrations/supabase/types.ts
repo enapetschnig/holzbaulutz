@@ -1036,6 +1036,7 @@ export type Database = {
           einheit: string | null
           einzelpreis: number
           ek_preis: number
+          eventual: boolean
           gesamtpreis: number
           id: string
           invoice_id: string
@@ -1063,6 +1064,7 @@ export type Database = {
           einheit?: string | null
           einzelpreis?: number
           ek_preis?: number
+          eventual?: boolean
           gesamtpreis?: number
           id?: string
           invoice_id: string
@@ -1090,6 +1092,7 @@ export type Database = {
           einheit?: string | null
           einzelpreis?: number
           ek_preis?: number
+          eventual?: boolean
           gesamtpreis?: number
           id?: string
           invoice_id?: string
