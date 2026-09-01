@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { AuswahlMitNeu } from "@/components/AuswahlMitNeu";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/PageHeader";
 import { Plus, Trash2, Save, Package, Search, Filter, Upload, Star, TrendingUp, Percent, Euro, ImagePlus, X, Calculator, Clock, Copy } from "lucide-react";
@@ -893,39 +894,23 @@ export default function InvoiceTemplates() {
                 </div>
                 <div>
                   <Label>Produktgruppe / Kategorie</Label>
-                  <Select value={form.produktgruppe || "none"} onValueChange={(v) => {
-                    if (v === "_new") {
-                      const newGrp = prompt("Neue Produktgruppe/Kategorie:");
-                      if (newGrp?.trim()) setForm(f => ({ ...f, produktgruppe: newGrp.trim() }));
-                    } else {
-                      setForm(f => ({ ...f, produktgruppe: v === "none" ? "" : v }));
-                    }
-                  }}>
-                    <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">—</SelectItem>
-                      {produktgruppen.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}
-                      <SelectItem value="_new" className="text-primary font-medium">+ Neue Gruppe/Kategorie anlegen...</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <AuswahlMitNeu
+                    value={form.produktgruppe || ""}
+                    optionen={produktgruppen}
+                    onChange={(v) => setForm(f => ({ ...f, produktgruppe: v }))}
+                    neuLabel="+ Neue Gruppe/Kategorie anlegen..."
+                    neuPlatzhalter="Name der Produktgruppe"
+                  />
                 </div>
                 <div>
                   <Label>Lieferant</Label>
-                  <Select value={form.lieferant || "none"} onValueChange={(v) => {
-                    if (v === "_new") {
-                      const newLief = prompt("Neuer Lieferant:");
-                      if (newLief?.trim()) setForm(f => ({ ...f, lieferant: newLief.trim() }));
-                    } else {
-                      setForm(f => ({ ...f, lieferant: v === "none" ? "" : v }));
-                    }
-                  }}>
-                    <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">—</SelectItem>
-                      {lieferanten.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}
-                      <SelectItem value="_new" className="text-primary font-medium">+ Neuer Lieferant...</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <AuswahlMitNeu
+                    value={form.lieferant || ""}
+                    optionen={lieferanten}
+                    onChange={(v) => setForm(f => ({ ...f, lieferant: v }))}
+                    neuLabel="+ Neuer Lieferant..."
+                    neuPlatzhalter="Name des Lieferanten"
+                  />
                 </div>
               </div>
               <div>
