@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { istArbeitszeitZeile } from "@/lib/stunden";
 
 /**
  * Materialliste aus einem Angebot: löst die Material-Komponenten aller
@@ -23,7 +24,7 @@ export interface MaterialZeile {
 export async function sammleMaterialliste(invoiceId: string): Promise<MaterialZeile[]> {
   const { data: items } = await supabase
     .from("invoice_items")
-    .select("beschreibung, kurztext, menge, einheit, einzelpreis, ek_preis, arbeitszeit_minuten, kalkulation_template_id, mwst_exempt")
+    .select("beschreibung, kurztext, menge, einheit, einzelpreis, ek_preis, arbeitszeit_minuten, kalkulation_template_id, mwst_exempt, eventual")
     .eq("invoice_id", invoiceId)
     .order("position");
   if (!items) return [];
@@ -32,15 +33,29 @@ export async function sammleMaterialliste(invoiceId: string): Promise<MaterialZe
     items.map(i => (i as any).kalkulation_template_id).filter(Boolean),
   )) as string[];
   const componentsByTemplate: Record<string, any[]> = {};
+  // Katalog-Stammdaten der verknüpften Positionen: Ein Katalog-MATERIAL
+  // (art = "material") hat keine Komponenten — es IST das Material. Ohne
+  // diese Info fiel es früher in den Legacy-Zweig und wurde dort mangels
+  // ek_preis auf der Position verworfen (Meldung 03.09.: „Materialliste
+  // erfasst nur die Materialien, die nicht vom Katalog kommen").
+  type Tpl = { art: string | null; ist_stundensatz: boolean | null; ek_netto: number | null; einheit: string | null; kurzbezeichnung: string | null; name: string | null };
+  const templateById: Record<string, Tpl> = {};
   if (templateIds.length > 0) {
-    const { data: comps } = await (supabase as any)
-      .from("position_components")
-      .select("position_template_id, typ, bezeichnung, einheit, menge_pro_einheit, preis, verschnitt_prozent, material:invoice_templates!material_template_id(ek_netto)")
-      .in("position_template_id", templateIds)
-      .limit(10000);
+    const [{ data: comps }, { data: tpls }] = await Promise.all([
+      (supabase as any)
+        .from("position_components")
+        .select("position_template_id, typ, bezeichnung, einheit, menge_pro_einheit, preis, verschnitt_prozent, material:invoice_templates!material_template_id(ek_netto)")
+        .in("position_template_id", templateIds)
+        .limit(10000),
+      (supabase as any)
+        .from("invoice_templates")
+        .select("id, art, ist_stundensatz, ek_netto, einheit, kurzbezeichnung, name")
+        .in("id", templateIds),
+    ]);
     for (const c of ((comps as any[]) || [])) {
       (componentsByTemplate[c.position_template_id] = componentsByTemplate[c.position_template_id] || []).push(c);
     }
+    for (const t of ((tpls as any[]) || [])) templateById[t.id] = t;
   }
 
   // Gleiches Material zusammenfassen (Name + Einheit)
@@ -60,9 +75,14 @@ export async function sammleMaterialliste(invoiceId: string): Promise<MaterialZe
 
   for (const it of items) {
     if ((it as any).mwst_exempt) continue; // Abzugszeilen
+    if ((it as any).eventual) continue;    // Eventualposition: nicht beauftragt, nichts einkaufen
     const menge = Number(it.menge) || 0;
     if (menge <= 0) continue;
-    const quelle = ((it as any).kurztext || it.beschreibung || "").slice(0, 60);
+    const text = (it as any).kurztext || it.beschreibung || "";
+    const quelle = text.slice(0, 60);
+    const tpl = templateById[(it as any).kalkulation_template_id as string];
+    // Eigene Arbeitsstunden (Regiestunde, Facharbeiterstunde …) sind kein Material
+    if (tpl?.ist_stundensatz || istArbeitszeitZeile(text, it.einheit)) continue;
     const comps = componentsByTemplate[(it as any).kalkulation_template_id as string] || [];
     const matComps = comps.filter(c => c.typ === "material");
     if (matComps.length > 0) {
@@ -70,6 +90,11 @@ export async function sammleMaterialliste(invoiceId: string): Promise<MaterialZe
         const bedarf = menge * (Number(c.menge_pro_einheit) || 0) * (1 + (Number(c.verschnitt_prozent) || 0) / 100);
         add(c.bezeichnung || "Material", bedarf, c.einheit || "Stk.", Number(c.material?.ek_netto ?? c.preis) || 0, quelle);
       }
+    } else if (tpl && tpl.art === "material") {
+      // Katalog-Material direkt als Angebotsposition: Bedarf = Angebotsmenge,
+      // EK aktuell aus dem Katalog (auf der Position steht nur der VK).
+      add(tpl.kurzbezeichnung || tpl.name || text || "Material", menge, it.einheit || tpl.einheit || "Stk.",
+        Number(tpl.ek_netto) || Number((it as any).ek_preis) || 0, "");
     } else {
       // Freie/Legacy-Position: reine Lohn-Zeilen überspringen (kein Material)
       const einheitLower = String(it.einheit || "").toLowerCase().trim();
