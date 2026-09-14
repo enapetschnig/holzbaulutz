@@ -91,14 +91,16 @@ export function ImportFromProjectDialog({
       mode === "material"
         ? Promise.resolve({ data: null })
         : (supabase as any).from("disturbances")
-            .select("id, datum, kunde_name, stunden, beschreibung, is_verrechnet")
+            .select("id, datum, kunde_name, stunden, mitarbeiter_anzahl, beschreibung, is_verrechnet")
             .eq("project_id", localProjectId)
             .order("datum", { ascending: true }),
     ]);
 
+    // Berichtsstunden gelten je Mitarbeiter — verrechnet werden Mannstunden
+    const mann = (d: any) => (Number(d.stunden) || 0) * Math.max(1, Number(d.mitarbeiter_anzahl) || 1);
     const regieRows = ((regieRes as any)?.data as any[]) || [];
     setRegieInfo(regieRows.length > 0 ? {
-      stunden: Math.round(regieRows.reduce((s, d) => s + (Number(d.stunden) || 0), 0) * 10) / 10,
+      stunden: Math.round(regieRows.reduce((s, d) => s + mann(d), 0) * 10) / 10,
       anzahl: regieRows.length,
       unverrechnet: regieRows.filter(d => !d.is_verrechnet).length,
     } : null);
@@ -109,17 +111,17 @@ export function ImportFromProjectDialog({
       || stundensaetze.find(x => /regiestunde/i.test(x.name))
       || null;
     const regieItems: ImportItem[] = regieRows
-      .filter(d => !d.is_verrechnet && (Number(d.stunden) || 0) > 0)
+      .filter(d => !d.is_verrechnet && mann(d) > 0)
       .map(d => ({
         beschreibung: regieSatz?.name || "Regiestunde Facharbeiter",
-        menge: Math.round((Number(d.stunden) || 0) * 100) / 100,
+        menge: Math.round(mann(d) * 100) / 100,
         einheit: "Std.",
         einzelpreis: regieSatz?.satz || 0,
         selected: true,
         source: "regie" as const,
         satzId: regieSatz?.id,
         disturbanceId: d.id,
-        detail: `Regiebericht vom ${d.datum ? new Date(d.datum).toLocaleDateString("de-AT") : "–"} · ${d.kunde_name || ""} · ${(d.beschreibung || "").slice(0, 60)}`,
+        detail: `Regiebericht vom ${d.datum ? new Date(d.datum).toLocaleDateString("de-AT") : "–"}${(Number(d.mitarbeiter_anzahl) || 1) > 1 ? ` · ${Number(d.stunden)} h × ${d.mitarbeiter_anzahl} Mitarbeiter` : ""} · ${d.kunde_name || ""} · ${(d.beschreibung || "").slice(0, 60)}`,
       }));
 
     setItems([...timeItems, ...regieItems, ...materialItems]);

@@ -259,6 +259,8 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
       end_time: null,
       pause_minutes: 0,
       stunden,
+      // Stunden gelten JE Mitarbeiter — Mannstunden = stunden × Anzahl
+      mitarbeiter_anzahl: new Set([user.id, ...selectedEmployees]).size,
       taetigkeiten: zeilen,
       kunde_name: formData.kundeName.trim(),
       kunde_email: formData.kundeEmail.trim() || null,

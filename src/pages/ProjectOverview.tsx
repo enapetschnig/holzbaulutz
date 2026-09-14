@@ -17,6 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { supabase } from "@/integrations/supabase/client";
 import { countProjectFiles } from "@/lib/projectFiles";
 import { istArbeitszeitZeile } from "@/lib/stunden";
+import { ladeStundenabgleich, type Stundenabgleich } from "@/lib/stundenabgleich";
 import { useProjectStatuses } from "@/hooks/useProjectStatuses";
 import { Badge } from "@/components/ui/badge";
 import { ProjektNachkalkulation } from "@/components/project/ProjektNachkalkulation";
@@ -73,6 +74,8 @@ const ProjectOverview = () => {
   const [angebotPositionen, setAngebotPositionen] = useState<{position: number; beschreibung: string; menge: number; einheit: string; stunden?: number; stundenQuelle?: "stunden" | "kalkulation"}[]>([]);
   // Stundenabgleich: im Angebot kalkulierte Lohnstunden (Σ arbeitszeit_minuten × Menge)
   const [angeboteneStunden, setAngeboteneStunden] = useState<number | null>(null);
+  // Der komplette Abgleich (Regeln in lib/stundenabgleich.ts — gleich wie auf der Startseite)
+  const [abgleich, setAbgleich] = useState<Stundenabgleich | null>(null);
   const [categories, setCategories] = useState<DocumentCategory[]>([
     {
       type: "photos",
@@ -115,55 +118,17 @@ const ProjectOverview = () => {
 
   const fetchAngebotPositionen = async () => {
     if (!projectId) return;
-    // Referenz-Angebot: nicht einfach das neueste per Datum — ein abgelehntes
-    // oder Entwurfs-Angebot darf das angenommene nicht verdrängen. Daher nach
-    // Status priorisieren (angenommen > verrechnet > offen > entwurf),
-    // innerhalb desselben Status das neueste Datum.
-    const { data: angebote } = await supabase.from("invoices")
-      .select("id, status, datum").eq("project_id", projectId).eq("typ", "angebot")
-      .not("status", "in", '("storniert","abgelehnt")')
-      // Archivierte Vorgänger-Revisionen (Original nach Preis-Update) ausschließen
-      .or("archiviert.is.null,archiviert.eq.false")
-      .order("datum", { ascending: false });
-    const statusRang: Record<string, number> = { angenommen: 0, verrechnet: 1, offen: 2, entwurf: 3 };
-    const referenz = ((angebote as any[]) || []).slice().sort((a, b) => {
-      const diff = (statusRang[a.status] ?? 4) - (statusRang[b.status] ?? 4);
-      if (diff !== 0) return diff;
-      return String(b.datum || "").localeCompare(String(a.datum || ""));
-    })[0];
-    if (referenz) {
-      const { data: items } = await supabase.from("invoice_items")
-        .select("position, beschreibung, kurztext, menge, einheit, arbeitszeit_minuten")
-        .eq("invoice_id", referenz.id).order("position");
-      // Stunden-Soll = GESAMTE Arbeitszeit des Angebots:
-      //   explizite Stunden-Positionen (Facharbeiterstunde × 44) PLUS die in
-      //   den kalkulierten Positionen steckende Arbeitszeit (z.B. Baukran
-      //   36 h/Pa). Die Aufschlüsselung unten zeigt je Position, woher die
-      //   Stunden kommen.
-      const zeilen = (items || []) as any[];
-      const nameVon = (i: any) => (i.kurztext || i.beschreibung || "");
-      setAngebotPositionen(zeilen.map(i => {
-        const istStdZeile = istArbeitszeitZeile(nameVon(i), i.einheit);
-        const stunden = istStdZeile
-          ? Math.round((Number(i.menge) || 0) * 10) / 10
-          : Math.round(((Number(i.arbeitszeit_minuten) || 0) * (Number(i.menge) || 0)) / 60 * 10) / 10;
-        return {
-          position: i.position, beschreibung: nameVon(i),
-          menge: Number(i.menge), einheit: i.einheit || "Stk.",
-          stunden,
-          stundenQuelle: (istStdZeile ? "stunden" : "kalkulation") as "stunden" | "kalkulation",
-        };
-      }));
-      const gesamt = zeilen.reduce((s, i) => {
-        const istStdZeile = istArbeitszeitZeile(nameVon(i), i.einheit);
-        return s + (istStdZeile
-          ? (Number(i.menge) || 0)
-          : ((Number(i.arbeitszeit_minuten) || 0) * (Number(i.menge) || 0)) / 60);
-      }, 0);
-      setAngeboteneStunden(Math.round(gesamt * 10) / 10);
-    } else {
-      setAngeboteneStunden(null);
-    }
+    // Soll/Ist nach den gemeinsamen Regeln: alle angenommenen Angebote
+    // zusammen, Regieberichte nur wenn das Angebot Regiestunden enthält.
+    const res = await ladeStundenabgleich([projectId]);
+    const a = res[projectId] || null;
+    setAbgleich(a);
+    setAngebotPositionen((a?.positionen || []).map(p => ({
+      position: p.position, beschreibung: p.beschreibung, menge: p.menge, einheit: p.einheit,
+      stunden: p.stunden,
+      stundenQuelle: p.quelle === "kalkulation" ? "kalkulation" as const : "stunden" as const,
+    })));
+    setAngeboteneStunden(a && a.soll > 0 ? a.soll : null);
   };
 
   const checkAdminStatus = async () => {
@@ -378,12 +343,13 @@ const ProjectOverview = () => {
 
     // Fetch Regie count + Regiestunden (filtered by project)
     (supabase.from("disturbances" as never) as any)
-      .select("id, stunden")
+      .select("id, stunden, mitarbeiter_anzahl")
       .eq("project_id", projectId)
       .then(({ data }: any) => {
         const rows = (data as any[]) || [];
         setRegieCount(rows.length);
-        setRegieStunden(Math.round(rows.reduce((s: number, d: any) => s + (Number(d.stunden) || 0), 0) * 10) / 10);
+        // Mannstunden: Berichtsstunden × beteiligte Mitarbeiter
+        setRegieStunden(Math.round(rows.reduce((s: number, d: any) => s + (Number(d.stunden) || 0) * Math.max(1, Number(d.mitarbeiter_anzahl) || 1), 0) * 10) / 10);
       });
 
     // Fetch Regiebericht PDFs for this project
@@ -632,28 +598,32 @@ const ProjectOverview = () => {
                   Angebot (Σ kalkulierte Lohnminuten × Menge je Position) —
                   drei große Zahlen + Ampel-Fortschrittsbalken. */}
               {(() => {
-                const gebucht = gebuchtGesamt;
-                if (angeboteneStunden === null || angeboteneStunden <= 0) {
+                const a = abgleich;
+                if (!a || a.soll <= 0) {
                   return (
                     <p className="mb-4 text-sm text-muted-foreground rounded-md border border-dashed px-3 py-2.5">
-                      Kein Angebot mit kalkulierten Stunden verknüpft — sobald ein Angebot mit
-                      Katalog-Positionen an diesem Projekt hängt, erscheint hier automatisch der
-                      Soll/Ist-Vergleich.
+                      Kein Angebot mit Stunden verknüpft — sobald ein Angebot mit Stunden-
+                      oder Katalog-Positionen an diesem Projekt hängt, erscheint hier automatisch
+                      der Soll/Ist-Vergleich.
+                      {a && a.regieZusatz > 0 && <> Bisher {a.regieZusatz.toFixed(1)} Regiestd. aus Regieberichten.</>}
                     </p>
                   );
                 }
-                const pctRaw = Math.round((gebucht / angeboteneStunden) * 100);
+                const gebucht = a.ist;
+                const pctRaw = Math.round((gebucht / a.soll) * 100);
                 const pct = Math.min(100, pctRaw);
-                const ueber = gebucht > angeboteneStunden;
+                const ueber = gebucht > a.soll;
                 const knapp = !ueber && pctRaw >= 80;
                 const barFarbe = ueber ? "bg-destructive" : knapp ? "bg-amber-500" : "bg-green-600";
-                const rest = angeboteneStunden - gebucht;
+                const rest = a.soll - gebucht;
                 return (
                   <div className="mb-4 space-y-3">
                     <div className="grid grid-cols-3 gap-2">
                       <div className="rounded-lg border bg-muted/30 p-3 text-center">
-                        <div className="text-xl font-bold tabular-nums">{angeboteneStunden.toFixed(1)}</div>
-                        <div className="text-[11px] text-muted-foreground">Std. laut Angebot</div>
+                        <div className="text-xl font-bold tabular-nums">{a.soll.toFixed(1)}</div>
+                        <div className="text-[11px] text-muted-foreground">
+                          Std. laut Angebot{a.angebotNummern.length > 1 ? `en (${a.angebotNummern.length})` : ""}
+                        </div>
                       </div>
                       <div className="rounded-lg border bg-muted/30 p-3 text-center">
                         <div className={`text-xl font-bold tabular-nums ${ueber ? "text-destructive" : ""}`}>{gebucht.toFixed(1)}</div>
@@ -661,7 +631,7 @@ const ProjectOverview = () => {
                       </div>
                       <div className={`rounded-lg border p-3 text-center ${ueber ? "border-destructive/50 bg-destructive/5" : knapp ? "border-amber-300 bg-amber-50" : "border-green-500/40 bg-green-50"}`}>
                         <div className={`text-xl font-bold tabular-nums ${ueber ? "text-destructive" : knapp ? "text-amber-700" : "text-green-700"}`}>
-                          {ueber ? `+${(gebucht - angeboteneStunden).toFixed(1)}` : rest.toFixed(1)}
+                          {ueber ? `+${(gebucht - a.soll).toFixed(1)}` : rest.toFixed(1)}
                         </div>
                         <div className="text-[11px] text-muted-foreground">{ueber ? "Std. ÜBER Angebot" : "Std. verbleibend"}</div>
                       </div>
@@ -676,43 +646,54 @@ const ProjectOverview = () => {
                           ? `⚠️ ${pctRaw}% der Angebotsstunden verbraucht — Reserve wird knapp.`
                           : `${pctRaw}% verbraucht.`}
                     </p>
-                    {/* Aufschlüsselung: WOHER kommen die Angebotsstunden?
-                        Jede Position trägt ihre einkalkulierte Arbeitszeit bei. */}
-                    {angebotPositionen.some(p => (p.stunden || 0) > 0) && (
+                    {/* Regel 2: Regieberichte zählen nur gegen das Angebot, wenn es Regiestunden enthält */}
+                    {a.regieImAngebot ? (
+                      <p className="text-xs text-muted-foreground rounded-md bg-muted/40 px-2.5 py-1.5">
+                        Das Angebot enthält <b>{a.angebotRegie.toFixed(1)} Regiestd.</b> — Regieberichte zählen deshalb mit
+                        ({a.gebuchtRegie.toFixed(1)} Std. aus Regieberichten, {a.gebuchtNormal.toFixed(1)} Std. aus der Zeiterfassung).
+                      </p>
+                    ) : a.gebuchtRegie > 0 ? (
+                      <p className="text-xs rounded-md border border-sky-200 bg-sky-50 text-sky-900 px-2.5 py-1.5">
+                        Zusätzlich <b>{a.gebuchtRegie.toFixed(1)} Regiestd.</b> aus Regieberichten — nicht im Angebot,
+                        zählen hier nicht mit und werden separat verrechnet.
+                      </p>
+                    ) : null}
+                    {/* Aufschlüsselung: WOHER kommen die Angebotsstunden? */}
+                    {a.positionen.length > 0 && (
                       <details className="text-xs">
                         <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
-                          Woraus sich die {angeboteneStunden.toFixed(1)} Std. ergeben ▾
+                          Woraus sich die {a.soll.toFixed(1)} Std. ergeben ▾
                         </summary>
                         <ul className="mt-1.5 space-y-0.5 rounded-md border bg-muted/20 p-2">
-                          {angebotPositionen.filter(p => (p.stunden || 0) > 0).map(p => (
-                            <li key={p.position} className="flex justify-between gap-2">
+                          {a.positionen.map(p => (
+                            <li key={`${p.angebotNummer}-${p.position}`} className="flex justify-between gap-2">
                               <span className="truncate text-muted-foreground">
                                 {p.beschreibung.length > 55 ? p.beschreibung.slice(0, 55) + "…" : p.beschreibung}
                                 <span className="opacity-70"> · {p.menge} {p.einheit}</span>
-                                {p.stundenQuelle === "kalkulation" && (
+                                {a.angebotNummern.length > 1 && p.angebotNummer && (
+                                  <span className="ml-1.5 text-[10px] rounded bg-muted px-1 py-0.5 text-muted-foreground/80">{p.angebotNummer}</span>
+                                )}
+                                {p.quelle === "kalkulation" && (
                                   <span className="ml-1.5 text-[10px] rounded bg-muted px-1 py-0.5 text-muted-foreground/80"
                                     title="Arbeitszeit aus der Kalkulation dieser Position (Std/Einheit × Menge)">
                                     aus Kalkulation
                                   </span>
                                 )}
+                                {p.quelle === "regie" && (
+                                  <span className="ml-1.5 text-[10px] rounded bg-sky-100 px-1 py-0.5 text-sky-800">Regie</span>
+                                )}
                               </span>
-                              <span className="font-mono tabular-nums shrink-0">{(p.stunden || 0).toFixed(1)} h</span>
+                              <span className="font-mono tabular-nums shrink-0">{p.stunden.toFixed(1)} h</span>
                             </li>
                           ))}
-                          {(() => {
-                            const std = angebotPositionen.filter(p => p.stundenQuelle === "stunden").reduce((s, p) => s + (p.stunden || 0), 0);
-                            const kalk = angebotPositionen.filter(p => p.stundenQuelle === "kalkulation").reduce((s, p) => s + (p.stunden || 0), 0);
-                            return (std > 0 || kalk > 0) ? (
-                              <li className="flex justify-between gap-2 pt-1 mt-1 border-t border-border/50 font-medium">
-                                <span className="text-muted-foreground">
-                                  {std > 0 && <>Stunden-Positionen {std.toFixed(1)} h</>}
-                                  {std > 0 && kalk > 0 && " · "}
-                                  {kalk > 0 && <>aus Kalkulationen {kalk.toFixed(1)} h</>}
-                                </span>
-                                <span className="font-mono tabular-nums shrink-0">{(std + kalk).toFixed(1)} h</span>
-                              </li>
-                            ) : null;
-                          })()}
+                          <li className="flex justify-between gap-2 pt-1 mt-1 border-t border-border/50 font-medium">
+                            <span className="text-muted-foreground">
+                              {a.angebotNormal > 0 && <>Arbeitsstunden {a.angebotNormal.toFixed(1)} h</>}
+                              {a.angebotNormal > 0 && a.angebotRegie > 0 && " · "}
+                              {a.angebotRegie > 0 && <>Regiestunden {a.angebotRegie.toFixed(1)} h</>}
+                            </span>
+                            <span className="font-mono tabular-nums shrink-0">{a.soll.toFixed(1)} h</span>
+                          </li>
                         </ul>
                       </details>
                     )}

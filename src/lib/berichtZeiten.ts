@@ -74,3 +74,18 @@ export const taetigkeitenToEntries = (t: Taetigkeit[]): TaetigkeitEntry[] => {
   }));
   return rows.length > 0 ? rows : [{ id: crypto.randomUUID(), text: "", stunden: "" }];
 };
+
+/**
+ * Regiebericht: `stunden` ist JE MITARBEITER erfasst ("1,5 h mit 2 Mann").
+ * Ausgewertet und verrechnet werden Mannstunden = stunden × Anzahl.
+ */
+export const mannstunden = (stunden: number | string | null | undefined, anzahl: number | null | undefined): number =>
+  Math.round(parseStunden(stunden) * Math.max(1, Number(anzahl) || 1) * 100) / 100;
+
+/** "1,50 h × 2 Mitarbeiter = 3,00 Std." — bei einer Person nur "1,50 h". */
+export const mannstundenText = (stunden: number | string | null | undefined, anzahl: number | null | undefined): string => {
+  const n = Math.max(1, Number(anzahl) || 1);
+  return n > 1
+    ? `${fmtStunden(parseStunden(stunden))} h × ${n} Mitarbeiter = ${fmtStunden(mannstunden(stunden, n))} Std.`
+    : `${fmtStunden(parseStunden(stunden))} h`;
+};

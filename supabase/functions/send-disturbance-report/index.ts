@@ -45,6 +45,10 @@ interface Photo {
   file_name: string;
 }
 
+const mannstunden = (d: { stunden: number; mitarbeiter_anzahl?: number | null }) =>
+  Math.round((Number(d.stunden) || 0) * Math.max(1, Number(d.mitarbeiter_anzahl) || 1) * 100) / 100;
+const mitarbeiterAnzahl = (d: { mitarbeiter_anzahl?: number | null }) => Math.max(1, Number(d.mitarbeiter_anzahl) || 1);
+
 interface Disturbance {
   id: string;
   datum: string;
@@ -54,6 +58,8 @@ interface Disturbance {
   taetigkeiten?: { text: string; stunden: number }[] | null;
   pause_minutes: number;
   stunden: number;
+  /** Stunden gelten je Mitarbeiter — Mannstunden = stunden × mitarbeiter_anzahl */
+  mitarbeiter_anzahl?: number | null;
   kunde_name: string;
   kunde_email: string | null;
   kunde_adresse: string | null;
@@ -213,7 +219,7 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
   doc.setTextColor(26, 26, 26);
   doc.text(disturbance.kunde_name, col1, yPos + 11);
   doc.text(zeitraumText ?? `${(disturbance.taetigkeiten ?? []).length} Position(en)`, col2, yPos + 11);
-  doc.text(`${Number(disturbance.stunden || 0).toFixed(2)} h`, col3, yPos + 11);
+  doc.text(`${mannstunden(disturbance).toFixed(2)} h`, col3, yPos + 11);
 
   doc.setFontSize(8);
   doc.setFont("helvetica", "normal");
@@ -293,8 +299,9 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
     doc.line(margin + contentWidth - 45, yPos - 2, margin + contentWidth, yPos - 2);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(26, 26, 26);
-    doc.text("Gesamt", margin + 5, yPos + 2);
-    doc.text(`${Number(disturbance.stunden || 0).toFixed(2)} h`, margin + contentWidth - 5, yPos + 2, { align: "right" });
+    const n = mitarbeiterAnzahl(disturbance);
+    doc.text(n > 1 ? `Gesamt (${Number(disturbance.stunden || 0).toFixed(2)} h × ${n} Mitarbeiter)` : "Gesamt", margin + 5, yPos + 2);
+    doc.text(`${mannstunden(disturbance).toFixed(2)} h`, margin + contentWidth - 5, yPos + 2, { align: "right" });
     yPos += 10;
   }
 
@@ -459,7 +466,7 @@ function generateEmailHtml(data: ReportRequest & { technicians: string[] }): str
           <strong>Zusammenfassung:</strong><br>
           Techniker: ${technicianDisplay}<br>
           ${disturbance.start_time && disturbance.end_time ? `Arbeitszeit: ${String(disturbance.start_time).slice(0, 5)} - ${String(disturbance.end_time).slice(0, 5)} Uhr<br>` : ""}${(disturbance.taetigkeiten ?? []).map((t) => `&bull; ${String(t.text ?? "")} — ${Number(t.stunden || 0).toFixed(2)} h`).join("<br>")}${(disturbance.taetigkeiten ?? []).length ? "<br>" : ""}
-          Gesamtstunden: ${Number(disturbance.stunden || 0).toFixed(2)} h
+          Gesamtstunden: ${mannstunden(disturbance).toFixed(2)} h${mitarbeiterAnzahl(disturbance) > 1 ? ` (${Number(disturbance.stunden || 0).toFixed(2)} h × ${mitarbeiterAnzahl(disturbance)} Mitarbeiter)` : ""}
         </div>
 
         <p>Der vollständige Bericht mit allen Details und der Kundenunterschrift befindet sich im angehängten PDF-Dokument.</p>

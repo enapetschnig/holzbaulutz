@@ -7,12 +7,14 @@ import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { FileText, Clock, Package } from "lucide-react";
 import { format } from "date-fns";
+import { mannstunden, mannstundenText } from "@/lib/berichtZeiten";
 
 interface Disturbance {
   id: string;
   datum: string;
   kunde_name: string;
   stunden: number;
+  mitarbeiter_anzahl?: number | null;
   beschreibung: string;
   is_verrechnet: boolean;
   start_time: string;
@@ -66,7 +68,7 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
     setLoading(true);
     const { data } = await supabase
       .from("disturbances")
-      .select("id, datum, kunde_name, stunden, beschreibung, is_verrechnet, start_time, end_time")
+      .select("id, datum, kunde_name, stunden, mitarbeiter_anzahl, beschreibung, is_verrechnet, start_time, end_time")
       .order("datum", { ascending: false })
       .limit(50);
     setDisturbances(data || []);
@@ -76,7 +78,7 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
   const loadDisturbanceDetails = async (id: string) => {
     // Load disturbance directly from DB (not from state — avoids race condition)
     const [{ data: distData }, { data: materials }] = await Promise.all([
-      supabase.from("disturbances").select("id, datum, kunde_name, kunde_email, kunde_adresse, kunde_plz, kunde_ort, kunde_telefon, stunden, beschreibung, is_verrechnet, start_time, end_time").eq("id", id).single(),
+      supabase.from("disturbances").select("id, datum, kunde_name, kunde_email, kunde_adresse, kunde_plz, kunde_ort, kunde_telefon, stunden, mitarbeiter_anzahl, beschreibung, is_verrechnet, start_time, end_time").eq("id", id).single(),
       supabase.from("disturbance_materials").select("material, menge, einheit, einzelpreis").eq("disturbance_id", id),
     ]);
 
@@ -94,7 +96,8 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
     // Add time as position
     newItems.push({
       beschreibung: `Arbeitszeit Regiebericht ${format(new Date(dist.datum), "dd.MM.yyyy")}${dist.start_time && dist.end_time ? ` (${String(dist.start_time).slice(0, 5)} - ${String(dist.end_time).slice(0, 5)})` : ""}`,
-      menge: Number(dist.stunden),
+      // Mannstunden: Berichtsstunden × beteiligte Mitarbeiter
+      menge: mannstunden(dist.stunden, (dist as any).mitarbeiter_anzahl),
       einheit: "Std.",
       einzelpreis: stundensatz,
       selected: true,
@@ -201,7 +204,7 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
                     <div>
                       <p className="font-medium text-sm">{d.kunde_name}</p>
                       <p className="text-xs text-muted-foreground">
-                        {format(new Date(d.datum), "dd.MM.yyyy")} · {d.stunden}h · {d.beschreibung.slice(0, 60)}{d.beschreibung.length > 60 ? "..." : ""}
+                        {format(new Date(d.datum), "dd.MM.yyyy")} · {mannstundenText(d.stunden, (d as any).mitarbeiter_anzahl)} · {d.beschreibung.slice(0, 60)}{d.beschreibung.length > 60 ? "..." : ""}
                       </p>
                     </div>
                     {d.is_verrechnet && <Badge variant="secondary" className="text-xs">Verrechnet</Badge>}

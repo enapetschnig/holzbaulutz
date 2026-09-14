@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { DisturbanceForm } from "@/components/DisturbanceForm";
-import { parseTaetigkeiten, zeitraum, fmtStunden } from "@/lib/berichtZeiten";
+import { parseTaetigkeiten, zeitraum, fmtStunden, mannstunden, mannstundenText } from "@/lib/berichtZeiten";
 
 type Disturbance = {
   id: string;
@@ -154,18 +154,32 @@ const Disturbances = () => {
     } else {
       // Fetch profile names separately for admin view
       if (data && data.length > 0) {
-        const userIds = [...new Set(data.map(d => d.user_id))];
+        // Beteiligte Mitarbeiter je Bericht (Ersteller + Team) — für die
+        // Personen-Übersicht: jeder Beteiligte bekommt die Berichtsstunden.
+        const { data: workers } = await supabase
+          .from("disturbance_workers")
+          .select("disturbance_id, user_id")
+          .in("disturbance_id", data.map(d => d.id));
+        const workerIdsByDist = new Map<string, string[]>();
+        for (const w of (workers || [])) {
+          const l = workerIdsByDist.get(w.disturbance_id) || [];
+          if (!l.includes(w.user_id)) l.push(w.user_id);
+          workerIdsByDist.set(w.disturbance_id, l);
+        }
+        const userIds = [...new Set([...data.map(d => d.user_id), ...(workers || []).map(w => w.user_id)])];
         const { data: profiles } = await supabase
           .from("profiles")
           .select("id, vorname, nachname")
           .in("id", userIds);
         
         const profileMap = new Map(profiles?.map(p => [p.id, p]) || []);
+        const nameVon = (id: string) => `${profileMap.get(id)?.vorname || ""} ${profileMap.get(id)?.nachname || ""}`.trim() || "Unbekannt";
         
         const enrichedData = data.map(d => ({
           ...d,
           profile_vorname: profileMap.get(d.user_id)?.vorname || "",
           profile_nachname: profileMap.get(d.user_id)?.nachname || "",
+          worker_names: (workerIdsByDist.get(d.id) || [d.user_id]).map(nameVon),
         }));
         
         setDisturbances(enrichedData);
@@ -325,15 +339,20 @@ const Disturbances = () => {
             Regiestunden sind ein EIGENER Topf — sie zählen nicht zu den
             Projektstunden aus der Zeiterfassung. */}
         {projectFilter && disturbances.length > 0 && (() => {
-          const gesamt = disturbances.reduce((s, d) => s + (Number(d.stunden) || 0), 0);
+          // Mannstunden: Berichtsstunden gelten je Mitarbeiter
+          const gesamt = disturbances.reduce((s, d) => s + mannstunden(d.stunden, (d as any).mitarbeiter_anzahl), 0);
           const jePerson = new Map<string, { name: string; stunden: number; arbeiten: string[] }>();
           for (const d of disturbances) {
-            const name = `${(d as any).profile_vorname || ""} ${(d as any).profile_nachname || ""}`.trim() || "Unbekannt";
-            if (!jePerson.has(name)) jePerson.set(name, { name, stunden: 0, arbeiten: [] });
-            const g = jePerson.get(name)!;
-            g.stunden += Number(d.stunden) || 0;
-            const arbeit = (d.beschreibung || "").split("\n")[0].trim();
-            if (arbeit && !g.arbeiten.includes(arbeit)) g.arbeiten.push(arbeit);
+            const namen: string[] = (d as any).worker_names?.length
+              ? (d as any).worker_names
+              : [`${(d as any).profile_vorname || ""} ${(d as any).profile_nachname || ""}`.trim() || "Unbekannt"];
+            for (const name of namen) {
+              if (!jePerson.has(name)) jePerson.set(name, { name, stunden: 0, arbeiten: [] });
+              const g = jePerson.get(name)!;
+              g.stunden += Number(d.stunden) || 0;
+              const arbeit = (d.beschreibung || "").split("\n")[0].trim();
+              if (arbeit && !g.arbeiten.includes(arbeit)) g.arbeiten.push(arbeit);
+            }
           }
           return (
             <Card className="mb-4">
@@ -367,7 +386,7 @@ const Disturbances = () => {
                   ))}
                 </div>
                 <p className="text-[11px] text-muted-foreground mt-2">
-                  Regiestunden zählen nicht zu den Projektstunden aus der Zeiterfassung — verrechnet werden sie über „Aus Regiebericht" in der Rechnung.
+                  Mannstunden (Berichtsstunden × beteiligte Mitarbeiter). Verrechnet werden sie über „Regiestunden importieren" in der Rechnung; im Stundenabgleich zählen sie nur mit, wenn das Angebot Regiestunden enthält.
                 </p>
               </CardContent>
             </Card>
@@ -441,9 +460,10 @@ const Disturbances = () => {
                           {(() => {
                             const zr = zeitraum(disturbance.start_time, disturbance.end_time);
                             const anzahl = parseTaetigkeiten((disturbance as any).taetigkeiten).length;
+                            const std = mannstundenText(disturbance.stunden, (disturbance as any).mitarbeiter_anzahl);
                             return zr
-                              ? `${zr} (${fmtStunden(disturbance.stunden)} h)`
-                              : `${fmtStunden(disturbance.stunden)} h${anzahl > 0 ? ` · ${anzahl} Tätigkeit${anzahl === 1 ? "" : "en"}` : ""}`;
+                              ? `${zr} (${std})`
+                              : `${std}${anzahl > 0 ? ` · ${anzahl} Tätigkeit${anzahl === 1 ? "" : "en"}` : ""}`;
                           })()}
                         </span>
                         {disturbance.kunde_adresse && (

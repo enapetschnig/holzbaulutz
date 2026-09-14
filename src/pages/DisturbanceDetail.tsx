@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { DisturbanceForm } from "@/components/DisturbanceForm";
-import { parseTaetigkeiten, zeitraum, fmtStunden } from "@/lib/berichtZeiten";
+import { parseTaetigkeiten, zeitraum, fmtStunden, mannstundenText } from "@/lib/berichtZeiten";
 import { DisturbanceMaterials } from "@/components/DisturbanceMaterials";
 import { DisturbancePhotos } from "@/components/DisturbancePhotos";
 import { SignatureDialog } from "@/components/SignatureDialog";
@@ -548,7 +548,7 @@ const DisturbanceDetail = () => {
             )}
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">Gesamtstunden</p>
-              <p className="font-medium text-lg text-primary">{fmtStunden(disturbance.stunden)} h</p>
+              <p className="font-medium text-lg text-primary">{mannstundenText(disturbance.stunden, (disturbance as any).mitarbeiter_anzahl)}</p>
             </div>
             {parseTaetigkeiten((disturbance as any).taetigkeiten).length > 0 && (
               <div className="space-y-1 sm:col-span-3">

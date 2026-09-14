@@ -604,6 +604,7 @@ export type Database = {
           datum: string
           end_time: string
           id: string
+          mitarbeiter_anzahl: number
           is_verrechnet: boolean
           kunde_adresse: string | null
           kunde_email: string | null
@@ -631,6 +632,7 @@ export type Database = {
           datum: string
           end_time: string
           id?: string
+          mitarbeiter_anzahl?: number
           is_verrechnet?: boolean
           kunde_adresse?: string | null
           kunde_email?: string | null
@@ -658,6 +660,7 @@ export type Database = {
           datum?: string
           end_time?: string
           id?: string
+          mitarbeiter_anzahl?: number
           is_verrechnet?: boolean
           kunde_adresse?: string | null
           kunde_email?: string | null
