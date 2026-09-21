@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Clock, Building2, Hammer, Pencil, Trash2, TrendingUp, Wallet } from "lucide-react";
-import { aggregateByDay, totalAutoSaldo, formatSaldo, SONDER_TAETIGKEITEN } from "@/lib/hoursAccounting";
+import { aggregateByDay, totalAutoSaldo, formatSaldo, SONDER_TAETIGKEITEN, stundenAufteilung, sonderzeitenText } from "@/lib/hoursAccounting";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -34,7 +34,6 @@ const MyHours = () => {
   const { toast } = useToast();
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [totalHours, setTotalHours] = useState(0);
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -74,6 +73,10 @@ const MyHours = () => {
 
   // Tages-Aggregation des aktuell angezeigten Monats (für Tagessaldo-Spalte).
   const dayBalances = useMemo(() => aggregateByDay(entries as any), [entries]);
+  // Gesamt = gearbeitet; Sonderzeiten (Urlaub/Krankenstand/Feiertag/ZA/
+  // Weiterbildung) separat — sie sind keine Arbeitsstunden.
+  const aufteilung = useMemo(() => stundenAufteilung(entries as any), [entries]);
+  const totalHours = aufteilung.gearbeitet;
   const dayBalanceMap = useMemo(() => new Map(dayBalances.map(d => [d.datum, d])), [dayBalances]);
   const effektiv = autoSaldoAll + manualSaldo;
 
@@ -96,8 +99,6 @@ const MyHours = () => {
 
     if (data) {
       setEntries(data as any);
-      const sum = data.reduce((acc, entry) => acc + entry.stunden, 0);
-      setTotalHours(sum);
     }
     setLoading(false);
   };
@@ -319,11 +320,16 @@ const MyHours = () => {
                   return (
                     <>
                       <div>
-                        <span className="text-muted-foreground">Ist (gebucht): </span>
+                        <span className="text-muted-foreground">Gearbeitet: </span>
                         <span className="font-bold text-lg text-primary">{totalHours.toFixed(2)} Std.</span>
                         <span className="text-muted-foreground ml-2">Soll: </span>
                         <span className="font-medium">{sollTotal.toFixed(2)} Std.</span>
                       </div>
+                      {aufteilung.sonderGesamt > 0 && (
+                        <div className="text-xs text-muted-foreground">
+                          + {sonderzeitenText(aufteilung)} <span className="opacity-70">(zählen nicht als Arbeitsstunden)</span>
+                        </div>
+                      )}
                       <div>
                         <span className="text-muted-foreground">Saldo (Monat): </span>
                         <span className={`font-bold ${diff >= -0.005 ? "text-green-600" : "text-red-600"}`}>
@@ -443,7 +449,10 @@ const MyHours = () => {
                   </TableBody>
                   <TableFooter>
                     <TableRow>
-                      <TableCell colSpan={6} className="text-right font-semibold">Gesamt:</TableCell>
+                      <TableCell colSpan={6} className="text-right font-semibold">
+                        Gesamt gearbeitet:
+                        {aufteilung.sonderGesamt > 0 && <span className="block text-[10px] font-normal text-muted-foreground">+ {sonderzeitenText(aufteilung)}</span>}
+                      </TableCell>
                       <TableCell className="text-right font-bold">{totalHours.toFixed(2)} h</TableCell>
                       <TableCell></TableCell>
                     </TableRow>

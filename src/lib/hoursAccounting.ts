@@ -85,3 +85,41 @@ export function formatSaldo(value: number, opts?: { hideZero?: boolean }): strin
   const sign = value > 0 ? "+" : value < 0 ? "-" : "±";
   return `${sign}${Math.abs(value).toFixed(2)}`;
 }
+
+/**
+ * Gearbeitete Stunden getrennt von Sonderzeiten. „Gesamtstunden" zeigen
+ * die tatsächlich gearbeiteten Stunden — Urlaub, Krankenstand, Feiertag,
+ * Zeitausgleich und Weiterbildung stehen daneben, je Art aufgeschlüsselt.
+ * (Meldung 21.09.2026: Weiterbildung am Samstag hatte die Gesamtstunden
+ * um 8 h aufgeblasen.)
+ */
+export type StundenAufteilung = {
+  gearbeitet: number;
+  sonder: { taetigkeit: string; stunden: number }[];   // nur Arten mit > 0, in Set-Reihenfolge
+  sonderGesamt: number;
+  gesamtInklSonder: number;
+};
+
+export function stundenAufteilung(entries: TimeEntryLite[]): StundenAufteilung {
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  let gearbeitet = 0;
+  const proArt = new Map<string, number>();
+  for (const e of entries) {
+    const h = Number(e?.stunden || 0);
+    if (e?.taetigkeit && SONDER_TAETIGKEITEN.has(e.taetigkeit)) {
+      proArt.set(e.taetigkeit, (proArt.get(e.taetigkeit) || 0) + h);
+    } else {
+      gearbeitet += h;
+    }
+  }
+  const sonder = [...SONDER_TAETIGKEITEN]
+    .filter(t => (proArt.get(t) || 0) > 0)
+    .map(t => ({ taetigkeit: t, stunden: r2(proArt.get(t)!) }));
+  const sonderGesamt = r2(sonder.reduce((a, b) => a + b.stunden, 0));
+  return { gearbeitet: r2(gearbeitet), sonder, sonderGesamt, gesamtInklSonder: r2(gearbeitet + sonderGesamt) };
+}
+
+/** "Urlaub 16,00 h · Weiterbildung 12,50 h" — leer, wenn keine Sonderzeit. */
+export function sonderzeitenText(a: StundenAufteilung): string {
+  return a.sonder.map(x => `${x.taetigkeit} ${x.stunden.toFixed(2)} h`).join(" · ");
+}

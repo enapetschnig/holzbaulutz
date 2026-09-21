@@ -28,7 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { getNormalWorkingHours, getDefaultWorkTimes } from "@/lib/workingHours";
-import { aggregateByDay, totalAutoSaldo, formatSaldo, type DayBalance } from "@/lib/hoursAccounting";
+import { aggregateByDay, totalAutoSaldo, formatSaldo, type DayBalance, stundenAufteilung, sonderzeitenText } from "@/lib/hoursAccounting";
 
 interface TimeEntry {
   id: string;
@@ -296,7 +296,11 @@ export default function HoursReport() {
   const monthDays = generateMonthDays();
   // Per-Tag-Aggregation aus dem Helper — Multi-Project-Tage fließen
   // korrekt zusammen, Minusstunden bleiben erhalten.
-  const totalHours = dayBalances.reduce((s, d) => s + d.ist, 0);
+  // Gesamtstunden = tatsächlich gearbeitet; Sonderzeiten (Urlaub, Kranken-
+  // stand, Feiertag, ZA, Weiterbildung) daneben. Soll/Saldo bleiben wie
+  // gehabt aus der Tages-Aggregation — dort sind Sonderzeiten neutral.
+  const aufteilung = useMemo(() => stundenAufteilung(timeEntries as any), [timeEntries]);
+  const totalHours = aufteilung.gearbeitet;
   const totalSaldo = dayBalances.reduce((s, d) => s + d.saldo, 0);
   const totalSoll = dayBalances.reduce((s, d) => s + d.soll, 0);
   // Stundenkonto-Status aus time_accounts (manuelle Buchungen) +
@@ -507,7 +511,9 @@ export default function HoursReport() {
 
     // Summenzeile — Saldo statt Math.max(0,…), Vorzeichen sichtbar.
     if (includeOvertime) {
-      worksheetData.push(["", "", "", "", "", "SUMME", totalHours.toFixed(2), formatSaldo(totalSaldo), "", "", "", "", timeEntries.reduce((s, e) => s + (e.wetterschicht_stunden || 0), 0).toFixed(2)]);
+      // Lohnzettel-Blatt: die SUMME muss zu den Zeilen passen — dort stehen
+      // Urlaub/Weiterbildung mit ihren Stunden, also inkl. Sonderzeiten.
+      worksheetData.push(["", "", "", "", "", "SUMME", aufteilung.gesamtInklSonder.toFixed(2), formatSaldo(totalSaldo), "", "", "", "", timeEntries.reduce((s, e) => s + (e.wetterschicht_stunden || 0), 0).toFixed(2)]);
     } else {
       const regelarbeitszeitSumme = calculateRegelarbeitszeitSumme();
       worksheetData.push(["", "", "", "", "", "SUMME", regelarbeitszeitSumme.toFixed(2), "", "", "", "", ""]);
@@ -756,9 +762,14 @@ export default function HoursReport() {
                   <div className="bg-muted/50 p-4 rounded-lg space-y-4">
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <div>
-                        <p className="text-sm text-muted-foreground">Gesamtstunden</p>
+                        <p className="text-sm text-muted-foreground">Gesamtstunden <span className="text-[10px]">(gearbeitet)</span></p>
                         <p className="text-2xl font-bold">{totalHours.toFixed(2)} h</p>
                         <p className="text-[10px] text-muted-foreground">Soll: {totalSoll.toFixed(2)} h</p>
+                        {aufteilung.sonderGesamt > 0 && (
+                          <p className="text-[10px] text-muted-foreground" title="Sonderzeiten zählen nicht zu den gearbeiteten Stunden">
+                            + {sonderzeitenText(aufteilung)} = {aufteilung.gesamtInklSonder.toFixed(2)} h inkl. Sonderzeiten
+                          </p>
+                        )}
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Saldo Monat</p>
@@ -1000,10 +1011,16 @@ export default function HoursReport() {
                       <TableFooter>
                         <TableRow>
                           <TableCell colSpan={4} className="text-right font-bold">
-                            Gesamt:
+                            Gesamt gearbeitet:
+                            {aufteilung.sonderGesamt > 0 && (
+                              <span className="block text-[10px] font-normal text-muted-foreground">+ {sonderzeitenText(aufteilung)}</span>
+                            )}
                           </TableCell>
                           <TableCell className="text-right font-bold">
                             {totalHours.toFixed(2)} h
+                            {aufteilung.sonderGesamt > 0 && (
+                              <span className="block text-[10px] font-normal text-muted-foreground">{aufteilung.gesamtInklSonder.toFixed(2)} h inkl.</span>
+                            )}
                           </TableCell>
                           <TableCell className={cn(
                             "text-right font-bold",
