@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, Lock, Link2, Clock3 } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, Lock, Link2, Clock3, BookOpen } from "lucide-react";
 import { KatalogKalkulationPopover } from "@/components/KatalogKalkulationPopover";
 import { StundenlohnAnpassenDialog, neuerEinzelpreis, type StundenlohnUpdate } from "@/components/StundenlohnAnpassenDialog";
 import { istArbeitszeitZeile } from "@/lib/stunden";
@@ -21,6 +21,7 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { KalkulationFields } from "@/components/KalkulationFields";
 import { calcEinzelpreis, type KalkulationInput } from "@/lib/kalkulation";
 import { calcComponentZeile, calcPositionPreis, componentFormula, type PositionComponent } from "@/lib/positionen";
+import { KatalogNachschlagen } from "@/components/KatalogNachschlagen";
 import { ImportMaterialsDialog } from "@/components/ImportMaterialsDialog";
 import { ImportFromProjectDialog } from "@/components/ImportFromProjectDialog";
 import { ImportFromOfferDialog } from "@/components/ImportFromOfferDialog";
@@ -254,6 +255,8 @@ export default function InvoiceDetail() {
   // Aktive Mitarbeiter als Pool für den Ansprechpartner-Picker
   const [employees, setEmployees] = useState<{ id: string; vorname: string; nachname: string; telefon: string | null; email: string | null; position: string | null }[]>([]);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
+  // Katalog-Fenster NEBEN dem Editor (kein Dialog) — zum Nachschlagen ohne Speichern
+  const [katalogFensterOffen, setKatalogFensterOffen] = useState(false);
   const [templateSearch, setTemplateSearch] = useState("");
   // Picker-Filter: Positionen (Standard) / Materialien / Alle
   const [templateArtFilter, setTemplateArtFilter] = useState<"position" | "material" | "arbeitszeit" | "alle">("position");
@@ -1137,6 +1140,50 @@ export default function InvoiceDetail() {
   };
 
   // Helper: merge imported items into existing list, replacing empty first row
+  // Katalog-Eintrag → Belegzeile. EINE Stelle für den Katalog-Dialog und das
+  // Nachschlage-Fenster, damit beide exakt gleich einfügen.
+  const templateZuItem = (t: TemplateItem, menge: number): InvoiceItem => {
+        // Kalkulierte Materialien: Snapshot + Katalog-Verknüpfung übernehmen,
+        // damit Aufschläge im Angebot anpassbar bleiben und "Preise aktualisieren" greift.
+        const isKalk = !!(t as any).ist_kalkuliert;
+        const kalk = isKalk ? {
+          ek_preis: Number((t as any).ek_netto) || 0,
+          verschnitt_prozent: Number((t as any).verschnitt_prozent) || 0,
+          aufschlag_prozent: Number((t as any).aufschlag_prozent) || 0,
+          befestigung_preis: Number((t as any).befestigung_preis) || 0,
+          sonstiges_preis: Number((t as any).sonstiges_preis) || 0,
+          arbeitszeit_minuten: Number((t as any).arbeitszeit_minuten) || 0,
+          stundensatz: Number((t as any).stundensatz) || 52,
+        } : null;
+        const netto = kalk
+          ? calcEinzelpreis({ ...kalk, aufschlag_prozent: docAufschlagOverride ?? kalk.aufschlag_prozent })
+          : (Number((t as any).vk_netto ?? (t as any).netto_preis) || t.einzelpreis);
+        // Langtext nur wenn er sich vom Kurztext unterscheidet —
+        // sonst steht derselbe Text doppelt auf dem PDF.
+        const _kurz = (t as any).kurzbezeichnung || t.name || "";
+        const _lang = (t as any).langbezeichnung || t.beschreibung || "";
+        return {
+          position: 1,
+          beschreibung: (t as any).kurzbezeichnung || t.name || t.beschreibung,
+          kurztext: (t as any).kurzbezeichnung || t.name,
+          langtext: _lang && _lang !== _kurz ? _lang : "",
+          menge,
+          einheit: t.einheit,
+          einzelpreis: netto,
+          katalog_vk: netto, // Snapshot: Katalogpreis beim Einfügen
+          gesamtpreis: Math.round(netto * menge * 100) / 100,
+          produktnummer: (t as any).produktnummer || "",
+          ist_kalkuliert: isKalk,
+          // Katalog-Verknüpfung IMMER mitnehmen — auch Komponenten-
+          // Positionen und Materialien folgen so "Preise aktualisieren".
+          kalkulation_template_id: t.id,
+          // Lohnminuten/EH für den Stundenabgleich (bei Komponenten-
+          // Positionen aus der Komponenten-Summe im Katalog).
+          arbeitszeit_minuten: Number((t as any).arbeitszeit_minuten) || 0,
+          ...(kalk || {}),
+        } as InvoiceItem;
+        };
+
   const mergeItems = (prev: InvoiceItem[], newItems: InvoiceItem[]): InvoiceItem[] => {
     // Check if first row is empty (default state)
     const firstEmpty = prev.length === 1 && !prev[0].beschreibung.trim() && prev[0].einzelpreis === 0;
@@ -4646,6 +4693,11 @@ export default function InvoiceDetail() {
                     <Package className="w-4 h-4" />
                     Aus Katalog
                   </Button>
+                  <Button onClick={() => setKatalogFensterOffen(o => !o)} variant={katalogFensterOffen ? "secondary" : "outline"} size="sm" className="gap-1"
+                    title="Katalog neben dem Beleg öffnen — zum Nachschauen, ohne zu speichern">
+                    <BookOpen className="w-4 h-4" />
+                    Katalog nachschlagen
+                  </Button>
                   {/* Katalog-Verknüpfung reicht — Komponenten-Positionen haben
                       ist_kalkuliert=false, sollen aber genauso aktualisierbar sein. */}
                   {items.some(it => it.kalkulation_template_id) && !revisionInfo.nachfolger && (
@@ -5208,6 +5260,17 @@ export default function InvoiceDetail() {
         </div>
 
         {/* Template Picker Dialog — Suche + Filter + Multi-Select */}
+        <KatalogNachschlagen
+          open={katalogFensterOffen}
+          onClose={() => setKatalogFensterOffen(false)}
+          eintraege={templates as any}
+          onEinfuegen={isLocked ? null : (t, menge) => {
+            const neu = templateZuItem(t as any, menge);
+            if (!loading) setIsDirty(true);
+            setItems(prev => mergeItems(prev, [neu]));
+            toast({ title: "Position eingefügt", description: `${neu.menge} ${neu.einheit} ${neu.beschreibung}` });
+          }}
+        />
         <Dialog open={templateDialogOpen} onOpenChange={(open) => {
           setTemplateDialogOpen(open);
           if (!open) setTemplateSearch("");
@@ -5411,48 +5474,7 @@ export default function InvoiceDetail() {
                 <Button variant="outline" onClick={() => setTemplateDialogOpen(false)}>Abbrechen</Button>
                 <Button disabled={selectedTemplateIds.length === 0} onClick={() => {
                   const selected = templates.filter(t => selectedTemplateIds.includes(t.id));
-                  const newItems = selected.map(t => {
-                    const menge = templateMengen[t.id] || 1;
-                    // Kalkulierte Materialien: Snapshot + Katalog-Verknüpfung übernehmen,
-                    // damit Aufschläge im Angebot anpassbar bleiben und "Preise aktualisieren" greift.
-                    const isKalk = !!(t as any).ist_kalkuliert;
-                    const kalk = isKalk ? {
-                      ek_preis: Number((t as any).ek_netto) || 0,
-                      verschnitt_prozent: Number((t as any).verschnitt_prozent) || 0,
-                      aufschlag_prozent: Number((t as any).aufschlag_prozent) || 0,
-                      befestigung_preis: Number((t as any).befestigung_preis) || 0,
-                      sonstiges_preis: Number((t as any).sonstiges_preis) || 0,
-                      arbeitszeit_minuten: Number((t as any).arbeitszeit_minuten) || 0,
-                      stundensatz: Number((t as any).stundensatz) || 52,
-                    } : null;
-                    const netto = kalk
-                      ? calcEinzelpreis({ ...kalk, aufschlag_prozent: docAufschlagOverride ?? kalk.aufschlag_prozent })
-                      : (Number((t as any).vk_netto ?? (t as any).netto_preis) || t.einzelpreis);
-                    // Langtext nur wenn er sich vom Kurztext unterscheidet —
-                    // sonst steht derselbe Text doppelt auf dem PDF.
-                    const _kurz = (t as any).kurzbezeichnung || t.name || "";
-                    const _lang = (t as any).langbezeichnung || t.beschreibung || "";
-                    return {
-                      position: 1,
-                      beschreibung: (t as any).kurzbezeichnung || t.name || t.beschreibung,
-                      kurztext: (t as any).kurzbezeichnung || t.name,
-                      langtext: _lang && _lang !== _kurz ? _lang : "",
-                      menge,
-                      einheit: t.einheit,
-                      einzelpreis: netto,
-                      katalog_vk: netto, // Snapshot: Katalogpreis beim Einfügen
-                      gesamtpreis: Math.round(netto * menge * 100) / 100,
-                      produktnummer: (t as any).produktnummer || "",
-                      ist_kalkuliert: isKalk,
-                      // Katalog-Verknüpfung IMMER mitnehmen — auch Komponenten-
-                      // Positionen und Materialien folgen so "Preise aktualisieren".
-                      kalkulation_template_id: t.id,
-                      // Lohnminuten/EH für den Stundenabgleich (bei Komponenten-
-                      // Positionen aus der Komponenten-Summe im Katalog).
-                      arbeitszeit_minuten: Number((t as any).arbeitszeit_minuten) || 0,
-                      ...(kalk || {}),
-                    } as InvoiceItem;
-                  });
+                  const newItems = selected.map(t => templateZuItem(t, templateMengen[t.id] || 1));
                   setItems(prev => mergeItems(prev, newItems));
                   // Track was hinzugefügt wurde
                   setAddedFromDialog(prev => [...prev, ...newItems.map(i => ({ name: i.beschreibung, menge: i.menge, einheit: i.einheit }))]);
