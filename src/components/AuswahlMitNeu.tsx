@@ -50,6 +50,12 @@ export function AuswahlMitNeu({
 
   const abbrechen = () => { setEntwurf(""); setNeuModus(false); };
 
+  // Ein gerade neu eingetippter Eintrag steht noch in keiner Liste (die
+  // Liste speist sich aus schon gespeicherten Materialien). Radix zeigt einen
+  // Wert ohne passendes Item aber gar nicht an — das Feld wirkte leer, als
+  // hätte das Anlegen nicht geklappt. Deshalb den Wert selbst mit aufnehmen.
+  const liste = value && !optionen.includes(value) ? [value, ...optionen] : optionen;
+
   if (neuModus) {
     return (
       <div className="flex gap-1">
@@ -88,7 +94,7 @@ export function AuswahlMitNeu({
       <SelectTrigger><SelectValue placeholder={platzhalter} /></SelectTrigger>
       <SelectContent>
         <SelectItem value="none">—</SelectItem>
-        {optionen.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+        {liste.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
         <SelectItem value="_new" className="text-primary font-medium">{neuLabel}</SelectItem>
       </SelectContent>
     </Select>
