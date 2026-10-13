@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, Lock, Link2, Clock3, BookOpen } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, Lock, Link2, Clock3, BookOpen, Mail } from "lucide-react";
 import { KatalogKalkulationPopover } from "@/components/KatalogKalkulationPopover";
 import { StundenlohnAnpassenDialog, neuerEinzelpreis, type StundenlohnUpdate } from "@/components/StundenlohnAnpassenDialog";
 import { istArbeitszeitZeile } from "@/lib/stunden";
@@ -32,6 +32,8 @@ import { format, addMonths, parseISO } from "date-fns";
 import { type InvoiceLayoutSettings, DEFAULT_LAYOUT, parseLayoutSettings } from "@/lib/invoiceLayoutTypes";
 import { loadInvoiceLogo } from "@/lib/logoLoader";
 import { PageHeader } from "@/components/PageHeader";
+import { BelegMailDialog } from "@/components/BelegMailDialog";
+import { ToastAction } from "@/components/ui/toast";
 import { istEntwurfsNummer, neueEntwurfsNummer } from "@/lib/rechnungsEntwurf";
 import { CustomerSelect, type CustomerData } from "@/components/CustomerSelect";
 import { CustomerEditDialog } from "@/components/CustomerEditDialog";
@@ -160,6 +162,9 @@ interface InvoiceData {
   storno_nummer: string;
   storno_datum: string;
   storno_grund: string;
+  // Zuletzt per E-Mail versendet (Edge Function send-invoice-email)
+  versendet_am?: string | null;
+  versendet_an?: string | null;
   // Dokument-Genealogie + Anzahlung
   parent_invoice_id?: string | null;
   anzahlung_prozent?: number | null;
@@ -329,6 +334,7 @@ export default function InvoiceDetail() {
   const [chainRoot, setChainRoot] = useState<ChainDoc | null>(null);
   const [chainChildren, setChainChildren] = useState<ChainDoc[]>([]);
   const [invoiceLayout, setInvoiceLayout] = useState<InvoiceLayoutSettings>(DEFAULT_LAYOUT);
+  const [mailOpen, setMailOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
 
   // Payment tracking
@@ -1069,6 +1075,8 @@ export default function InvoiceDetail() {
       storno_nummer: (data as any).storno_nummer || "",
       storno_datum: (data as any).storno_datum || "",
       storno_grund: (data as any).storno_grund || "",
+      versendet_am: (data as any).versendet_am || null,
+      versendet_an: (data as any).versendet_an || null,
       kunde_anrede: (data as any).kunde_anrede || "",
       kunde_titel: (data as any).kunde_titel || "",
       reverse_charge: (data as any).reverse_charge || false,
@@ -1731,6 +1739,16 @@ export default function InvoiceDetail() {
   const _cancelableTypes = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung", "gutschrift"]);
   const canCancel = !isNew && !!invoiceId && id !== "new" && _cancelableTypes.has(form.typ) && form.status !== "storniert" && !istRechnungsEntwurf;
 
+  // "Per E-Mail senden" aus der Speichern-Meldung: nach dem ersten Speichern
+  // wird die Seite neu aufgebaut (/invoices/new → /invoices/<id>), deshalb
+  // läuft das Öffnen über ?mail=1, sobald der Beleg geladen ist.
+  const mailWunsch = searchParams.get("mail") === "1";
+  useEffect(() => {
+    if (!mailWunsch || loading || !invoiceId || !form.nummer || istEntwurfsNummer(form.nummer)) return;
+    setMailOpen(true);
+    navigate(`/invoices/${invoiceId}`, { replace: true });
+  }, [mailWunsch, loading, invoiceId, form.nummer, navigate]);
+
   /**
    * Speichern. Bei Rechnungen (auch AR/SR) gibt es zwei Wege:
    *  - alsEntwurf: zwischenspeichern — keine Belegnummer, bleibt bearbeitbar
@@ -2288,6 +2306,13 @@ export default function InvoiceDetail() {
         } : {
           title: stelltAus ? `${_lbl} ausgestellt` : "Gespeichert",
           description: `${_lbl} ${_nr && !istEntwurfsNummer(_nr) ? _nr + " " : ""}wurde gespeichert.${_quelle}`,
+          // Gleich weiter an den Kunden schicken (Wunsch Holzbau Lutz).
+          action: (
+            <ToastAction altText="Per E-Mail senden" onClick={() => navigate(`/invoices/${savedId}?mail=1`, { replace: true })}>
+              Per E-Mail senden
+            </ToastAction>
+          ),
+          duration: 10000,
         });
       }
 
@@ -2411,7 +2436,6 @@ export default function InvoiceDetail() {
     const success = await handleSave();
     if (success) {
       setPreviewSaved(true);
-      toast({ title: "Gespeichert" });
     }
   };
 
@@ -3367,6 +3391,13 @@ export default function InvoiceDetail() {
                     <Badge className={statusColors[form.status] || ""}>
                       {statusLabels[form.status] || form.status}
                     </Badge>
+                    {form.versendet_am && (
+                      <span className="flex items-center gap-1 text-xs text-muted-foreground" title={form.versendet_an || ""}>
+                        <Mail className="w-3.5 h-3.5" />
+                        per E-Mail versendet am {new Date(form.versendet_am).toLocaleDateString("de-AT")}
+                        {form.versendet_an ? ` an ${form.versendet_an}` : ""}
+                      </span>
+                    )}
                     {/* Status direkt HIER wechselbar — der nächste Schritt nach dem
                         Versenden ("Kunde hat angenommen") darf nicht nur im
                         unscheinbaren Listen-Dropdown versteckt sein. */}
@@ -5347,6 +5378,12 @@ export default function InvoiceDetail() {
                   <Printer className="w-4 h-4" />
                   Drucken
                 </Button>
+                {form.status !== "storniert" && (
+                  <Button onClick={() => setMailOpen(true)} variant="outline" className="gap-2">
+                    <Mail className="w-4 h-4" />
+                    Per E-Mail senden
+                  </Button>
+                )}
               </>
             ) : (
               <>
@@ -5360,6 +5397,12 @@ export default function InvoiceDetail() {
                       <Printer className="w-4 h-4" />
                       Drucken
                     </Button>
+                    {!istRechnungsEntwurf && form.status !== "storniert" && (
+                      <Button onClick={() => setMailOpen(true)} variant="outline" className="gap-2">
+                        <Mail className="w-4 h-4" />
+                        Per E-Mail senden
+                      </Button>
+                    )}
                     {form.typ === "angebot" && (
                       <Button onClick={handleMaterialliste} variant="outline" className="gap-2"
                         title="Alle Materialien aus den kalkulierten Positionen als PDF (intern, inkl. Verschnitt + EK)">
@@ -5383,7 +5426,7 @@ export default function InvoiceDetail() {
                     </Button>
                   </>
                 ) : (
-                  <Button variant="outline" onClick={async () => { const ok = await handleSave(); if (ok) toast({ title: "Gespeichert" }); }} disabled={saving} className="gap-2">
+                  <Button variant="outline" onClick={() => handleSave()} disabled={saving} className="gap-2">
                     {saving ? "Speichert..." : "Speichern"}
                   </Button>
                 )}
@@ -5395,6 +5438,37 @@ export default function InvoiceDetail() {
             )}
           </div>
         </div>
+
+        {invoiceId && !istEntwurfsNummer(form.nummer) && (
+          <BelegMailDialog
+            open={mailOpen}
+            onOpenChange={setMailOpen}
+            beleg={{
+              id: invoiceId,
+              typ: form.typ,
+              nummer: form.nummer,
+              datum: form.datum,
+              betreff: form.betreff,
+              brutto: bruttoSumme,
+              kunde_name: form.kunde_name,
+              kunde_email: form.kunde_email,
+              kunde_anrede: (form as any).kunde_anrede,
+              kunde_titel: (form as any).kunde_titel,
+            }}
+            firma={invoiceLayout.company}
+            buildPdf={buildInvoicePdfBlob}
+            onGesendet={(r) => {
+              // Direkt setzen (nicht updateField) — der Versand ist schon in
+              // der DB vermerkt, das ist keine ungespeicherte Änderung.
+              setForm(prev => ({
+                ...prev,
+                versendet_am: r.versendet_am || new Date().toISOString(),
+                versendet_an: r.versendet_an,
+                status: r.status || prev.status,
+              }));
+            }}
+          />
+        )}
 
         {/* Template Picker Dialog — Suche + Filter + Multi-Select */}
         <KatalogNachschlagen

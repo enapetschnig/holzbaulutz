@@ -32,3 +32,6 @@ verify_jwt = false
 # über COCKPIT_SECRET.
 [functions.wunsch-datei]
 verify_jwt = false
+
+[functions.send-invoice-email]
+verify_jwt = false
