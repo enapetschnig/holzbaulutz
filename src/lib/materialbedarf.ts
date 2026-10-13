@@ -58,9 +58,10 @@ export async function generateMaterialbedarfFromAngebot(invoiceId: string, proje
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return 0;
 
-  const { data: items } = await supabase
+  // (supabase as any): kalkulation_snapshot fehlt in den generierten Typen.
+  const { data: items } = await (supabase as any)
     .from("invoice_items")
-    .select("beschreibung, kurztext, menge, einheit, einzelpreis, ek_preis, arbeitszeit_minuten, ist_kalkuliert, kalkulation_template_id")
+    .select("beschreibung, kurztext, menge, einheit, einzelpreis, ek_preis, arbeitszeit_minuten, ist_kalkuliert, kalkulation_template_id, kalkulation_snapshot")
     .eq("invoice_id", invoiceId)
     .order("position");
   // Nur bei Ladefehler (items === null) nichts anfassen. Bei 0 Positionen
@@ -89,7 +90,9 @@ export async function generateMaterialbedarfFromAngebot(invoiceId: string, proje
   for (const it of items) {
     const menge = Number(it.menge) || 0;
     if (menge <= 0) continue;
-    const comps = componentsByTemplate[(it as any).kalkulation_template_id as string] || [];
+    // Für dieses Angebot angepasste Kalkulation hat Vorrang vor dem Katalog.
+    const snap = (it as any).kalkulation_snapshot;
+    const comps: any[] = snap?.angepasst ? (snap.komponenten || []) : (componentsByTemplate[(it as any).kalkulation_template_id as string] || []);
     const matComps = comps.filter(c => c.typ === "material");
     if (matComps.length > 0) {
       // Komponenten auflösen: Bedarf inkl. Verschnitt

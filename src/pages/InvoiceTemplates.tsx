@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -148,6 +149,18 @@ export default function InvoiceTemplates() {
   const einheiten = useEinheiten();
 
   useEffect(() => { fetchTemplates(); }, []);
+
+  // Direkt eine Position zum Bearbeiten öffnen — Link „Im Katalog bearbeiten"
+  // aus der Zeilen-Kalkulation im Angebot (/materials?bearbeiten=<id>).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const bearbeitenId = searchParams.get("bearbeiten");
+  useEffect(() => {
+    if (!bearbeitenId || templates.length === 0) return;
+    const t = templates.find(x => x.id === bearbeitenId);
+    if (t) void openEdit(t);
+    setSearchParams({}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bearbeitenId, templates]);
 
   useEffect(() => {
     if (pendingCopySave) {

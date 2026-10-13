@@ -2,7 +2,7 @@ import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Package, Clock, PlusCircle, Calculator, Undo2, Link2 } from "lucide-react";
+import { Package, Clock, PlusCircle, Calculator, Undo2, Link2, Pencil } from "lucide-react";
 
 /**
  * "Kalkulation dahinter" für Angebots-/Rechnungspositionen aus dem Katalog:
@@ -31,6 +31,9 @@ export interface KalkulationSnapshot {
   arbeitszeit_minuten: number;
   stand: string;
   komponenten: SnapKomponente[];
+  /** Kalkulation wurde für diese Zeile angepasst (ZeilenKalkulationDialog) —
+   *  weicht bewusst vom Katalog ab, "Preise aktualisieren" lässt sie in Ruhe. */
+  angepasst?: boolean;
 }
 
 interface Props {
@@ -42,6 +45,8 @@ interface Props {
   /** Zurücksetzen erlaubt? (nicht bei gesperrten Belegen) */
   canRestore: boolean;
   onRestore: (preis: number) => void;
+  /** Stunden/Material dieser Zeile anpassen (öffnet den Zeilen-Editor). */
+  onBearbeiten?: () => void;
 }
 
 const fmt = (n: number) => (Number(n) || 0).toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -55,7 +60,7 @@ const zeilenBetrag = (k: SnapKomponente) => {
   return menge * preis; // lohn: Std × Satz · sonstiges: Pauschale
 };
 
-export function KatalogKalkulationPopover({ templateId, snapshot, position, currentEp, canRestore, onRestore }: Props) {
+export function KatalogKalkulationPopover({ templateId, snapshot, position, currentEp, canRestore, onRestore, onBearbeiten }: Props) {
   const [live, setLive] = useState<KalkulationSnapshot | null>(null);
   const [liveVk, setLiveVk] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -94,7 +99,7 @@ export function KatalogKalkulationPopover({ templateId, snapshot, position, curr
 
   const snapVk = daten ? Number(daten.vk_netto) || 0 : 0;
   const abweicht = daten && Math.abs(currentEp - snapVk) > 0.005;
-  const katalogAbweicht = snapshot && liveVk != null && Math.abs(liveVk - snapVk) > 0.005;
+  const katalogAbweicht = snapshot && !snapshot.angepasst && liveVk != null && Math.abs(liveVk - snapVk) > 0.005;
 
   return (
     <Popover onOpenChange={handleOpen}>
@@ -109,7 +114,7 @@ export function KatalogKalkulationPopover({ templateId, snapshot, position, curr
           <div className="flex items-center justify-between gap-2">
             <p className="text-sm font-semibold flex items-center gap-1.5">
               <Link2 className="w-3.5 h-3.5 text-primary" />
-              Kalkulation aus dem Katalog — Pos. {position}
+              {snapshot?.angepasst ? "Kalkulation (angepasst)" : "Kalkulation aus dem Katalog"} — Pos. {position}
             </p>
             {snapshot?.stand && (
               <span className="text-[10px] text-muted-foreground shrink-0">
@@ -162,6 +167,18 @@ export function KatalogKalkulationPopover({ templateId, snapshot, position, curr
             <p className="text-[11px] text-muted-foreground">
               ⏱️ {fmt(daten.arbeitszeit_minuten / 60)} h Arbeitszeit pro Einheit — zählt im Stundenabgleich.
             </p>
+          )}
+
+          {snapshot?.angepasst && (
+            <p className="text-[11px] rounded bg-blue-50 border border-blue-200 text-blue-900 px-2 py-1">
+              Für dieses Angebot angepasst — der Katalog bleibt unverändert.
+            </p>
+          )}
+
+          {canRestore && onBearbeiten && daten && daten.komponenten.length > 0 && (
+            <Button variant="outline" size="sm" className="w-full h-8 text-xs gap-1.5" onClick={onBearbeiten}>
+              <Pencil className="w-3 h-3" /> Stunden / Material für diese Zeile anpassen
+            </Button>
           )}
 
           {katalogAbweicht && (

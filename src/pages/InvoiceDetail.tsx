@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, Lock, Link2, Clock3, BookOpen, Mail } from "lucide-react";
 import { KatalogKalkulationPopover } from "@/components/KatalogKalkulationPopover";
+import { ZeilenKalkulationDialog } from "@/components/ZeilenKalkulationDialog";
 import { StundenlohnAnpassenDialog, neuerEinzelpreis, type StundenlohnUpdate } from "@/components/StundenlohnAnpassenDialog";
 import { istArbeitszeitZeile } from "@/lib/stunden";
 import { erzeugeEbInterfaceXml } from "@/lib/erechnung";
@@ -335,6 +336,8 @@ export default function InvoiceDetail() {
   const [chainChildren, setChainChildren] = useState<ChainDoc[]>([]);
   const [invoiceLayout, setInvoiceLayout] = useState<InvoiceLayoutSettings>(DEFAULT_LAYOUT);
   const [mailOpen, setMailOpen] = useState(false);
+  // Index der Angebotszeile, deren Kalkulation gerade angepasst wird.
+  const [kalkZeileIdx, setKalkZeileIdx] = useState<number | null>(null);
   const [newProjectName, setNewProjectName] = useState("");
 
   // Payment tracking
@@ -1529,6 +1532,8 @@ export default function InvoiceDetail() {
       let oldTotal = 0, newTotal = 0;
       const next = items.map(it => {
         if (!it.kalkulation_template_id || !map[it.kalkulation_template_id]) return it;
+        // Für dieses Angebot bewusst angepasste Kalkulation nicht überschreiben.
+        if (it.kalkulation_snapshot?.angepasst) return it;
         const t = map[it.kalkulation_template_id];
         const ep = expectedEpFromCatalog(it, t);
         oldTotal += Number(it.einzelpreis) || 0;
@@ -1575,7 +1580,7 @@ export default function InvoiceDetail() {
       let stale = 0;
       const details: { pos: number; name: string; alt: number; neu: number }[] = [];
       items.forEach((it, idx) => {
-        if (it.kalkulation_template_id && map[it.kalkulation_template_id]) {
+        if (it.kalkulation_template_id && map[it.kalkulation_template_id] && !it.kalkulation_snapshot?.angepasst) {
           const ep = expectedEpFromCatalog(it, map[it.kalkulation_template_id]);
           // Referenz ist der KATALOG-Snapshot vom Einfügen (katalog_vk) —
           // nicht der aktuelle Zeilenpreis. Ein bewusst verhandelter Preis
@@ -1616,7 +1621,7 @@ export default function InvoiceDetail() {
           .select("id, kurzbezeichnung, name, vk_netto, arbeitszeit_minuten")
           .in("id", ids),
         (supabase as any).from("position_components")
-          .select("position_template_id, typ, bezeichnung, einheit, menge_pro_einheit, preis, verschnitt_prozent, aufschlag_prozent, sort_order")
+          .select("position_template_id, material_template_id, typ, bezeichnung, einheit, menge_pro_einheit, preis, verschnitt_prozent, aufschlag_prozent, sort_order")
           .in("position_template_id", ids)
           .order("sort_order"),
       ]);
@@ -1624,6 +1629,7 @@ export default function InvoiceDetail() {
       const comps: Record<string, any[]> = {};
       for (const c of ((cRes.data as any[]) || [])) {
         (comps[c.position_template_id] = comps[c.position_template_id] || []).push({
+          material_template_id: c.material_template_id || null,
           typ: c.typ, bezeichnung: c.bezeichnung, einheit: c.einheit,
           menge_pro_einheit: Number(c.menge_pro_einheit) || 0, preis: Number(c.preis) || 0,
           verschnitt_prozent: Number(c.verschnitt_prozent) || 0, aufschlag_prozent: Number(c.aufschlag_prozent) || 0,
@@ -5033,6 +5039,12 @@ export default function InvoiceDetail() {
                                   <Link2 className="w-3 h-3" /> Katalog
                                 </span>
                               )}
+                              {item.kalkulation_snapshot?.angepasst && (
+                                <span className="inline-flex items-center gap-0.5 rounded bg-blue-50 border border-blue-200 text-blue-800 px-1"
+                                  title="Stunden/Material für dieses Angebot angepasst — Rechner-Symbol zum Ansehen/Ändern">
+                                  <Pencil className="w-3 h-3" /> angepasst
+                                </span>
+                              )}
                             </span>
                           )}
                           {(item.langtext || !isLocked) && (
@@ -5097,6 +5109,7 @@ export default function InvoiceDetail() {
                                   updateItem(idx, "einzelpreis", preis);
                                   updateItem(idx, "katalog_vk", preis);
                                 }}
+                                onBearbeiten={() => setKalkZeileIdx(idx)}
                               />
                             )}
                             {!isLocked && !zeileGesperrt && (item.ist_kalkuliert || !item.kalkulation_template_id) && (
@@ -5466,6 +5479,53 @@ export default function InvoiceDetail() {
                 versendet_an: r.versendet_an,
                 status: r.status || prev.status,
               }));
+            }}
+          />
+        )}
+
+        {kalkZeileIdx !== null && items[kalkZeileIdx]?.kalkulation_template_id && (
+          <ZeilenKalkulationDialog
+            open
+            onOpenChange={(o) => { if (!o) setKalkZeileIdx(null); }}
+            templateId={items[kalkZeileIdx].kalkulation_template_id as string}
+            snapshot={items[kalkZeileIdx].kalkulation_snapshot}
+            position={kalkZeileIdx + 1}
+            einheit={items[kalkZeileIdx].einheit}
+            onApply={(r) => {
+              const idx = kalkZeileIdx;
+              setItems(prev => prev.map((it, i) => {
+                if (i !== idx) return it;
+                const next: InvoiceItem = {
+                  ...it,
+                  einzelpreis: r.einzelpreis,
+                  arbeitszeit_minuten: r.arbeitszeit_minuten,
+                  kalkulation_snapshot: r.snapshot,
+                  ...(r.neueTemplateId ? { kalkulation_template_id: r.neueTemplateId, katalog_vk: r.einzelpreis } : {}),
+                } as InvoiceItem;
+                next.gesamtpreis = computeItemTotal(next);
+                return next;
+              }));
+              if (!loading) setIsDirty(true);
+            }}
+            onReset={async () => {
+              const idx = kalkZeileIdx;
+              const tplId = items[idx].kalkulation_template_id;
+              const { data: t } = await (supabase as any).from("invoice_templates")
+                .select("vk_netto, arbeitszeit_minuten").eq("id", tplId).maybeSingle();
+              setItems(prev => prev.map((it, i) => {
+                if (i !== idx) return it;
+                // Snapshot leeren → wird vom Katalog frisch nachgeladen.
+                const next: InvoiceItem = {
+                  ...it,
+                  kalkulation_snapshot: null,
+                  einzelpreis: Number(t?.vk_netto) || it.einzelpreis,
+                  katalog_vk: Number(t?.vk_netto) || (it as any).katalog_vk,
+                  arbeitszeit_minuten: Number(t?.arbeitszeit_minuten) || 0,
+                } as InvoiceItem;
+                next.gesamtpreis = computeItemTotal(next);
+                return next;
+              }));
+              if (!loading) setIsDirty(true);
             }}
           />
         )}

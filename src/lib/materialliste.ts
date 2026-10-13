@@ -22,9 +22,10 @@ export interface MaterialZeile {
 }
 
 export async function sammleMaterialliste(invoiceId: string): Promise<MaterialZeile[]> {
-  const { data: items } = await supabase
+  // (supabase as any): kalkulation_snapshot fehlt in den generierten Typen.
+  const { data: items } = await (supabase as any)
     .from("invoice_items")
-    .select("beschreibung, kurztext, menge, einheit, einzelpreis, ek_preis, arbeitszeit_minuten, kalkulation_template_id, mwst_exempt, eventual")
+    .select("beschreibung, kurztext, menge, einheit, einzelpreis, ek_preis, arbeitszeit_minuten, kalkulation_template_id, kalkulation_snapshot, mwst_exempt, eventual")
     .eq("invoice_id", invoiceId)
     .order("position");
   if (!items) return [];
@@ -83,7 +84,10 @@ export async function sammleMaterialliste(invoiceId: string): Promise<MaterialZe
     const tpl = templateById[(it as any).kalkulation_template_id as string];
     // Eigene Arbeitsstunden (Regiestunde, Facharbeiterstunde …) sind kein Material
     if (tpl?.ist_stundensatz || istArbeitszeitZeile(text, it.einheit)) continue;
-    const comps = componentsByTemplate[(it as any).kalkulation_template_id as string] || [];
+    // Für dieses Angebot angepasste Kalkulation (Zeilen-Editor) hat Vorrang
+    // vor dem Katalog — dort stehen die tatsächlich angebotenen Mengen.
+    const snap = (it as any).kalkulation_snapshot;
+    const comps: any[] = snap?.angepasst ? (snap.komponenten || []) : (componentsByTemplate[(it as any).kalkulation_template_id as string] || []);
     const matComps = comps.filter(c => c.typ === "material");
     if (matComps.length > 0) {
       for (const c of matComps) {
