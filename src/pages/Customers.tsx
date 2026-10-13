@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { anzeigeNummer } from "@/lib/rechnungsEntwurf";
 import { supabase } from "@/integrations/supabase/client";
 import { ContactHistoryTimeline } from "@/components/ContactHistoryTimeline";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
@@ -505,7 +506,7 @@ export default function Customers() {
                   <TableBody>
                     {customerInvoices.map(inv => (
                       <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/invoices/${inv.id}`)}>
-                        <TableCell className="font-mono">{inv.nummer}</TableCell>
+                        <TableCell className="font-mono">{anzeigeNummer(inv.nummer)}</TableCell>
                         <TableCell>
                           <Badge variant={_invoiceLikeTypes.has(inv.typ) ? "default" : "secondary"}>
                             {getDocConfig(inv.typ).label}

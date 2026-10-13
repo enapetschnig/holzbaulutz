@@ -32,6 +32,7 @@ import { format, addMonths, parseISO } from "date-fns";
 import { type InvoiceLayoutSettings, DEFAULT_LAYOUT, parseLayoutSettings } from "@/lib/invoiceLayoutTypes";
 import { loadInvoiceLogo } from "@/lib/logoLoader";
 import { PageHeader } from "@/components/PageHeader";
+import { istEntwurfsNummer, neueEntwurfsNummer } from "@/lib/rechnungsEntwurf";
 import { CustomerSelect, type CustomerData } from "@/components/CustomerSelect";
 import { CustomerEditDialog } from "@/components/CustomerEditDialog";
 import {
@@ -399,7 +400,10 @@ export default function InvoiceDetail() {
   // unveränderbar (nur Zahlung/Mahnung/Gutschrift/Storno)". Angebote bleiben
   // editierbar.
   const LOCKED_TYPES = ["rechnung", "anzahlungsrechnung", "schlussrechnung"];
-  const isLocked = !isNew && id !== "new" && !!invoiceId && LOCKED_TYPES.includes(form.typ);
+  // Zwischengespeicherte Rechnung (noch ohne Belegnummer) bleibt bearbeitbar
+  // — gesperrt wird erst mit dem Ausstellen.
+  const istRechnungsEntwurf = !isNew && id !== "new" && !!invoiceId && LOCKED_TYPES.includes(form.typ) && form.status === "entwurf";
+  const isLocked = !isNew && id !== "new" && !!invoiceId && LOCKED_TYPES.includes(form.typ) && !istRechnungsEntwurf;
   const isKundeLocked = isLocked;
 
   // Angebot→Rechnung Vergleichs-Dialog
@@ -806,7 +810,7 @@ export default function InvoiceDetail() {
         .from("invoices")
         .select("id, nummer, kunde_name, datum")
         .in("typ", ["rechnung", "anzahlungsrechnung", "schlussrechnung"])
-        .neq("status", "storniert")
+        .not("status", "in", "(storniert,entwurf)")
         .order("datum", { ascending: false })
         .limit(100);
       if (cancelled) return;
@@ -1719,15 +1723,26 @@ export default function InvoiceDetail() {
   // GESPEICHERTE und solange sie nicht verrechnet/storniert sind — sonst
   // zeigt der Editor einen Löschen-Button für ein Dokument, das es noch
   // gar nicht gibt bzw. dessen Belegkette erhalten bleiben muss.
-  const canDelete = form.typ === "angebot" && !isNew && !!invoiceId
+  const canDelete = (form.typ === "angebot" || istRechnungsEntwurf) && !isNew && !!invoiceId
     && form.status !== "verrechnet" && form.status !== "storniert";
   // Stornieren ist für alle rechnungs-artigen Dokumente möglich
   // (Rechnung, Anzahlungsrechnung, Schlussrechnung, Gutschrift) —
   // AT-Rechtsvorschrift: ein Rechnungsbeleg muss stornierbar sein.
   const _cancelableTypes = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung", "gutschrift"]);
-  const canCancel = !isNew && !!invoiceId && id !== "new" && _cancelableTypes.has(form.typ) && form.status !== "storniert";
+  const canCancel = !isNew && !!invoiceId && id !== "new" && _cancelableTypes.has(form.typ) && form.status !== "storniert" && !istRechnungsEntwurf;
 
-  const handleSave = async (): Promise<boolean> => {
+  /**
+   * Speichern. Bei Rechnungen (auch AR/SR) gibt es zwei Wege:
+   *  - alsEntwurf: zwischenspeichern — keine Belegnummer, bleibt bearbeitbar
+   *    (Wunsch Holzbau Lutz 13.10.2026: "oft dauert das Abrechnen länger").
+   *  - sonst: ausstellen — fortlaufende Nummer, danach gesperrt.
+   */
+  const handleSave = async (opts?: { alsEntwurf?: boolean }): Promise<boolean> => {
+    const istRechnungsTyp = LOCKED_TYPES.includes(form.typ);
+    const wirdEntwurf = istRechnungsTyp && opts?.alsEntwurf === true;
+    // Ein gespeicherter Entwurf wird jetzt ausgestellt (Nummer im Update-Pfad).
+    const entwurfWirdAusgestellt = istRechnungsTyp && !wirdEntwurf && istRechnungsEntwurf;
+    const stelltAus = istRechnungsTyp && !wirdEntwurf && (isNew || !invoiceId || entwurfWirdAusgestellt);
     // Double-click protection: setState ist NICHT synchron — zusätzlich ein
     // Ref als echtes Reentrancy-Guard, sonst könnten zwei schnelle Klicks zwei
     // next_document_number-RPCs (= zwei Belegnummern) auslösen.
@@ -1759,10 +1774,25 @@ export default function InvoiceDetail() {
     // AUSSTELLUNGS-BESTÄTIGUNG: Das erste Speichern einer Rechnung/AR/SR ist
     // kein "Zwischenspeichern" — es vergibt die fortlaufende Nummer und sperrt
     // den Beleg. Das muss dem Nutzer bewusst sein, BEVOR es passiert.
-    if ((isNew || !invoiceId) && LOCKED_TYPES.includes(form.typ)) {
+    // Ein Entwurf wird mit dem heutigen Datum ausgestellt (fortlaufende
+    // Nummern dürfen nicht rückdatiert werden) — Fälligkeit wandert mit.
+    const heute = format(new Date(), "yyyy-MM-dd");
+    let ausstellDatum: { datum: string; faellig_am: string } | null = null;
+    if (entwurfWirdAusgestellt && form.datum && form.datum < heute) {
+      let faellig = form.faellig_am || "";
+      if (faellig) {
+        const tage = Math.round((new Date(faellig + "T12:00:00").getTime() - new Date(form.datum + "T12:00:00").getTime()) / 86400000);
+        const f = new Date(heute + "T12:00:00");
+        f.setDate(f.getDate() + tage);
+        faellig = format(f, "yyyy-MM-dd");
+      }
+      ausstellDatum = { datum: heute, faellig_am: faellig };
+    }
+    if (stelltAus) {
       const _label = getDocConfig(form.typ).label;
       const ok = window.confirm(
         `${_label} jetzt ausstellen?\n\n` +
+        (ausstellDatum ? `Das Rechnungsdatum wird auf heute gesetzt.\n` : "") +
         `Es wird eine fortlaufende Belegnummer vergeben. Danach ist der Beleg nicht mehr bearbeitbar — ` +
         `möglich bleiben: Zahlung erfassen, Mahnung, Gutschrift und Storno.`
       );
@@ -1774,7 +1804,8 @@ export default function InvoiceDetail() {
     // (z.B. Anzahlungs-Abzüge) bekommen KEINE MwSt und der Global-Rabatt ist
     // berücksichtigt — daher dieselbe Größe für die Validierung verwenden.
     const saveBrutto = bruttoSumme;
-    if (saveBrutto <= 0 && form.status !== "entwurf") {
+    const betragPruefen = wirdEntwurf ? false : form.typ === "rechnung" ? true : form.status !== "entwurf";
+    if (saveBrutto <= 0 && betragPruefen) {
       toast({ variant: "destructive", title: "Fehler", description: "Rechnungsbetrag muss größer als €0,00 sein" });
       return false;
     }
@@ -1934,7 +1965,9 @@ export default function InvoiceDetail() {
       // bereits gesetzten Zahl-/Storno-Status (teilbezahlt/bezahlt/storniert)
       // NICHT überschreiben.
       const _invoiceLikeForStatus = new Set(["anzahlungsrechnung", "schlussrechnung"]);
-      const saveStatus = form.typ === "rechnung"
+      const saveStatus = wirdEntwurf
+        ? "entwurf"
+        : form.typ === "rechnung"
         ? "offen"
         : _invoiceLikeForStatus.has(form.typ) && (!form.status || form.status === "entwurf")
           ? "offen"
@@ -2007,6 +2040,11 @@ export default function InvoiceDetail() {
         ansprechpartner_email: (form as any).ansprechpartner_email?.trim() || null,
       };
 
+      if (ausstellDatum) {
+        invoicePayload.datum = ausstellDatum.datum;
+        invoicePayload.faellig_am = ausstellDatum.faellig_am || null;
+      }
+
       // leistungsdatum_bis nur mitschicken, wenn der User es befüllt hat —
       // ältere DB-Stände ohne die Migration 20260503100000 haben die
       // Spalte nicht und PostgREST würde sonst mit Schema-Cache-Fehler
@@ -2063,6 +2101,7 @@ export default function InvoiceDetail() {
         return next;
       };
 
+      let vergebeneNummer = "";
       if (isNew || !savedId) {
         let nummer: string;
         let laufnummer: number;
@@ -2081,6 +2120,10 @@ export default function InvoiceDetail() {
           nummer = `${basis}-R${neueRevision}`;
           laufnummer = Number((alt as any)?.laufnummer) || 1;
           revisionExtras = { revision: neueRevision, vorgaenger_id: revisionVonId };
+        } else if (wirdEntwurf) {
+          // Entwurf: noch keine Belegnummer verbrauchen.
+          nummer = neueEntwurfsNummer();
+          laufnummer = 0;
         } else {
           const { data: numData, error: numError } = await supabase.rpc("next_document_number" as never, {
             p_typ: form.typ,
@@ -2107,7 +2150,22 @@ export default function InvoiceDetail() {
         savedId = insertData!.id;
         setInvoiceId(savedId);
         updateField("nummer", insertData!.nummer);
+        vergebeneNummer = insertData!.nummer;
       } else {
+        // Entwurf wird ausgestellt → jetzt erst die fortlaufende Nummer ziehen.
+        if (entwurfWirdAusgestellt) {
+          const jahr = new Date((invoicePayload.datum || form.datum) + "T12:00:00").getFullYear() || form.jahr;
+          const { data: numData, error: numError } = await supabase.rpc("next_document_number" as never, {
+            p_typ: form.typ,
+            p_jahr: jahr,
+          } as never);
+          if (numError) throw numError;
+          const nummer = numData as string;
+          invoicePayload.nummer = nummer;
+          invoicePayload.laufnummer = parseInt((nummer.match(/(\d+)$/) || ["", "1"])[1]) || 1;
+          invoicePayload.jahr = jahr;
+          vergebeneNummer = nummer;
+        }
         const updateOnce = async (payload: any) => supabase
           .from("invoices")
           .update(payload)
@@ -2119,6 +2177,15 @@ export default function InvoiceDetail() {
         }
 
         if (updateError) throw updateError;
+        if (entwurfWirdAusgestellt) {
+          updateField("nummer", invoicePayload.nummer);
+          updateField("laufnummer", invoicePayload.laufnummer);
+          updateField("jahr", invoicePayload.jahr);
+        }
+      }
+      if (ausstellDatum) {
+        updateField("datum", ausstellDatum.datum);
+        updateField("faellig_am", ausstellDatum.faellig_am);
       }
 
       await supabase.from("invoice_items").delete().eq("invoice_id", savedId!);
@@ -2158,7 +2225,7 @@ export default function InvoiceDetail() {
       if (itemsError) throw itemsError;
 
       // Update form status to reflect saved state
-      if (form.status === "entwurf") {
+      if (form.status === "entwurf" || wirdEntwurf) {
         updateField("status", saveStatus);
       }
 
@@ -2171,8 +2238,12 @@ export default function InvoiceDetail() {
       // AR werden dabei einfach übersprungen (ihr Status behält seine
       // eigene Bedeutung: offen/teilbezahlt/bezahlt).
       const _invoiceLikeTypesForVerrechnet = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung"]);
-      if (fromAngebotId && _invoiceLikeTypesForVerrechnet.has(form.typ)) {
-        let hopCursor: string | null = fromAngebotId;
+      // Entwurf: Angebot bleibt offen, bis wirklich ausgestellt wird. Nach dem
+      // Neuladen eines Entwurfs ist fromAngebotId leer — dann über den
+      // gespeicherten Bezug (parent_invoice_id) gehen.
+      const verrechnenAb = wirdEntwurf ? null : (fromAngebotId || (entwurfWirdAusgestellt ? normalizedParentId : null));
+      if (verrechnenAb && _invoiceLikeTypesForVerrechnet.has(form.typ)) {
+        let hopCursor: string | null = verrechnenAb;
         for (let i = 0; i < 5 && hopCursor; i++) {
           const { data: hop } = await supabase
             .from("invoices")
@@ -2207,17 +2278,21 @@ export default function InvoiceDetail() {
       } else {
         setKalkRefreshApplied(false);
         const _lbl = getDocConfig(form.typ).label;
-        const _quelle = convertSourceNummer && LOCKED_TYPES.includes(form.typ)
+        const _quelle = convertSourceNummer && LOCKED_TYPES.includes(form.typ) && !wirdEntwurf
           ? ` Angebot ${convertSourceNummer} wurde als „verrechnet" (in Rechnung überführt) markiert.`
           : "";
-        toast({
-          title: LOCKED_TYPES.includes(form.typ) && isNew ? `${_lbl} ausgestellt` : "Gespeichert",
-          description: `${_lbl} ${form.nummer ? form.nummer + " " : ""}wurde gespeichert.${_quelle}`,
+        const _nr = vergebeneNummer || form.nummer;
+        toast(wirdEntwurf ? {
+          title: "Entwurf gespeichert",
+          description: `Die ${_lbl} ist zwischengespeichert und kann jederzeit weiterbearbeitet werden. Die Rechnungsnummer wird erst mit „Ausstellen" vergeben.`,
+        } : {
+          title: stelltAus ? `${_lbl} ausgestellt` : "Gespeichert",
+          description: `${_lbl} ${_nr && !istEntwurfsNummer(_nr) ? _nr + " " : ""}wurde gespeichert.${_quelle}`,
         });
       }
 
       // Wenn Projekt zugeordnet → PDF zusätzlich in den Projektordner ablegen
-      if (savedId && form.project_id) {
+      if (savedId && form.project_id && !wirdEntwurf) {
         void uploadInvoicePdfToProjectFolder(savedId);
       }
       // Angebot mit Projekt → Projekt-Materialliste (Soll-Bedarf) neu erzeugen.
@@ -2294,7 +2369,7 @@ export default function InvoiceDetail() {
       // EPC-QR-Code (GiroCode) wie im Download-/Print-Pfad
       let qrDataUri: string | undefined;
       const isInvoiceLike = ["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ);
-      if (isInvoiceLike && bank.iban && bank.bic && bank.kontoinhaber && bruttoSumme > 0) {
+      if (isInvoiceLike && !istEntwurfsNummer(form.nummer) && bank.iban && bank.bic && bank.kontoinhaber && bruttoSumme > 0) {
         try {
           qrDataUri = await generateEpcQrCode(bruttoSumme, form.nummer || "", bank);
         } catch { /* optional */ }
@@ -2531,7 +2606,7 @@ export default function InvoiceDetail() {
     // dem Renderer als Unstructured Reference an die Banking-App).
     let qrDataUri: string | undefined;
     const isInvoiceLike = ["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ);
-    if (isInvoiceLike && bank.iban && bank.bic && bank.kontoinhaber && bruttoSumme > 0) {
+    if (isInvoiceLike && !istEntwurfsNummer(form.nummer) && bank.iban && bank.bic && bank.kontoinhaber && bruttoSumme > 0) {
       try {
         qrDataUri = await generateEpcQrCode(bruttoSumme, form.nummer || "", bank);
       } catch { /* QR optional — Render geht ohne weiter */ }
@@ -3169,7 +3244,7 @@ export default function InvoiceDetail() {
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8 max-w-[1600px]">
         <PageHeader
-          title={isNew ? `${typArticle} ${typLabel} erstellen` : `${typLabel} ${form.nummer}`}
+          title={isNew ? `${typArticle} ${typLabel} erstellen` : istEntwurfsNummer(form.nummer) ? `${typLabel} – Entwurf` : `${typLabel} ${form.nummer}`}
           backPath="/invoices"
         />
 
@@ -3226,8 +3301,19 @@ export default function InvoiceDetail() {
               <FileText className="h-4 w-4 shrink-0 mt-0.5 text-blue-600" />
               <span>
                 <b>Entwurf</b> aus {convertSourceNummer ? `Angebot ${convertSourceNummer}` : "dem Quellbeleg"} —
-                die {getDocConfig(form.typ).label} wird erst mit <b>„Speichern"</b> ausgestellt
+                die {getDocConfig(form.typ).label} wird erst mit <b>„Ausstellen"</b> ausgestellt
                 (Nummer wird dabei vergeben, das Angebot als „verrechnet" markiert).
+                Mit <b>„Zwischenspeichern"</b> kannst du sie vorher beliebig oft sichern und später weitermachen.
+              </span>
+            </div>
+          )}
+          {istRechnungsEntwurf && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+              <FileText className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
+              <span>
+                <b>Entwurf</b> — diese {getDocConfig(form.typ).label} ist nur zwischengespeichert und noch nicht ausgestellt.
+                Du kannst sie weiter bearbeiten und mit <b>„Zwischenspeichern"</b> sichern.
+                Erst <b>„Ausstellen"</b> vergibt die Rechnungsnummer und sperrt den Beleg.
               </span>
             </div>
           )}
@@ -3277,7 +3363,7 @@ export default function InvoiceDetail() {
               <CardContent className="pt-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-3 flex-wrap">
-                    <Badge variant="outline" className="text-lg px-4 py-1 font-mono">{form.nummer}</Badge>
+                    <Badge variant="outline" className="text-lg px-4 py-1 font-mono">{istEntwurfsNummer(form.nummer) ? "noch ohne Nummer" : form.nummer}</Badge>
                     <Badge className={statusColors[form.status] || ""}>
                       {statusLabels[form.status] || form.status}
                     </Badge>
@@ -3379,7 +3465,7 @@ export default function InvoiceDetail() {
                         Auch bei "verrechnet" sichtbar (nur Folge-AR/SR) — sonst gäbe es nach
                         der 1. Anzahlungsrechnung am Auftrag keinen Weg zur Schlussrechnung.
                         Ersetzte Original-Angebote (alte Revision) bieten KEIN Umwandeln an. */}
-                    {!isNew && form.status !== "abgelehnt" && form.status !== "storniert" && !revisionInfo.nachfolger && (() => {
+                    {!isNew && form.status !== "abgelehnt" && form.status !== "storniert" && !revisionInfo.nachfolger && !istRechnungsEntwurf && (() => {
                       const t = form.typ;
                       const istVerrechnet = form.status === "verrechnet";
                       // Vom Angebot aus darf man direkt in jeden Rechnungstyp
@@ -3430,11 +3516,11 @@ export default function InvoiceDetail() {
                                     .select("id, netto_summe")
                                     .in("parent_invoice_id", chainIds)
                                     .eq("typ", "anzahlungsrechnung")
-                                    .neq("status", "storniert");
+                                    .not("status", "in", "(storniert,entwurf)");
                                   const rows = ((existingAnz as any[]) || []);
                                   // Sicherheitsnetz: aktuelles Dokument ist selbst eine AR,
                                   // hängt aber (noch) nicht am Root → trotzdem mitzählen.
-                                  if (form.typ === "anzahlungsrechnung" && form.status !== "storniert" && !rows.some(r => r.id === invoiceId)) {
+                                  if (form.typ === "anzahlungsrechnung" && form.status !== "storniert" && form.status !== "entwurf" && !rows.some(r => r.id === invoiceId)) {
                                     rows.push({ id: invoiceId, netto_summe: nettoSumme });
                                   }
                                   const sum = rows.reduce((s, r) => s + (Number(r.netto_summe) || 0), 0);
@@ -3560,12 +3646,12 @@ export default function InvoiceDetail() {
                                   .select("id, status")
                                   .in("parent_invoice_id", chainIds)
                                   .eq("typ", "anzahlungsrechnung")
-                                  .neq("status", "storniert");
+                                  .not("status", "in", "(storniert,entwurf)");
                                 const ids = ((data as any[]) || []).map(r => r.id);
                                 // Sicherheitsnetz: aktuelles Dokument ist eine nicht-stornierte
                                 // Anzahlungsrechnung, die (z.B. durch inkonsistente
                                 // parent_invoice_id) nicht in der Liste steht → trotzdem abziehen.
-                                if (form.typ === "anzahlungsrechnung" && form.status !== "storniert" && !ids.includes(invoiceId)) {
+                                if (form.typ === "anzahlungsrechnung" && form.status !== "storniert" && form.status !== "entwurf" && !ids.includes(invoiceId)) {
                                   ids.push(invoiceId);
                                 }
                                 handleConvertTo("schlussrechnung", { abzug_ids: ids, from_doc_id: rootId });
@@ -3714,7 +3800,7 @@ export default function InvoiceDetail() {
           )}
 
           {/* Zahlungsverlauf */}
-          {!isNew && ["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ) && form.status !== "storniert" && (
+          {!isNew && ["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ) && form.status !== "storniert" && !istRechnungsEntwurf && (
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex justify-between items-center">
@@ -5283,9 +5369,24 @@ export default function InvoiceDetail() {
                     )}
                   </>
                 )}
-                <Button variant="outline" onClick={async () => { const ok = await handleSave(); if (ok) toast({ title: "Gespeichert" }); }} disabled={saving} className="gap-2">
-                  {saving ? "Speichert..." : "Speichern"}
-                </Button>
+                {LOCKED_TYPES.includes(form.typ) ? (
+                  <>
+                    <Button variant="outline" onClick={() => handleSave({ alsEntwurf: true })} disabled={saving} className="gap-2"
+                      title="Zwischenspeichern ohne Rechnungsnummer — später weiterbearbeiten">
+                      <Save className="w-4 h-4" />
+                      {saving ? "Speichert..." : "Zwischenspeichern"}
+                    </Button>
+                    <Button variant="outline" onClick={() => handleSave()} disabled={saving} className="gap-2 border-primary text-primary"
+                      title="Fortlaufende Rechnungsnummer vergeben — danach nicht mehr bearbeitbar">
+                      <Lock className="w-4 h-4" />
+                      Ausstellen
+                    </Button>
+                  </>
+                ) : (
+                  <Button variant="outline" onClick={async () => { const ok = await handleSave(); if (ok) toast({ title: "Gespeichert" }); }} disabled={saving} className="gap-2">
+                    {saving ? "Speichert..." : "Speichern"}
+                  </Button>
+                )}
                 <Button onClick={handlePreview} className="gap-2">
                   <Eye className="w-4 h-4" />
                   Vorschau

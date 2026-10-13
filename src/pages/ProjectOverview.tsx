@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { anzeigeNummer } from "@/lib/rechnungsEntwurf";
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown, Package } from "lucide-react";
 import { getDocConfig } from "@/lib/documentTypes";
@@ -960,7 +961,7 @@ const ProjectOverview = () => {
                       <FileText className={`h-4 w-4 shrink-0 ${iconColor}`} />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="font-medium">{inv.nummer}</span>
+                          <span className="font-medium">{anzeigeNummer(inv.nummer)}</span>
                           <span className="text-xs text-muted-foreground">{cfg.label}</span>
                         </div>
                         <div className="text-xs text-muted-foreground truncate">

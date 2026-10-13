@@ -146,7 +146,7 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
       .from("invoices")
       .select("id, nummer, datum, kunde_name, typ, status")
       .in("typ", ["rechnung", "anzahlungsrechnung", "schlussrechnung"])
-      .neq("status", "storniert")
+      .not("status", "in", "(storniert,entwurf)")
       .order("datum", { ascending: false })
       .limit(200);
     setInvoiceOptions(((data as any[]) || []).map(r => ({

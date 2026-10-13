@@ -59,7 +59,10 @@ export function ExportInvoicesDialog({ open, onClose, bankData }: ExportInvoices
         .from("invoices")
         .select("*")
         .in("typ", activeTypes)
-        .eq("jahr", parseInt(year));
+        .eq("jahr", parseInt(year))
+        // Zwischengespeicherte Rechnungen (noch ohne Belegnummer) gehören
+        // nicht in den Export für die Buchhaltung.
+        .not("nummer", "like", "ENTWURF-%");
 
       if (!exportAll) {
         // Filter by month

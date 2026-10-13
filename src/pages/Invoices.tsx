@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { istEntwurfsNummer } from "@/lib/rechnungsEntwurf";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -275,7 +276,7 @@ export default function Invoices() {
       // QR code for invoices
       let qrUri: string | undefined;
       const { generateEpcQrCode } = await import("@/lib/invoiceHtml");
-      if (PAYABLE_INVOICE_TYPES.has(inv.typ) && Number(inv.brutto_summe) > 0) {
+      if (PAYABLE_INVOICE_TYPES.has(inv.typ) && !istEntwurfsNummer(inv.nummer) && Number(inv.brutto_summe) > 0) {
         try { qrUri = await generateEpcQrCode(Number(inv.brutto_summe), inv.nummer || "", bank); } catch {}
       }
 
@@ -352,7 +353,7 @@ export default function Invoices() {
       const logoUri = await loadInvoiceLogo();
 
       let qrUri: string | undefined;
-      if (PAYABLE_INVOICE_TYPES.has(inv.typ) && Number(inv.brutto_summe) > 0) {
+      if (PAYABLE_INVOICE_TYPES.has(inv.typ) && !istEntwurfsNummer(inv.nummer) && Number(inv.brutto_summe) > 0) {
         try {
           const { generateEpcQrCode } = await import("@/lib/invoiceHtml");
           qrUri = await generateEpcQrCode(Number(inv.brutto_summe), inv.nummer || "", bank);
@@ -499,7 +500,7 @@ export default function Invoices() {
 
   // Status options for the filter depend on selected typ
   const statusFilterOptions = filterTyp === "rechnung"
-    ? rechnungStatuses
+    ? ["entwurf", ...rechnungStatuses]
     : filterTyp === "angebot"
       ? angebotStatuses
       : [...new Set([...rechnungStatuses, ...angebotStatuses])];
@@ -952,7 +953,9 @@ export default function Invoices() {
                                   </span>
                                 );
                               })()}
-                              <span>{inv.nummer}</span>
+                              {istEntwurfsNummer(inv.nummer)
+                                ? <span className="italic text-muted-foreground">Entwurf</span>
+                                : <span>{inv.nummer}</span>}
                               {inv.archiviert && (
                                 <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-muted-foreground border-muted-foreground/40">
                                   Archiviert
@@ -993,13 +996,18 @@ export default function Invoices() {
                                 overdue ? "bg-red-500" :
                                 inv.status === "teilbezahlt" ? "bg-yellow-500" :
                                 inv.status === "verrechnet" ? "bg-blue-500" :
+                                inv.status === "entwurf" ? "bg-slate-300" :
                                 "bg-orange-500";
                               // Warnungen als subtiler Sub-Text
                               const warn = overdue ? "überfällig" : expired ? "abgelaufen" : inv.mahnstufe > 0 ? `Mahnung ${inv.mahnstufe}` : "";
                               return (
                                 <div className="flex items-center gap-2">
                                   <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
-                                  {inv.status === "storniert" ? (
+                                  {PAYABLE_INVOICE_TYPES.has(inv.typ) && inv.status === "entwurf" ? (
+                                    // Zwischengespeichert, noch nicht ausgestellt — Status
+                                    // ändert sich nur über „Ausstellen" im Beleg.
+                                    <span className="text-xs font-medium text-muted-foreground">Entwurf</span>
+                                  ) : inv.status === "storniert" ? (
                                     <span className="text-xs font-medium text-red-700">
                                       Storniert{(inv as any).storno_nummer ? ` (${(inv as any).storno_nummer})` : ""}
                                     </span>

@@ -1,4 +1,5 @@
 import jsPDF from "jspdf";
+import { anzeigeNummer, istEntwurfsNummer } from "@/lib/rechnungsEntwurf";
 import autoTable from "jspdf-autotable";
 import type { InvoiceHtmlData, InvoiceHtmlItem, BankData } from "./invoiceHtml";
 import { type InvoiceLayoutSettings, DEFAULT_LAYOUT, hexToRgb } from "./invoiceLayoutTypes";
@@ -58,6 +59,8 @@ export async function generateInvoicePdf(
   const [acR, acG, acB] = hexToRgb(L.accent_color);
   const docCfg = getDocConfig(invoice.typ);
   const typLabel = docCfg.label;
+  // Zwischengespeicherte Rechnung: klar als Entwurf kennzeichnen.
+  const entwurfPrefix = istEntwurfsNummer(invoice.nummer) ? "ENTWURF – " : "";
   const isAngebot = docCfg.isAngebotLike;               // Angebot + AB: kein Zahlungsblock, Angebots-Closing
   const showLeistungsdatum = docCfg.showLeistungsdatum; // alle außer Angebot + AB
   const showFaelligAm = docCfg.showPaymentSection;      // nur Rechnungs-artige
@@ -248,7 +251,7 @@ export async function generateInvoicePdf(
   const datumFormatted = fmtDate(invoice.datum);
   const kundennummer = (invoice as any).kundennummer || "";
   const metaRows: [string, string][] = [
-    [`${typLabel} Nr.`, invoice.nummer || "–"],
+    [`${typLabel} Nr.`, anzeigeNummer(invoice.nummer) || "–"],
     ["Belegdatum", datumFormatted],
   ];
   if (invoice.kunde_uid) metaRows.push(["Ihre UID", invoice.kunde_uid]);
@@ -333,8 +336,8 @@ export async function generateInvoicePdf(
   pdf.setFontSize(13);
   pdf.setTextColor(0, 0, 0);
   const titleText = invoice.betreff
-    ? `${typLabel} – ${invoice.betreff}`
-    : typLabel;
+    ? `${entwurfPrefix}${typLabel} – ${invoice.betreff}`
+    : `${entwurfPrefix}${typLabel}`;
   // mehrzeilig möglich
   const titleLines = pdf.splitTextToSize(titleText, contentWidth);
   titleLines.forEach((line: string, i: number) => {
@@ -832,7 +835,7 @@ export async function generateInvoicePdf(
     renderMultilineText(closingText, 1);
     pdf.setFontSize(7.5);
     pdf.setTextColor(0, 0, 0);
-    renderMultilineText(`Bei E-Banking bitte als Zahlungsreferenz ${docCfg.label}snummer ${invoice.nummer || ""} und Kundennummer ${kundennummer || ""} eingeben.`, 4);
+    renderMultilineText(`Bei E-Banking bitte als Zahlungsreferenz ${docCfg.label}snummer ${anzeigeNummer(invoice.nummer)} und Kundennummer ${kundennummer || ""} eingeben.`, 4);
     pdf.setFontSize(9);
   } else {
     // Lieferschein

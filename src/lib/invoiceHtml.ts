@@ -2,6 +2,7 @@
 // Used both client-side (preview) and matches edge function output
 
 import QRCode from "qrcode";
+import { anzeigeNummer, istEntwurfsNummer } from "@/lib/rechnungsEntwurf";
 import { type InvoiceLayoutSettings, DEFAULT_LAYOUT } from "./invoiceLayoutTypes";
 import { getDocConfig } from "./documentTypes";
 import { buildAllgemeineAngabenRows } from "./allgemeineAngaben";
@@ -236,7 +237,7 @@ export function buildInvoiceHtml(
 
   const metaParts: string[] = [];
   metaParts.push(
-    `<div><span class="meta-label">${typLabel} Nr.</span><span class="meta-value">${invoice.nummer || "–"}</span></div>`
+    `<div><span class="meta-label">${typLabel} Nr.</span><span class="meta-value">${anzeigeNummer(invoice.nummer) || "–"}</span></div>`
   );
   metaParts.push(
     `<div><span class="meta-label">Datum</span><span class="meta-value">${datumFormatted}</span></div>`
@@ -343,7 +344,7 @@ export function buildInvoiceHtml(
       : "";
 
   return `<!DOCTYPE html>
-<html lang="de"><head><meta charset="utf-8"><title>${typLabel} ${invoice.nummer || "Vorschau"}</title>
+<html lang="de"><head><meta charset="utf-8"><title>${typLabel} ${anzeigeNummer(invoice.nummer) || "Vorschau"}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&display=swap" rel="stylesheet">
@@ -489,7 +490,7 @@ ${(invoice as any).custom_intro_text ? `<div style="margin-bottom:14px;font-size
 
 <!-- Document Title + Betreff (kept together for page breaks) -->
 <div style="page-break-inside:avoid;">
-<div class="doc-title">${typLabel}${invoice.nummer ? ` Nr.: ${invoice.nummer}` : ""}</div>
+<div class="doc-title">${istEntwurfsNummer(invoice.nummer) ? `ENTWURF – ${typLabel}` : `${typLabel}${invoice.nummer ? ` Nr.: ${invoice.nummer}` : ""}`}</div>
 ${invoice.betreff ? `<div style="margin-bottom:12px;font-size:10pt;white-space:pre-line;">${invoice.betreff.replace(/</g, "&lt;")}</div>` : ""}
 </div>
 

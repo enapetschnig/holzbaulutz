@@ -55,7 +55,8 @@ export function ProjektNachkalkulation({ projectId }: Props) {
 
       // --- Erlöse (netto) ---
       const alleBelege = ((invRes.data as any[]) || []).filter(i => i.status !== "storniert");
-      const rechnungen = alleBelege.filter(i => RECHNUNG_TYPEN.has(i.typ));
+      // Zwischengespeicherte (noch nicht ausgestellte) Rechnungen sind kein Erlös.
+      const rechnungen = alleBelege.filter(i => RECHNUNG_TYPEN.has(i.typ) && i.status !== "entwurf");
       const hatSR = rechnungen.some(i => i.typ === "schlussrechnung");
       // Wenn es eine Schlussrechnung gibt, deckt sie die Gesamtleistung ab —
       // Anzahlungsrechnungen NICHT zusätzlich zählen (sonst doppelt).

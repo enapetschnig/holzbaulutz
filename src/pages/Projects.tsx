@@ -98,7 +98,8 @@ const Projects = () => {
       const out: Record<string, { db: number; prozent: number | null }> = {};
       for (const pid of ids) {
         const belege = ((invRes.data as any[]) || []).filter(i => i.project_id === pid && i.status !== "storniert");
-        const invs = belege.filter(i => RTYP.has(i.typ));
+        // Rechnungs-Entwürfe (noch nicht ausgestellt) zählen nicht als Erlös.
+        const invs = belege.filter(i => RTYP.has(i.typ) && i.status !== "entwurf");
         const hatSR = invs.some(i => i.typ === "schlussrechnung");
         // Gutschriften mindern den Erlös (gleiche Regel wie Projekt-Nachkalkulation)
         const gutschriften = belege.filter(i => i.typ === "gutschrift").reduce((s, i) => s + (Number(i.netto_summe) || 0), 0);
