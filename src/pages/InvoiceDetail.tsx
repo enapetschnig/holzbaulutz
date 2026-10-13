@@ -718,32 +718,68 @@ export default function InvoiceDetail() {
         }
       }
 
-      // Schlussrechnung: Anzahlungen als negative BRUTTO-Zeilen anhängen.
-      // § 11 UStG (Endrechnung): Die vereinnahmten Teilentgelte UND die darauf
-      // entfallenden Steuerbeträge sind abzusetzen — deshalb weist die
-      // Abzugszeile die in der Anzahlung enthaltene USt explizit aus.
+      // Schlussrechnung: Anzahlungen unter den Positionen NETTO abziehen
+      // (Wunsch Holzbau Lutz 13.10.2026 — als Brutto-Zeile sah man nicht, dass
+      // es ein Bruttobetrag ist, und darunter stand der Netto-Gesamtbetrag).
+      // Die USt wird dann auf den verbleibenden Netto-Rest berechnet — das
+      // ergibt denselben Zahlbetrag und erfüllt § 11 UStG (Endrechnung: die
+      // Teilentgelte UND die darauf entfallende Steuer sind abgesetzt).
+      // Gleiches Muster wie bei der kumulierten Anzahlungsrechnung: negative
+      // MENGE, nicht negativer Preis (DB-Check invoice_items_preis_nonneg).
+      // Nur wenn die Anzahlung einen anderen USt-Satz hatte (oder Reverse
+      // Charge), bleibt es beim Brutto-Abzug — sonst stimmte die Steuer nicht.
       if (targetTyp === "schlussrechnung" && opts?.abzugIds && opts.abzugIds.length > 0) {
         const { data: abzugInvs } = await supabase
           .from("invoices")
-          .select("id, nummer, netto_summe, brutto_summe, mwst_betrag, mwst_satz, datum")
+          .select("id, nummer, netto_summe, brutto_summe, mwst_betrag, mwst_satz, reverse_charge, datum")
           .in("id", opts.abzugIds);
-        ((abzugInvs as any[]) || []).forEach((abz) => {
-          const brutto = Number(abz.brutto_summe) || 0;
-          const ustBetrag = Number(abz.mwst_betrag) || 0;
-          const ustSatz = Number(abz.mwst_satz) || 20;
-          nextItems.push({
-            position: nextItems.length + 1,
-            beschreibung: `Abzug Anzahlungsrechnung ${abz.nummer} vom ${new Date(abz.datum + "T12:00:00").toLocaleDateString("de-AT")} (brutto, darin enthaltene ${ustSatz}% USt: € ${ustBetrag.toFixed(2)})`,
-            kurztext: `Abzug ${abz.nummer}`,
-            langtext: "",
-            menge: 1,
-            einheit: "pausch.",
-            einzelpreis: -brutto,
-            rabatt_prozent: 0,
-            gesamtpreis: -brutto,
-            mwst_exempt: true,
+        const srSatz = Number(data.mwst_satz) || 20;
+        const srReverse = !!data.reverse_charge;
+        // Ein prozentualer Gesamtrabatt würde sonst auch auf die Abzüge
+        // wirken — deshalb als fixen Betrag auf die Leistungen festschreiben.
+        const rabattProzentQuelle = Number(data.rabatt_prozent) || 0;
+        if (rabattProzentQuelle > 0) {
+          const leistungNetto = nextItems
+            .filter(it => !it.mwst_exempt && !it.eventual)
+            .reduce((sum, it) => sum + (Number(it.gesamtpreis) || 0), 0);
+          const rabattFix = Math.round(leistungNetto * rabattProzentQuelle) / 100;
+          setForm(prev => ({ ...prev, rabatt_prozent: 0, rabatt_betrag: rabattFix }));
+        }
+        ((abzugInvs as any[]) || [])
+          .sort((a, b) => String(a.datum).localeCompare(String(b.datum)))
+          .forEach((abz) => {
+            const netto = Number(abz.netto_summe) || 0;
+            const brutto = Number(abz.brutto_summe) || 0;
+            const ustBetrag = Number(abz.mwst_betrag) || 0;
+            const ustSatz = Number(abz.mwst_satz) || 20;
+            const datum = new Date(abz.datum + "T12:00:00").toLocaleDateString("de-AT");
+            if (ustSatz === srSatz && !!abz.reverse_charge === srReverse) {
+              nextItems.push({
+                position: nextItems.length + 1,
+                beschreibung: `abzüglich Anzahlungsrechnung ${abz.nummer} vom ${datum} (netto)`,
+                kurztext: `Abzug ${abz.nummer}`,
+                langtext: "",
+                menge: -1,
+                einheit: "pausch.",
+                einzelpreis: netto,
+                rabatt_prozent: 0,
+                gesamtpreis: -netto,
+              });
+            } else {
+              nextItems.push({
+                position: nextItems.length + 1,
+                beschreibung: `Abzug Anzahlungsrechnung ${abz.nummer} vom ${datum} (brutto, darin enthaltene ${ustSatz}% USt: € ${ustBetrag.toFixed(2)})`,
+                kurztext: `Abzug ${abz.nummer}`,
+                langtext: "",
+                menge: 1,
+                einheit: "pausch.",
+                einzelpreis: -brutto,
+                rabatt_prozent: 0,
+                gesamtpreis: -brutto,
+                mwst_exempt: true,
+              });
+            }
           });
-        });
       }
 
       if (nextItems.length > 0) setItems(nextItems);
