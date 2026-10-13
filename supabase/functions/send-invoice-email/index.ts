@@ -82,11 +82,29 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return json({ eingerichtet: !!resendApiKey, domain, verifiziert, domainStatus, eintraege, faehigkeiten });
     }
 
-    // AUTH: nur angemeldete App-Nutzer (sonst offenes Mail-Relay).
+    // AUTH: nur angemeldete App-Nutzer (sonst offenes Mail-Relay) — oder
+    // serverseitig mit dem Service-Key (Testversand durch die Entwicklung).
     const token = (req.headers.get("Authorization") || "").replace("Bearer ", "");
     if (!token) return json({ error: "Nicht angemeldet" }, 401);
-    const { data: userData, error: authErr } = await supabaseAdmin.auth.getUser(token);
-    if (authErr || !userData?.user) return json({ error: "Ungültige Anmeldung" }, 401);
+    // Service-Key erkennen: nur er darf die Admin-API benutzen (der Wert in
+    // der Umgebung kann ein anderes Key-Format haben als der Aufrufer).
+    let istService = token === Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!istService && token.split(".").length === 3) {
+      try {
+        const rolle = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).role;
+        if (rolle === "service_role") {
+          const probe = createClient(Deno.env.get("SUPABASE_URL")!, token);
+          const { error } = await probe.auth.admin.listUsers({ page: 1, perPage: 1 });
+          istService = !error;
+        }
+      } catch { /* kein Service-Key */ }
+    }
+    if (!istService) {
+      const { data: userData, error: authErr } = await supabaseAdmin.auth.getUser(token);
+      if (authErr || !userData?.user) return json({ error: "Ungültige Anmeldung" }, 401);
+    }
+    // Testversand: Beleg NICHT als versendet vermerken (nur mit Service-Key).
+    const nurTest = istService && body?.nurTest === true;
 
     if (!resend) {
       return json({ error: "E-Mail-Versand ist noch nicht eingerichtet (RESEND_API_KEY fehlt)." }, 500);
@@ -143,8 +161,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // Kunden → "offen (versendet)".
     const update: Record<string, unknown> = { versendet_am: new Date().toISOString(), versendet_an: empfaenger.join(", ") };
     if (inv.typ === "angebot" && inv.status === "entwurf") update.status = "offen";
-    const { error: updErr } = await supabaseAdmin.from("invoices").update(update).eq("id", invoiceId);
-    if (updErr) console.error("Versand-Vermerk fehlgeschlagen:", updErr.message);
+    if (!nurTest) {
+      const { error: updErr } = await supabaseAdmin.from("invoices").update(update).eq("id", invoiceId);
+      if (updErr) console.error("Versand-Vermerk fehlgeschlagen:", updErr.message);
+    }
 
     return json({ success: true, id: (r as any)?.data?.id || null, status: update.status || inv.status, versendet_am: update.versendet_am });
   } catch (e) {
