@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -7,9 +8,11 @@ interface PageHeaderProps {
   title?: string;
   showBackButton?: boolean;
   backPath?: string;
+  /** Knöpfe rechts im (mitlaufenden) Seitenkopf, z.B. Zwischenspeichern/Ausstellen. */
+  aktionen?: ReactNode;
 }
 
-export function PageHeader({ title, showBackButton = true, backPath }: PageHeaderProps) {
+export function PageHeader({ title, showBackButton = true, backPath, aktionen }: PageHeaderProps) {
   const navigate = useNavigate();
 
   const handleBack = () => {
@@ -33,8 +36,13 @@ export function PageHeader({ title, showBackButton = true, backPath }: PageHeade
           {title && (
             <h1 className="text-lg sm:text-2xl font-bold truncate">{title}</h1>
           )}
+          {aktionen && (
+            <div className="ml-auto flex shrink-0 items-center gap-2" data-bildschirmfoto="aus">
+              {aktionen}
+            </div>
+          )}
           {/* Melde-Knopf immer rechts außen */}
-          <div className="ml-auto shrink-0">
+          <div className={`${aktionen ? "" : "ml-auto "}shrink-0`}>
             <AenderungswunschKnopf gestalt="kopf" />
           </div>
         </div>

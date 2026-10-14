@@ -3276,6 +3276,22 @@ export default function InvoiceDetail() {
         <PageHeader
           title={isNew ? `${typArticle} ${typLabel} erstellen` : istEntwurfsNummer(form.nummer) ? `${typLabel} – Entwurf` : `${typLabel} ${form.nummer}`}
           backPath="/invoices"
+          // Zwischenspeichern/Ausstellen auch OBEN im mitlaufenden Kopf —
+          // ganz unten am Seitenende wurden sie übersehen (Natalie 14.10.2026).
+          aktionen={!isLocked && LOCKED_TYPES.includes(form.typ) ? (
+            <>
+              <Button variant="outline" size="sm" onClick={() => handleSave({ alsEntwurf: true })} disabled={saving} className="gap-1.5"
+                title="Zwischenspeichern ohne Rechnungsnummer — später weiterbearbeiten">
+                <Save className="w-4 h-4" />
+                <span className="hidden sm:inline">{saving ? "Speichert..." : "Zwischenspeichern"}</span>
+              </Button>
+              <Button size="sm" onClick={() => handleSave()} disabled={saving} className="gap-1.5"
+                title="Fortlaufende Rechnungsnummer vergeben — danach nicht mehr bearbeitbar">
+                <Lock className="w-4 h-4" />
+                <span className="hidden sm:inline">Ausstellen</span>
+              </Button>
+            </>
+          ) : undefined}
         />
 
         <div className="space-y-6">
