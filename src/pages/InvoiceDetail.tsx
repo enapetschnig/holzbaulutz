@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, Lock, Link2, Clock3, BookOpen, Mail } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, Lock, Link2, Clock3, BookOpen, Mail, Minus } from "lucide-react";
 import { KatalogKalkulationPopover } from "@/components/KatalogKalkulationPopover";
 import { ZeilenKalkulationDialog } from "@/components/ZeilenKalkulationDialog";
 import { StundenlohnAnpassenDialog, neuerEinzelpreis, type StundenlohnUpdate } from "@/components/StundenlohnAnpassenDialog";
@@ -34,6 +34,8 @@ import { type InvoiceLayoutSettings, DEFAULT_LAYOUT, parseLayoutSettings } from 
 import { loadInvoiceLogo } from "@/lib/logoLoader";
 import { PageHeader } from "@/components/PageHeader";
 import { BelegMailDialog } from "@/components/BelegMailDialog";
+import { AbzugAnzahlungDialog } from "@/components/AbzugAnzahlungDialog";
+import { ZahlFeld } from "@/components/ZahlFeld";
 import { ToastAction } from "@/components/ui/toast";
 import { istEntwurfsNummer, neueEntwurfsNummer } from "@/lib/rechnungsEntwurf";
 import { CustomerSelect, type CustomerData } from "@/components/CustomerSelect";
@@ -336,6 +338,7 @@ export default function InvoiceDetail() {
   const [chainChildren, setChainChildren] = useState<ChainDoc[]>([]);
   const [invoiceLayout, setInvoiceLayout] = useState<InvoiceLayoutSettings>(DEFAULT_LAYOUT);
   const [mailOpen, setMailOpen] = useState(false);
+  const [abzugOpen, setAbzugOpen] = useState(false);
   // Index der Angebotszeile, deren Kalkulation gerade angepasst wird.
   const [kalkZeileIdx, setKalkZeileIdx] = useState<number | null>(null);
   const [newProjectName, setNewProjectName] = useState("");
@@ -701,9 +704,8 @@ export default function InvoiceDetail() {
             .sort((a, b) => String(a.datum).localeCompare(String(b.datum)))
             .forEach((abz, i) => {
               const netto = Number(abz.netto_summe) || 0;
-              // Abzug als negative MENGE (nicht negativer Preis) — der
-              // DB-Check invoice_items_preis_nonneg erlaubt negative
-              // Einzelpreise nur für mwst_exempt-Zeilen (SR-Brutto-Abzüge).
+              // Abzug als negative MENGE (nicht negativer Preis) —
+              // einheitliche Darstellung „-1 pausch." wie in der Schlussrechnung.
               nextItems.push({
                 position: i + 2,
                 beschreibung: `abzüglich ${i + 1}. Anzahlungsrechnung ${abz.nummer} vom ${new Date(abz.datum + "T12:00:00").toLocaleDateString("de-AT")} (netto)`,
@@ -738,7 +740,7 @@ export default function InvoiceDetail() {
       // ergibt denselben Zahlbetrag und erfüllt § 11 UStG (Endrechnung: die
       // Teilentgelte UND die darauf entfallende Steuer sind abgesetzt).
       // Gleiches Muster wie bei der kumulierten Anzahlungsrechnung: negative
-      // MENGE, nicht negativer Preis (DB-Check invoice_items_preis_nonneg).
+      // MENGE, nicht negativer Preis (einheitliche Darstellung „-1 pausch.").
       // Nur wenn die Anzahlung einen anderen USt-Satz hatte (oder Reverse
       // Charge), bleibt es beim Brutto-Abzug — sonst stimmte die Steuer nicht.
       if (targetTyp === "schlussrechnung" && opts?.abzugIds && opts.abzugIds.length > 0) {
@@ -1385,10 +1387,12 @@ export default function InvoiceDetail() {
     if (!loading) setIsDirty(true);
     setItems(prev => {
       const updated = [...prev];
-      // Sanitize numeric fields: NaN, Infinity, negative → 0
+      // Sanitize numeric fields: NaN/Infinity → 0. Negative Werte sind
+      // erlaubt (Nachlass, Abzug, Gutschrift-Zeile — Holzbau Lutz 23.10.2026);
+      // der Beleg als Ganzes muss beim Speichern trotzdem > 0 sein.
       if (field === "menge" || field === "einzelpreis") {
         const n = Number(value);
-        value = isFinite(n) && n >= 0 ? n : 0;
+        value = isFinite(n) ? n : 0;
       }
       if (field === "rabatt_prozent") {
         const n = Number(value);
@@ -4951,11 +4955,12 @@ export default function InvoiceDetail() {
                       }).slice(0, 20) : [];
 
                       const isExempt = !!(item as any).mwst_exempt;
-                      // Auto-Abzugszeilen (kumulierte AR: negative Menge) wie
-                      // exempt-Zeilen sperren — der Mengen-Clamp (min 0) würde
-                      // aus -1 sonst irreparabel 0/positiv machen.
-                      const istAbzug = Number(item.menge) < 0;
-                      const zeileGesperrt = isExempt || istAbzug;
+                      // Minus-Zeilen (Abzug, Nachlass) farblich hervorheben. Sie
+                      // bleiben bearbeitbar — Menge/Preis nehmen jetzt auch
+                      // negative Werte an. Gesperrt sind nur die automatischen
+                      // MwSt-freien Brutto-Abzüge.
+                      const istAbzug = (Number(item.gesamtpreis) || 0) < 0;
+                      const zeileGesperrt = isExempt;
                       return (
                       <TableRow key={idx} className={isExempt ? "bg-rose-50/60 border-l-4 border-l-rose-300" : istAbzug ? "bg-amber-50/50 border-l-4 border-l-amber-300" : ""}>
                         <TableCell className="text-muted-foreground text-xs align-top">
@@ -5080,7 +5085,7 @@ export default function InvoiceDetail() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <Input type="number" value={item.menge} onChange={(e) => updateItem(idx, "menge", Number(e.target.value))} min={0} step={1} className="text-right h-10 md:h-9" disabled={zeileGesperrt} title="Pfeile zählen in ganzen Schritten; Kommawerte (z.B. 2,5) kannst du direkt eintippen." />
+                          <ZahlFeld value={Number(item.menge) || 0} onChange={(n) => updateItem(idx, "menge", n)} step={1} className="text-right h-10 md:h-9" disabled={zeileGesperrt} title="Pfeile zählen in ganzen Schritten; Kommawerte (z.B. 2,5) und Minus (z.B. -1) kannst du direkt eintippen." />
                         </TableCell>
                         <TableCell>
                           <Select value={item.einheit || "Stk."} onValueChange={(v) => updateItem(idx, "einheit", v)} disabled={zeileGesperrt}>
@@ -5093,7 +5098,7 @@ export default function InvoiceDetail() {
                           </Select>
                         </TableCell>
                         <TableCell>
-                          <Input type="number" value={item.einzelpreis} onChange={(e) => updateItem(idx, "einzelpreis", Number(e.target.value))} step={0.01} className="text-right h-10 md:h-9" disabled={isExempt || !!item.ist_kalkuliert} title={item.ist_kalkuliert ? "Preis wird kalkuliert — über das Rechner-Symbol anpassen" : undefined} />
+                          <ZahlFeld value={Number(item.einzelpreis) || 0} onChange={(n) => updateItem(idx, "einzelpreis", n)} step={0.01} className="text-right h-10 md:h-9" disabled={isExempt || !!item.ist_kalkuliert} title={item.ist_kalkuliert ? "Preis wird kalkuliert — über das Rechner-Symbol anpassen" : "Für Abzüge/Nachlass einfach ein Minus davor, z.B. -500"} />
                         </TableCell>
                         <TableCell>
                           <Input type="number" value={item.rabatt_prozent || ""} onChange={(e) => updateItem(idx, "rabatt_prozent", Number(e.target.value))} min={0} max={100} step={0.5} className="text-right h-10 md:h-9" placeholder="0" disabled={zeileGesperrt} />
@@ -5205,6 +5210,14 @@ export default function InvoiceDetail() {
                             <Plus className="w-3.5 h-3.5" />
                             Position hinzufügen
                           </Button>
+                          {/* Anzahlung, die außerhalb der App gestellt wurde, von
+                              Hand abziehen (Minus ist im Preisfeld nicht möglich). */}
+                          {LOCKED_TYPES.includes(form.typ) && (
+                            <Button onClick={() => setAbzugOpen(true)} variant="ghost" size="sm" className="gap-1 text-muted-foreground">
+                              <Minus className="w-3.5 h-3.5" />
+                              Anzahlung / Teilzahlung abziehen
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     )}
@@ -5545,6 +5558,38 @@ export default function InvoiceDetail() {
             }}
           />
         )}
+
+        <AbzugAnzahlungDialog
+          open={abzugOpen}
+          onOpenChange={setAbzugOpen}
+          mwstSatz={Number(form.mwst_satz) || 0}
+          reverseCharge={!!(form as any).reverse_charge}
+          onUebernehmen={(z) => {
+            const zeile: InvoiceItem = {
+              position: 0,
+              beschreibung: z.beschreibung,
+              kurztext: z.kurztext,
+              langtext: "",
+              menge: -1,
+              einheit: "pausch.",
+              einzelpreis: z.netto,
+              rabatt_prozent: 0,
+              gesamtpreis: -z.netto,
+            };
+            setItems(prev => {
+              // Eine schon angelegte, noch leere Abzugszeile ("abzügl. …" mit
+              // € 0) ersetzen statt eine zweite anzuhängen; leere Zeile am
+              // Ende ebenfalls weiterverwenden.
+              const leer = prev.findIndex(it => Math.abs(Number(it.gesamtpreis) || 0) < 0.005
+                && (/^\s*abz/i.test(it.beschreibung || "") || !(it.beschreibung || "").trim()));
+              const next = leer >= 0
+                ? prev.map((it, i) => (i === leer ? { ...zeile, position: it.position } : it))
+                : [...prev, { ...zeile, position: prev.length + 1 }];
+              return next;
+            });
+            if (!loading) setIsDirty(true);
+          }}
+        />
 
         {/* Template Picker Dialog — Suche + Filter + Multi-Select */}
         <KatalogNachschlagen
