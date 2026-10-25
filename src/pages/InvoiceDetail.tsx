@@ -1,3 +1,4 @@
+import { ohneSkripte } from "@/lib/druckfenster";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -2818,7 +2819,7 @@ export default function InvoiceDetail() {
       const text = await data.text();
       const printWindow = window.open("", "_blank");
       if (printWindow) {
-        printWindow.document.write(text);
+        printWindow.document.write(ohneSkripte(text));
         printWindow.document.close();
       }
     }
