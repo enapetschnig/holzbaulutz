@@ -7,6 +7,56 @@ Zeiterfassung.
 > Dieses Dokument beschreibt nur, **was ist** — es enthält keine Vorgaben,
 > wie gearbeitet werden soll.
 
+## Kundenakte (Stand 29.10.2026)
+
+**Kunde:** Holzbau Lutz OG – Zimmerei & Holzbau, Am Sportplatz 3, 6642 Stanzach (Tirol) · info@holzbau-lutz.at ·
+UID ATU67426948 (in `app_settings.firmen_uid`). Kunden: rund 140 Privat- und Geschäftskunden, v. a. Tirol
+(Seed `supabase/seed/02_customers.sql`). Angebote nach ÖNORM B2110, „Angebot Zimmermannsarbeiten“, 1 Woche gültig.
+
+**Entstehung:** Ende Mai 2026 aus der BKS-/Monti-App umgebaut (Rebrand, Kalender/WhatsApp/Protokolle entfernt),
+eigenes Supabase-Projekt, Kalkulation nach der Kunden-Excel. Seitdem laufend Wünsche aus dem Büro.
+
+**Wer benutzt die App:**
+| Wer | Rolle | Was |
+|---|---|---|
+| Natalie Frischmann | Büro | schreibt Angebote/Rechnungen, meldet fast alle Wünsche über den Melde-Knopf (app_key `holzbaulutz`) |
+| Michael Lutz | mitarbeiter (ausdrücklich, Christoph 16.07.) | Zeiterfassung, Regie-/Bautagesberichte |
+| Monteure | mitarbeiter / vorarbeiter | am Handy: Stunden, Berichte – sehen keine Zahlen |
+| Christoph (`napetschnig.chris@gmail.com`) | Administrator | baut und betreut die App |
+
+Antworten an Natalie beginnen mit „Liebe Natalie“ / „Hallo Natalie“, kurz, mit Menüpfad
+(z. B. „Rechnungen & Angebote → Angebot → Umwandeln in … Schlussrechnung“).
+
+**Fachbegriffe:**
+| Begriff | Bedeutung |
+|---|---|
+| Regiebericht / Regiestunden | Stundenlohn-Arbeiten außerhalb des Angebots; Tabelle `disturbances` |
+| Mannstunden | Stunden × Anzahl Mitarbeiter im Regiebericht |
+| AR / SR / kumulierte TR | Anzahlungs-, Schluss-, kumulierte Teilrechnung (Leistungsstand %) |
+| EV | Eventualposition – nur Einheitspreis, zählt in keiner Summe |
+| Position / Material / Stundensatz | Katalog in „Materialien & Kalkulation“ (`invoice_templates`) |
+| Stundenabgleich | Angebotsstunden vs. gebuchte Stunden je Projekt |
+| Nachkalkulation | Erlös − Lohn − Material − Fremd je Projekt (nur Admin) |
+| Firma (Arbeitsort) | intern, nicht verrechenbar; in der DB `werkstatt` |
+| Mittellohn / Regiesatz | 52 €/h / 50 €/h (Excel) |
+
+**Feste Regeln und No-Gos:**
+- Mitarbeiter sehen keine Zahlen (EK, Preise, Zahlungen, Kalkulation) – in RLS abgesichert, nicht nur in der Oberfläche.
+- „Preise aktualisieren“ zieht bewusst ALLE Angebotspreise auf den Katalog (Christoph 16.07.: „Das ist schon bewusst so
+  gemacht“); stattdessen automatische Angebots-Revision. Keinen „Schutz verhandelter Preise“ einbauen.
+- Ein Projekt je Auftrag; gebucht wird aufs Projekt, nicht aufs Angebot.
+- Nach Änderungen keine browser-use-Durchläufe (Christoph 17.07.: „hör auf mit browser use ich habe dir das problem ja
+  eh geschildert“) – Typecheck + Build + Push genügen, Christoph testet selbst. Ausnahme: ausdrücklich verlangt oder RLS-Beweis.
+- Echte Kundendaten (z. B. Projekt Wolfgang Bauer, Häsele) nur lesen; Testdaten (QA-User, Belege, Nummernkreise) restlos aufräumen.
+- Keine Mails an echte Kunden beim Testen.
+
+**Stand-Hinweis (geprüft 29.10.2026):** Einige Zahlen unten sind vom April/Mai: inzwischen 209 Migrationen
+(letzte `20261025170000_signup_bootstrap_absichern.sql`) und 18 Edge Functions (neu u. a. `parse-voice-taetigkeiten`,
+`send-invoice-email`, `sprache-zu-text`, `wunsch-datei`). Bautagesberichte sind aktiv. Die CLI-Fehlverknüpfung besteht
+im Haupt-Ordner WEITER: `supabase/.temp/project-ref` = `zbxizeirecoipqvxymdx` (monti.pro) – CLI-Befehle immer mit
+`--project-ref rjrknonzqwttmcpgjamw`. Produktion: `lutz.handwerkapp.at`, Vercel-Projekt `holzbaulutz`; ohne
+`vercel.json` liefert jede Unterseite beim Direktaufruf 404 (geprüft: `/invoices` → 404).
+
 ---
 
 ## Stack
@@ -209,3 +259,38 @@ Ergänzend: `useProjectStatuses`, `useEinheiten`, `lib/statusColors`,
 - **Meiste Migrations** aller Apps (200)
 - **`vorlagefunktionenapp/`** — vollständige Kopie einer anderen App als
   Nachschlagewerk (identischer Stand wie in monti.pro). Gehört nicht zum Build.
+
+---
+
+## Technik-Eckdaten (ergänzt 29.10.2026)
+
+- Supabase `rjrknonzqwttmcpgjamw` · GitHub `enapetschnig/holzbaulutz` · Vercel-Projekt `holzbaulutz` →
+  `lutz.handwerkapp.at`. Push auf `main` = Deploy. Commits mit `napetschnig.chris@gmail.com`, sonst baut Vercel nicht.
+- Gates vor Commit: `npx tsc -p tsconfig.app.json --noEmit` (Baseline 21 alte Fehler, keine neuen; Stand Aug. 2026)
+  und `npm run build` (vite prüft keine Typen). Ein `npm run check` gibt es hier nicht.
+- Migrationen: Datei in `supabase/migrations/`, eingespielt über die Supabase-Management-API
+  (`POST /v1/projects/rjrknonzqwttmcpgjamw/database/query`, Schlüssel aus `~/.config/hw/zugangsdaten.env`, nie ausgeben;
+  Browser-User-Agent nötig, sonst Cloudflare 1010). NICHT `supabase db push` (CLI-Link zeigt auf monti.pro).
+- Edge Functions: `npx supabase functions deploy <name> --project-ref rjrknonzqwttmcpgjamw`.
+  Secrets nur als Supabase-Secrets (Resend `RESEND_API_KEY`/`RESEND_FROM_EMAIL`, OpenAI, Twilio) – nie ins Frontend/Git.
+- PWA: nach einem Update sieht der Nutzer Neues erst nach Neuladen bzw. App neu öffnen.
+
+## Wissen nach Thema
+
+| Thema | Datei | Wann lesen |
+|---|---|---|
+| Kalkulation, Katalog, Preise aktualisieren, Revisionen | `.claude/rules/kalkulation-katalog.md` | „Materialien & Kalkulation“, Positionen/Komponenten, Lieferanten |
+| Angebot/Rechnung, AR/SR, Entwurf, E-Mail-Versand, Nummern, E-Rechnung | `.claude/rules/angebot-rechnung.md` | Arbeit an `InvoiceDetail`, Belegliste, PDF |
+| Stundenabgleich, Nachkalkulation | `.claude/rules/stundenabgleich-nachkalkulation.md` | Projektübersicht, Startseiten-Widget, Eingangsrechnung → Projekt |
+| Regie- und Bautagesberichte | `.claude/rules/berichte-regie-bautagesbericht.md` | Berichtsformulare, Tätigkeiten, Diktat, Berichts-PDF |
+| Zeiterfassung, Rollen/Rechte, Registrierung | `.claude/rules/zeiterfassung-und-rollen.md` | Stunden, Urlaub, Mitarbeiter-Sicht, RLS, Installation |
+
+**Verlauf:** Ein `JOURNAL.md` gibt es hier (noch) nicht; die Historie steht in ausführlichen Commit-Texten
+(`git log --grep="<Stichwort>"`). `AGENTS.md` ist eine exakte Kopie dieser Datei (für Codex); bei Änderungen beide gleich halten.
+
+## Wissen ablegen (für jede KI – auch den Roboter)
+- Diese Datei ist die kurze Kundenakte und bleibt unter 25 KB. Hier nur: wer der Kunde ist, feste Regeln, Technik, Index.
+- Neue Erkenntnis, Fallstrick oder Entscheidung zu einem Thema → in die passende Datei unter `.claude/rules/`
+  (mit Datum und, wenn von Christoph/Kunde, dem Zitat). Gibt es kein passendes Thema: neue Datei mit `paths:` auf die
+  betroffenen Code-Ordner anlegen und oben im Index eintragen.
+- Ausführliche Protokolle, Testberichte, Abläufe → `JOURNAL.md` oder `research_notes/`, nicht hierher.
