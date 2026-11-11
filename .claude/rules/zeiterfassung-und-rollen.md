@@ -42,3 +42,5 @@ paths:
 - SMS-Einladung verlinkt auf die Wurzel-URL, nicht `/auth` – Unterseiten liefern beim Hoster 404 (kein `vercel.json`).
 - Offen seit August: Eine Mitarbeiterin mit Samsung-Browser bekommt die App nicht auf den Startbildschirm;
   `InstallPromptDialog` hat noch keine Samsung-Internet-Anleitung.
+
+- Supabase-Fehlerprotokoll 11.11.2026: `column profiles.role does not exist` kam aus `ContactHistoryTimeline` (Admin-Erkennung las `profiles.role`) → auf `user_roles.role = 'administrator'` umgestellt; Rolle immer aus `user_roles` lesen. `relation "supabase_migrations.schema_migrations" does not exist` ist harmlos: Migrationen laufen hier über die Management-API, das Schema gibt es nicht; die Abfrage kommt von Werkzeugen (Dashboard/CLI/MCP „Migrationen auflisten“), nicht aus der App.

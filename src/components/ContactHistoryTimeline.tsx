@@ -69,14 +69,13 @@ export function ContactHistoryTimeline({ customerId, projectId }: Props) {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
       setCurrentUserId(user.id);
-      const { data: profile } = await supabase
-        .from("profiles")
+      // Rolle steht in user_roles (profiles hat keine Spalte "role")
+      const { data: roleRow } = await supabase
+        .from("user_roles")
         .select("role")
-        .eq("id", user.id)
-        .single();
-      if (profile && (profile as { role: string }).role === "admin") {
-        setIsAdmin(true);
-      }
+        .eq("user_id", user.id)
+        .maybeSingle();
+      setIsAdmin(roleRow?.role === "administrator");
     }
   };
 
