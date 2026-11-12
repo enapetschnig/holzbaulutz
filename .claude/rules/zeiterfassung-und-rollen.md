@@ -44,3 +44,12 @@ paths:
   `InstallPromptDialog` hat noch keine Samsung-Internet-Anleitung.
 
 - Supabase-Fehlerprotokoll 11.11.2026: `column profiles.role does not exist` kam aus `ContactHistoryTimeline` (Admin-Erkennung las `profiles.role`) → auf `user_roles.role = 'administrator'` umgestellt; Rolle immer aus `user_roles` lesen. `relation "supabase_migrations.schema_migrations" does not exist` ist harmlos: Migrationen laufen hier über die Management-API, das Schema gibt es nicht; die Abfrage kommt von Werkzeugen (Dashboard/CLI/MCP „Migrationen auflisten“), nicht aus der App.
+
+## Grundtests (12.11.2026, `tests/roboter/2026-11-12-grund-*.spec.ts`)
+- Anmelden je Rolle, Seitenrechte nach `role_permissions`, „keine Zahlen“ per RLS, Stunden (Baustelle/Firma), Angebot +
+  Rechnung (Entwurf → Ausstellen) mit PDF, Bautagesbericht mit PDF im Projektordner. Laufen nur gegen die Testumgebung;
+  Aufruf und `supabase functions serve` stehen in `tests/roboter/grundtest-hilfe.ts`.
+- Fund dabei: `profiles` war ohne Anmeldung lesbar (Regel „Users can view all profiles“ galt für `public`) → seit
+  Migration `20261112100000` nur noch `authenticated`. Neue Regeln nie `TO public` mit `USING (true)` anlegen.
+- „Durchgeführte Arbeit *“ im Bautagesbericht ist Pflichtfeld (`required`) – die Ableitung aus den Tätigkeiten bei
+  leerem Feld im Code greift darum nie (bewusst nicht geändert).
