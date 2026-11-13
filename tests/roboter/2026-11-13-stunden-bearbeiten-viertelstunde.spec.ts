@@ -62,7 +62,8 @@ test("Zeiterfassung: Viertelstunden buchen, Eintrag auf anderen Tag verschieben 
   await dialog.getByRole("button", { name: "45 Min", exact: true }).click();
   await expect(dialog).toContainText("3.75 h");
   await dialog.getByRole("button", { name: "Speichern" }).click();
-  await expect(page.getByText("verschoben").first()).toBeVisible({ timeout: 10_000 });
+  await expect(dialog).toBeHidden({ timeout: 10_000 }); // schließt erst nach erfolgreichem Speichern
+  await expect(page.getByText(/auf .* verschoben/).first()).toBeVisible();
   await expect(page.getByText("Noch keine Einträge für diesen Tag")).toBeVisible();
   e = await dienst<any[]>(`/rest/v1/time_entries?id=eq.${id}&select=*`);
   expect(e[0].datum).toBe(ziel);
@@ -77,6 +78,43 @@ test("Zeiterfassung: Viertelstunden buchen, Eintrag auf anderen Tag verschieben 
   await zeile.getByRole("button").click();
   await expect(page.getByRole("dialog").getByLabel("Datum")).toHaveValue(ziel);
 
+  expect(w.abstuerze).toEqual([]);
+  expect(w.abgelehnt).toEqual([]);
+});
+
+// Nachprüfung 13.11.: Teilzeit-Abwesenheit blockiert das Verschieben nicht; ein altes Pausenfenster
+// (pause_start/pause_end) wird beim Ändern der Pause entfernt, sonst zeigt die Stundenauswertung die alte Pause.
+test("Bearbeiten: auf Tag mit Teilzeit-Abwesenheit verschieben, altes Pausenfenster fällt weg", async ({ page }) => {
+  const ma = await konto("mitarbeiter");
+  const heute = new Date();
+  const tag = iso(heute);
+  const d1 = new Date(heute); d1.setDate(heute.getDate() <= 3 ? heute.getDate() + 3 : heute.getDate() - 3);
+  const ziel = iso(d1);
+  for (const t of [tag, ziel]) await dienst(`/rest/v1/time_entries?user_id=eq.${ma.id}&datum=eq.${t}`, "DELETE");
+  const [alt] = await dienst<any[]>("/rest/v1/time_entries", "POST", {
+    user_id: ma.id, datum: tag, taetigkeit: "ZZTEST Altbestand", stunden: 8, start_time: "07:00", end_time: "16:00",
+    pause_minutes: 60, pause_start: "12:00", pause_end: "13:00", location_type: "werkstatt",
+  });
+  await dienst("/rest/v1/time_entries", "POST", {
+    user_id: ma.id, datum: ziel, taetigkeit: "Zeitausgleich", stunden: 1.5, start_time: "16:30", end_time: "18:00",
+    pause_minutes: 0, location_type: "werkstatt", is_full_day: false,
+  });
+  const w = wache(page);
+  await anmelden(page, ma);
+  await page.goto(`${APP}/time-tracking`);
+  await page.getByRole("button", { name: "Eintrag bearbeiten" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Datum").fill(ziel);
+  await dialog.getByRole("button", { name: "30 Min", exact: true }).click();
+  await dialog.getByRole("button", { name: "Speichern" }).click();
+  await expect(dialog).toBeHidden({ timeout: 10_000 }); // schließt erst nach erfolgreichem Speichern
+  await expect(page.getByText(/auf .* verschoben/).first()).toBeVisible();
+  const [e] = await dienst<any[]>(`/rest/v1/time_entries?id=eq.${alt.id}&select=*`);
+  expect(e.datum).toBe(ziel);
+  expect(e.pause_minutes).toBe(30);
+  expect(Number(e.stunden)).toBe(8.5);
+  expect(e.pause_start).toBeNull();
+  expect(e.pause_end).toBeNull();
   expect(w.abstuerze).toEqual([]);
   expect(w.abgelehnt).toEqual([]);
 });

@@ -33,6 +33,8 @@ type Eintrag = {
   start_time: string | null;
   end_time: string | null;
   pause_minutes: number | null;
+  pause_start: string | null;
+  pause_end: string | null;
   stunden: number;
   taetigkeit: string | null;
   notizen: string | null;
@@ -86,7 +88,7 @@ export function StundenEintragBearbeitenDialog({ entryId, open, onClose, onSaved
     (async () => {
       const { data, error } = await supabase
         .from("time_entries")
-        .select("id, user_id, datum, start_time, end_time, pause_minutes, stunden, taetigkeit, notizen, disturbance_id")
+        .select("id, user_id, datum, start_time, end_time, pause_minutes, pause_start, pause_end, stunden, taetigkeit, notizen, disturbance_id")
         .eq("id", entryId)
         .maybeSingle();
       if (abbruch) return;
@@ -174,7 +176,7 @@ export function StundenEintragBearbeitenDialog({ entryId, open, onClose, onSaved
     // sich nicht überschneiden (gleiche Logik wie in der Zeiterfassung)
     const { data: andere, error: ladeFehler } = await supabase
       .from("time_entries")
-      .select("id, start_time, end_time, taetigkeit")
+      .select("id, start_time, end_time, taetigkeit, is_full_day")
       .eq("user_id", original.user_id)
       .eq("datum", form.datum)
       .neq("id", original.id);
@@ -183,7 +185,10 @@ export function StundenEintragBearbeitenDialog({ entryId, open, onClose, onSaved
       toast({ variant: "destructive", title: "Fehler", description: "Einträge des Tages konnten nicht geprüft werden" });
       return;
     }
-    const sonder = (andere || []).find((a: any) => SONDER_TAETIGKEITEN.has(a.taetigkeit || ""));
+    // Nur GANZTÄGIGE Abwesenheit blockiert den Tag (wie in der Zeiterfassung);
+    // Teilzeit-Abwesenheit (is_full_day=false) läuft über den Überschneidungs-Check.
+    // NULL = Altbestand → als ganztägig behandeln.
+    const sonder = ((andere || []) as any[]).find((a: any) => SONDER_TAETIGKEITEN.has(a.taetigkeit || "") && a.is_full_day !== false);
     if (sonder && datumGeaendert) {
       setSaving(false);
       toast({ variant: "destructive", title: "Tag blockiert", description: `Am ${format(parseISO(form.datum), "dd.MM.yyyy")} ist bereits ${sonder.taetigkeit} eingetragen` });
@@ -204,6 +209,14 @@ export function StundenEintragBearbeitenDialog({ entryId, open, onClose, onSaved
       }
     }
 
+    // Altes Pausenfenster (pause_start/pause_end, z. B. 12:00–13:00) zeigen
+    // Stundenauswertung und Projekt-Stundenbericht VOR pause_minutes an —
+    // ändern sich Zeiten oder Pause, gilt das Fenster nicht mehr.
+    const pauseFensterBleibt = mitUhrzeit
+      && form.start_time === original.start_time
+      && form.end_time === original.end_time
+      && (form.pause_minutes || 0) === (original.pause_minutes || 0);
+
     const { data: geaendert, error } = await supabase
       .from("time_entries")
       .update({
@@ -212,6 +225,7 @@ export function StundenEintragBearbeitenDialog({ entryId, open, onClose, onSaved
         start_time: mitUhrzeit ? form.start_time : original.start_time,
         end_time: mitUhrzeit ? form.end_time : original.end_time,
         pause_minutes: mitUhrzeit ? (form.pause_minutes || 0) : (original.pause_minutes || 0),
+        ...(mitUhrzeit && !pauseFensterBleibt ? { pause_start: null, pause_end: null } : {}),
         stunden: Math.round(stunden * 100) / 100,
       } as any)
       .eq("id", original.id)

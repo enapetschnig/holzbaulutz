@@ -59,5 +59,7 @@ paths:
 ## Eintrag bearbeiten & Viertelstunden (13.11.2026, Wünsche Natalie)
 - Eigene Einträge bearbeitet man in Zeiterfassung (Stift bei „Bereits gebuchte Zeiten“) und „Meine Stunden“ über denselben
   Dialog `StundenEintragBearbeitenDialog` – inkl. **Datum verschieben**; nur im aktuellen Monat, keine Abwesenheiten, nicht auf
-  einen Tag mit Urlaub/Krank…; aus Berichten gespiegelte Stunden (`Bautagesbericht-Zuordnung:`/`disturbance_id`) behalten ihr Datum.
+  einen Tag mit GANZTÄGIGER Abwesenheit (Teilzeit-Abwesenheit `is_full_day=false` nur Überschneidungs-Check, wie in der
+  Zeiterfassung); ändern sich Zeiten/Pause, werden alte `pause_start`/`pause_end` geleert (Stundenauswertung zeigt das Fenster vor
+  `pause_minutes`); aus Berichten gespiegelte Stunden (`Bautagesbericht-Zuordnung:`/`disturbance_id`) behalten ihr Datum.
 - Beginn/Ende und Pause im Viertelstunden-Takt (`lib/zeitraster.ts`, Pausen 0–2 h); Admin-Dialoge in der Stundenauswertung haben freie Uhrzeit.
