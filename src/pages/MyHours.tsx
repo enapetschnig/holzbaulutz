@@ -1,17 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Clock, Building2, Hammer, Pencil, Trash2, TrendingUp, Wallet } from "lucide-react";
+import { ArrowLeft, Clock, Building2, Hammer, Pencil, TrendingUp, Wallet } from "lucide-react";
 import { aggregateByDay, totalAutoSaldo, formatSaldo, SONDER_TAETIGKEITEN, stundenAufteilung, sonderzeitenText } from "@/lib/hoursAccounting";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { StundenEintragBearbeitenDialog } from "@/components/StundenEintragBearbeitenDialog";
 
 type TimeEntry = {
   id: string;
@@ -31,16 +28,13 @@ type TimeEntry = {
 
 const MyHours = () => {
   const navigate = useNavigate();
-  const { toast } = useToast();
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
-  const [editingEntry, setEditingEntry] = useState<TimeEntry | null>(null);
-  const [showEditDialog, setShowEditDialog] = useState(false);
-  const [savingEdit, setSavingEdit] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
   // Stundenkonto-Saldo: live aus ALLEN time_entries des Mitarbeiters
   // berechnet (kein Stichtag), plus manuelle Korrekturen aus
   // time_accounts.balance_hours.
@@ -115,128 +109,6 @@ const MyHours = () => {
   // Weiterbildung) verändern Zeitkonto bzw. Saldo-Neutralität — Mitarbeiter
   // dürfen sie nicht selbst bearbeiten oder löschen.
   const isSpecialEntry = (taetigkeit: string) => SONDER_TAETIGKEITEN.has(taetigkeit);
-
-  const handleUpdateEntry = async () => {
-    if (!editingEntry || savingEdit) return;
-
-    // Sonderzeit-Einträge sind für Mitarbeiter gesperrt — sonst ginge das
-    // Zeitkonto/der Saldo aus dem Ruder (z.B. ZA ohne Rückbuchung)
-    const original = entries.find(e => e.id === editingEntry.id);
-    if (original && isSpecialEntry(original.taetigkeit)) {
-      toast({ variant: "destructive", title: "Nicht erlaubt", description: "Abwesenheits-/ZA-Einträge können nur vom Admin geändert werden" });
-      return;
-    }
-
-    // Freitext darf keinen Sonderzeit-Namen annehmen — sonst würde der
-    // Eintrag im Saldo plötzlich neutral gerechnet
-    const neueTaetigkeit = (editingEntry.taetigkeit || "").trim();
-    if (Array.from(SONDER_TAETIGKEITEN).some(s => s.toLowerCase() === neueTaetigkeit.toLowerCase())) {
-      toast({ variant: "destructive", title: "Ungültige Tätigkeit", description: `"${neueTaetigkeit}" ist für Abwesenheiten reserviert — bitte eine andere Bezeichnung wählen` });
-      return;
-    }
-
-    // Validierung: Ende > Start, Pause < Arbeitszeit, keine Überschneidung
-    // mit den anderen Einträgen desselben Tags (gleiche Logik wie in der
-    // Zeiterfassung: startA < endB && startB < endA)
-    const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
-    if (editingEntry.start_time && editingEntry.end_time) {
-      const startMin = toMin(editingEntry.start_time);
-      const endMin = toMin(editingEntry.end_time);
-      if (endMin <= startMin) {
-        toast({ variant: "destructive", title: "Fehler", description: "Endzeit muss nach Startzeit liegen" });
-        return;
-      }
-      const pause = editingEntry.pause_minutes || 0;
-      if (pause >= endMin - startMin) {
-        toast({ variant: "destructive", title: "Fehler", description: `Pause (${pause} Min.) ist länger als die Arbeitszeit (${endMin - startMin} Min.)` });
-        return;
-      }
-      const others = entries.filter(e => e.id !== editingEntry.id && e.datum === editingEntry.datum && e.start_time && e.end_time);
-      for (const other of others) {
-        const oStart = toMin(other.start_time!);
-        const oEnd = toMin(other.end_time!);
-        if (startMin < oEnd && endMin > oStart) {
-          toast({ variant: "destructive", title: "Zeitüberschneidung", description: `Überschneidet sich mit Eintrag ${other.start_time!.substring(0, 5)} - ${other.end_time!.substring(0, 5)}` });
-          return;
-        }
-      }
-    }
-
-    setSavingEdit(true);
-
-    // Einfache Berechnung: (Ende - Start - Pause) / 60
-    let calculatedHours = 0;
-    if (editingEntry.start_time && editingEntry.end_time) {
-      const [sH, sM] = editingEntry.start_time.split(':').map(Number);
-      const [eH, eM] = editingEntry.end_time.split(':').map(Number);
-      const totalMin = (eH * 60 + eM) - (sH * 60 + sM) - (editingEntry.pause_minutes || 0);
-      calculatedHours = Math.max(0, totalMin / 60);
-    }
-
-    const { error } = await supabase
-      .from("time_entries")
-      .update({
-        taetigkeit: editingEntry.taetigkeit,
-        start_time: editingEntry.start_time,
-        end_time: editingEntry.end_time,
-        pause_minutes: editingEntry.pause_minutes || 0,
-        notizen: editingEntry.notizen,
-        stunden: Math.max(0, calculatedHours),
-      })
-      .eq("id", editingEntry.id);
-
-    if (error) {
-      toast({
-        variant: "destructive",
-        title: "Fehler",
-        description: "Eintrag konnte nicht aktualisiert werden",
-      });
-    } else {
-      toast({
-        title: "Erfolg",
-        description: "Eintrag wurde aktualisiert",
-      });
-      setShowEditDialog(false);
-      setEditingEntry(null);
-      fetchEntries();
-      fetchSaldo();
-    }
-    setSavingEdit(false);
-  };
-
-  const handleDeleteEntry = async (id: string) => {
-    // Sonderzeit-Einträge sind für Mitarbeiter gesperrt — Löschen würde
-    // das Zeitkonto nicht zurückbuchen (Guthabenverlust)
-    const entry = entries.find(e => e.id === id);
-    if (entry && isSpecialEntry(entry.taetigkeit)) {
-      toast({ variant: "destructive", title: "Nicht erlaubt", description: "Abwesenheits-/ZA-Einträge können nur vom Admin geändert werden" });
-      return;
-    }
-
-    if (!confirm("Möchtest du diesen Eintrag wirklich löschen?")) return;
-
-    const { error } = await supabase
-      .from("time_entries")
-      .delete()
-      .eq("id", id);
-
-    if (error) {
-      toast({
-        variant: "destructive",
-        title: "Fehler",
-        description: "Eintrag konnte nicht gelöscht werden",
-      });
-    } else {
-      toast({
-        title: "Erfolg",
-        description: "Eintrag wurde gelöscht",
-      });
-      setShowEditDialog(false);
-      setEditingEntry(null);
-      fetchEntries();
-      fetchSaldo();
-    }
-  };
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center"><p>Lädt...</p></div>;
@@ -413,7 +285,7 @@ const MyHours = () => {
                                 <Button
                                   size="sm"
                                   variant="ghost"
-                                  onClick={() => { setEditingEntry(entry); setShowEditDialog(true); }}
+                                  onClick={() => setEditId(entry.id)}
                                   disabled={!isCurrentMonth(entry.datum) || isSpecialEntry(entry.taetigkeit)}
                                   title={isSpecialEntry(entry.taetigkeit) ? "Abwesenheits-/ZA-Einträge können nur vom Admin geändert werden" : undefined}
                                   className="h-7 w-7 p-0"
@@ -464,92 +336,13 @@ const MyHours = () => {
         </Card>
       </main>
 
-      {/* Edit Dialog */}
-      <Dialog open={showEditDialog} onOpenChange={(open) => {
-        setShowEditDialog(open);
-        if (!open) setEditingEntry(null);
-      }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Stundeneintrag bearbeiten</DialogTitle>
-            <DialogDescription>
-              {editingEntry && (
-                <>
-                  Datum: {new Date(editingEntry.datum).toLocaleDateString('de-DE', { 
-                    weekday: 'long', 
-                    day: '2-digit', 
-                    month: 'long', 
-                    year: 'numeric' 
-                  })}
-                </>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          {editingEntry && (
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="edit-taetigkeit">Tätigkeit</Label>
-                <Input
-                  id="edit-taetigkeit"
-                  value={editingEntry.taetigkeit}
-                  onChange={(e) => setEditingEntry({...editingEntry, taetigkeit: e.target.value})}
-                  placeholder="z.B. Dachstuhl montieren"
-                />
-              </div>
-
-              {/* Von / Bis */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Von</Label>
-                  <Select value={(editingEntry.start_time || "07:00").slice(0, 5)} onValueChange={(v) => setEditingEntry({...editingEntry, start_time: v})}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {Array.from({ length: 29 }, (_, i) => { const h = Math.floor(i / 2) + 6; const m = (i % 2) * 30; const t = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`; return <SelectItem key={t} value={t}>{t}</SelectItem>; })}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Bis</Label>
-                  <Select value={(editingEntry.end_time || "16:00").slice(0, 5)} onValueChange={(v) => setEditingEntry({...editingEntry, end_time: v})}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {Array.from({ length: 29 }, (_, i) => { const h = Math.floor(i / 2) + 6; const m = (i % 2) * 30; const t = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`; return <SelectItem key={t} value={t}>{t}</SelectItem>; })}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              {/* Pause */}
-              <div className="space-y-1.5">
-                <Label>Pause</Label>
-                <div className="grid grid-cols-4 gap-2">
-                  {[{ label: "Keine", value: 0 }, { label: "30 Min", value: 30 }, { label: "45 Min", value: 45 }, { label: "1 Std", value: 60 }].map(opt => (
-                    <Button key={opt.value} type="button" variant={(editingEntry.pause_minutes || 0) === opt.value ? "default" : "outline"} size="sm" className="h-9 text-xs"
-                      onClick={() => setEditingEntry({...editingEntry, pause_minutes: opt.value})}>
-                      {opt.label}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex gap-2 pt-4">
-                <Button onClick={handleUpdateEntry} className="flex-1" disabled={savingEdit}>
-                  {savingEdit ? 'Wird gespeichert...' : 'Speichern'}
-                </Button>
-                <Button 
-                  variant="destructive"
-                  onClick={() => editingEntry && handleDeleteEntry(editingEntry.id)}
-                  className="flex-1"
-                  disabled={savingEdit}
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Löschen
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      {/* Bearbeiten (inkl. Datum) — gemeinsamer Dialog mit der Zeiterfassung */}
+      <StundenEintragBearbeitenDialog
+        entryId={editId}
+        open={!!editId}
+        onClose={() => setEditId(null)}
+        onSaved={() => { fetchEntries(); fetchSaldo(); }}
+      />
     </div>
   );
 };

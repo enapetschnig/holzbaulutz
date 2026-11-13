@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2 } from "lucide-react";
+import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2, Pencil } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/PageHeader";
 import { format, startOfWeek } from "date-fns";
@@ -15,6 +15,8 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { PAUSE_OPTIONEN, uhrzeitAuswahl } from "@/lib/zeitraster";
+import { StundenEintragBearbeitenDialog, istImAktuellenMonat } from "@/components/StundenEintragBearbeitenDialog";
 import { toast as sonnerToast } from "sonner";
 import { 
   getNormalWorkingHours, 
@@ -61,7 +63,7 @@ interface TimeBlock {
   endTime: string;
   pauseStart: string;
   pauseEnd: string;
-  pauseDuration: number; // 0, 30, 45, 60 minutes
+  pauseDuration: number; // Minuten, Viertelstunden-Takt (PAUSE_OPTIONEN)
   manualHours: string;
   disturbanceId: string;
   selectedDisturbanceIds: string[];
@@ -76,6 +78,9 @@ type Disturbance = {
   kunde_name: string;
   status: string;
 };
+
+// Abwesenheiten — ändert nur der Admin (Stundenauswertung)
+const SONDER_NAMEN = ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"];
 
 const createDefaultBlock = (startTime = "", endTime = "", pauseStart = "", pauseEnd = "", pauseDuration = 0): TimeBlock => ({
   id: crypto.randomUUID(),
@@ -156,6 +161,8 @@ const TimeTracking = () => {
   // Hat der Nutzer die Blöcke bereits verändert? Dann beim Datumswechsel
   // nicht überschreiben (nur die Tagesliste neu laden).
   const [blocksTouched, setBlocksTouched] = useState(false);
+  // Bestehenden Eintrag bearbeiten (inkl. Datum verschieben)
+  const [editEntryId, setEditEntryId] = useState<string | null>(null);
   const [disturbances, setDisturbances] = useState<Disturbance[]>([]);
   const entryMode = "zeitraum" as const;
 
@@ -1134,7 +1141,22 @@ const TimeTracking = () => {
                               {entry.project_name ? `${entry.project_name}` : entry.taetigkeit}
                             </span>
                           </div>
-                          <span className="font-medium">{Number(entry.stunden).toFixed(2)}h</span>
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">{Number(entry.stunden).toFixed(2)}h</span>
+                            {istImAktuellenMonat(selectedDate) && !SONDER_NAMEN.includes(entry.taetigkeit) && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                aria-label="Eintrag bearbeiten"
+                                title="Eintrag bearbeiten (Datum, Zeiten, Pause)"
+                                onClick={() => setEditEntryId(entry.id)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1475,19 +1497,14 @@ const TimeTracking = () => {
                           </div>
                         )}
 
-                        {/* Start/End time — 30-Min-Schritte */}
+                        {/* Start/End time — Viertelstunden-Schritte (Wunsch Büro 13.11.2026) */}
                         <div className="grid grid-cols-2 gap-3">
                           <div className="space-y-1.5">
                             <Label>Beginn</Label>
                             <Select value={block.startTime} onValueChange={(v) => updateBlock(block.id, { startTime: v })}>
                               <SelectTrigger><SelectValue placeholder="Uhrzeit" /></SelectTrigger>
                               <SelectContent>
-                                {Array.from({ length: 48 }, (_, i) => {
-                                  const h = Math.floor(i / 2);
-                                  const m = (i % 2) * 30;
-                                  const t = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-                                  return <SelectItem key={t} value={t}>{t}</SelectItem>;
-                                })}
+                                {uhrzeitAuswahl(block.startTime).map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                               </SelectContent>
                             </Select>
                           </div>
@@ -1496,12 +1513,7 @@ const TimeTracking = () => {
                             <Select value={block.endTime} onValueChange={(v) => updateBlock(block.id, { endTime: v })}>
                               <SelectTrigger><SelectValue placeholder="Uhrzeit" /></SelectTrigger>
                               <SelectContent>
-                                {Array.from({ length: 48 }, (_, i) => {
-                                  const h = Math.floor(i / 2);
-                                  const m = (i % 2) * 30;
-                                  const t = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-                                  return <SelectItem key={t} value={t}>{t}</SelectItem>;
-                                })}
+                                {uhrzeitAuswahl(block.endTime).map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                               </SelectContent>
                             </Select>
                           </div>
@@ -1509,12 +1521,7 @@ const TimeTracking = () => {
                         <div className="space-y-1.5">
                           <Label>Pause</Label>
                           <div className="grid grid-cols-4 gap-2">
-                            {[
-                              { label: "Keine", value: 0 },
-                              { label: "30 Min", value: 30 },
-                              { label: "45 Min", value: 45 },
-                              { label: "1 Std", value: 60 },
-                            ].map(opt => (
+                            {PAUSE_OPTIONEN.map(opt => (
                               <Button
                                 key={opt.value}
                                 type="button"
@@ -1777,7 +1784,7 @@ const TimeTracking = () => {
                     <div className="flex items-center gap-2 mt-1">
                       <Input
                         type="number"
-                        step="0.5"
+                        step="0.25"
                         min="0"
                         max="24"
                         placeholder={String(getNormalWorkingHours(new Date(absenceData.date)))}
@@ -1808,7 +1815,7 @@ const TimeTracking = () => {
                       <Select value={absenceData.absenceStartTime} onValueChange={(v) => setAbsenceData({ ...absenceData, absenceStartTime: v })}>
                         <SelectTrigger><SelectValue placeholder="Uhrzeit" /></SelectTrigger>
                         <SelectContent>
-                          {Array.from({ length: 48 }, (_, i) => { const h = Math.floor(i / 2); const m = (i % 2) * 30; const t = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`; return <SelectItem key={t} value={t}>{t}</SelectItem>; })}
+                          {uhrzeitAuswahl(absenceData.absenceStartTime).map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1817,7 +1824,7 @@ const TimeTracking = () => {
                       <Select value={absenceData.absenceEndTime} onValueChange={(v) => setAbsenceData({ ...absenceData, absenceEndTime: v })}>
                         <SelectTrigger><SelectValue placeholder="Uhrzeit" /></SelectTrigger>
                         <SelectContent>
-                          {Array.from({ length: 48 }, (_, i) => { const h = Math.floor(i / 2); const m = (i % 2) * 30; const t = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`; return <SelectItem key={t} value={t}>{t}</SelectItem>; })}
+                          {uhrzeitAuswahl(absenceData.absenceEndTime).map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1828,6 +1835,7 @@ const TimeTracking = () => {
                       type="number"
                       min="0"
                       max="120"
+                      step="15"
                       value={absenceData.absencePauseMinutes}
                       onChange={(e) => setAbsenceData({ ...absenceData, absencePauseMinutes: e.target.value })}
                       className="w-24"
@@ -1880,6 +1888,13 @@ const TimeTracking = () => {
           </DialogContent>
         </Dialog>
 
+        {/* Bestehenden Eintrag bearbeiten (Datum, Zeiten, Pause) */}
+        <StundenEintragBearbeitenDialog
+          entryId={editEntryId}
+          open={!!editEntryId}
+          onClose={() => setEditEntryId(null)}
+          onSaved={() => fetchExistingDayEntries(selectedDate, !blocksTouched)}
+        />
       </div>
     </div>
   );
