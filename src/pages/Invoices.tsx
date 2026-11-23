@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { druckePdf } from "@/lib/pdfDrucken";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, Undo2, X, Import } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
@@ -393,14 +394,8 @@ export default function Invoices() {
         bank, logoUri, qrUri, firmenUid, invoiceLayout
       );
 
-      // Open PDF in new tab for printing
-      const url = URL.createObjectURL(pdfBlob);
-      const win = window.open(url, "_blank");
-      if (win) {
-        win.addEventListener("load", () => {
-          setTimeout(() => win.print(), 500);
-        });
-      }
+      // Drucken über die App (pdf.js-Seiten im Druckbereich) – nie PDF-Tab + print(), das gab weiße Seiten (23.11.2026)
+      await druckePdf(pdfBlob);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Fehler", description: err.message || "Drucken fehlgeschlagen" });
     }

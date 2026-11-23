@@ -12,6 +12,8 @@ import {
   type BankData,
 } from "@/lib/invoiceHtml";
 import { generateInvoicePdf } from "@/lib/pdfGenerator";
+import { druckePdf } from "@/lib/pdfDrucken";
+import { toast } from "@/hooks/use-toast";
 import { loadDocumentTexts, applyDocumentTextsToInvoice } from "@/lib/documentTextsLoader";
 import { type InvoiceLayoutSettings, DEFAULT_LAYOUT, parseLayoutSettings } from "@/lib/invoiceLayoutTypes";
 
@@ -155,11 +157,17 @@ export function InvoicePdfPreview({
     document.body.removeChild(a);
   };
 
-  const handlePrint = () => {
-    if (!pdfUrl) return;
-    const win = window.open(pdfUrl);
-    if (win) {
-      win.addEventListener("load", () => setTimeout(() => win.print(), 300));
+  // Drucken über die App (pdf.js-Seiten im Druckbereich) – nie PDF-Tab + print(), das gab weiße Seiten (23.11.2026)
+  const [druckt, setDruckt] = useState(false);
+  const handlePrint = async () => {
+    if (!pdfUrl || druckt) return;
+    setDruckt(true);
+    try {
+      await druckePdf(pdfUrl);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Drucken fehlgeschlagen", description: err?.message || "Bitte PDF herunterladen und von dort drucken." });
+    } finally {
+      setDruckt(false);
     }
   };
 
@@ -187,7 +195,7 @@ export function InvoicePdfPreview({
                   <Download className="h-4 w-4" />
                   PDF herunterladen
                 </Button>
-                <Button variant="outline" size="sm" onClick={handlePrint} disabled={!pdfUrl} className="gap-2">
+                <Button variant="outline" size="sm" onClick={handlePrint} disabled={!pdfUrl || druckt} className="gap-2">
                   <Printer className="h-4 w-4" />
                   Drucken
                 </Button>
