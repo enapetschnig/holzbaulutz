@@ -284,6 +284,7 @@ Ergänzend: `useProjectStatuses`, `useEinheiten`, `lib/statusColors`,
 | Stundenabgleich, Nachkalkulation | `.claude/rules/stundenabgleich-nachkalkulation.md` | Projektübersicht, Startseiten-Widget, Eingangsrechnung → Projekt |
 | Regie- und Bautagesberichte | `.claude/rules/berichte-regie-bautagesbericht.md` | Berichtsformulare, Tätigkeiten, Diktat, Berichts-PDF |
 | Zeiterfassung, Rollen/Rechte, Registrierung | `.claude/rules/zeiterfassung-und-rollen.md` | Stunden, Urlaub, Mitarbeiter-Sicht, RLS, Installation |
+| Supabase-Fehlerprotokolle (bekannt harmlos) | `.claude/rules/fehlerprotokolle-supabase.md` | Nachtschicht-Funde aus den Supabase-Logs prüfen |
 
 **Verlauf:** Ein `JOURNAL.md` gibt es hier (noch) nicht; die Historie steht in ausführlichen Commit-Texten
 (`git log --grep="<Stichwort>"`). `AGENTS.md` ist eine exakte Kopie dieser Datei (für Codex); bei Änderungen beide gleich halten.
